@@ -24,13 +24,16 @@ src/
 
 ### Design Studio
 - ✅ Project management (create, delete, list)
-- ✅ Konva editor with pan/zoom
+- ✅ **Assets Panel** - manage all images used in project
+- ✅ Konva editor with infinite pan/zoom
 - ✅ Object CRUD with drag & resize
 - ✅ Properties panel for every SceneObject field
 - ✅ **Image upload for objects** (like background upload)
 - ✅ Background upload with auto-dimension detection
+- ✅ **Layered backgrounds** - multiple background layers with opacity
+- ✅ **Global layer index system** - unified z-ordering for all objects
 - ✅ Visual clue chain editor
-- ✅ Layers panel with z-order
+- ✅ Layers panel with layerIndex + zIndex
 - ✅ In-page preview mode
 - ✅ Validation panel
 - ✅ Undo/Redo (Ctrl+Z / Ctrl+Y)
@@ -75,18 +78,46 @@ npm run dev      # Development server
 npm run build    # Production build
 ```
 
-## Seed Game
+## Object Types
 
-The seed project includes:
-- **Project:** Escape Room: Old Library
-- **Room 1:** Old Library (exit digit: 7)
-  - Chain: Red Book → Rug → Box → Number 7
-  - Item: Golden Key (from rug) → unlocks box
-  - **View:** Wall Clock opens an interactive close-up view
-- **Room 2:** Basement Room (exit digit: 3)
-  - Chain: Note → Photo Frame → Number 3
-  - **Inventory Example:** Wire Cutter (pickupable) → use on Bare Wire End → transforms to Fixed Wire
-- **Final Lock Code:** 73
+ساده‌سازی شده به ۳ نوع:
+
+### 1. Decoration (🖼️)
+- اشیاء تزئینی که پیام نمایش می‌دهند
+- می‌توانند `digit` داشته باشند (برای ارقام قفل)
+- می‌توانند `view` داشته باشند (نمای تعاملی)
+- می‌توانند `pickupable` باشند
+
+### 2. Inventory (🎒)
+- آیتم‌های قابل برداشتن
+- حتماً `pickupable: true` دارند
+- به inventory بازیکن اضافه می‌شوند
+
+### 3. Container (📦)
+- اشیایی که با آیتم باز می‌شوند
+- `requiresItem` برای باز شدن
+- می‌توانند `digit` یا `transforms` داشته باشند
+
+### حذف شده:
+- ❌ `clue` - هر شیء می‌تواند پیام داشته باشد
+- ❌ `number-piece` - از فیلد `digit` استفاده می‌شود
+- ❌ `exit` - خروجی اتاق با `exitNumber` در Scene مشخص می‌شود
+
+## Assets System
+
+پوشه Assets تمام تصاویر استفاده شده در پروژه را مدیریت می‌کند:
+- آپلود تصاویر جدید
+- نمایش thumbnail تمام assets
+- استفاده مجدد در اشیاء مختلف
+- پس‌زمینه‌های لایه‌ای (Background Layers)
+
+## Layer System
+
+سیستم لایه‌بندی یکپارچه:
+- `layerIndex` - لایه اصلی (0 = پایین‌ترین)
+- `zIndex` - ترتیب درون لایه
+- پس‌زمینه‌ها هم می‌توانند لایه‌ای باشند (`backgroundLayers`)
+- هر لایه پس‌زمینه دارای `opacity` و `offset` برای parallax
 
 ### Inventory Demo in Seed Game
 1. In Room 2, find the **Wire Cutter** (🔧) and click it → added to inventory
@@ -94,6 +125,12 @@ The seed project includes:
 3. Select "Wire Cutter" from inventory, then click "Bare Wire End"
 4. The wire transforms to "Fixed Wire" (✅) - now safe!
 5. Wire cutter is NOT consumed (can be used on other wires if added)
+
+### Digits System
+- هر شیء می‌تواند فیلد `digit` (0-9) داشته باشد
+- وقتی همه اشیاء دارای digit در یک اتاق کشف شوند، اتاق کامل می‌شود
+- رقم خروجی اتاق از `exitNumber` در Scene خوانده می‌شود
+- قفل نهایی از ترکیب exitNumber همه اتاق‌ها ساخته می‌شود
 
 ## Interactive Views
 

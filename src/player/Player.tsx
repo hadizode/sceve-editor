@@ -406,7 +406,7 @@ export default function Player() {
 
   const discovered = sessionState.discoveredObjects[currentSceneId] || [];
   const viewDiscovered = activeView ? (sessionState.discoveredObjects[activeView.view.id] || []) : [];
-  const numberPieces = currentScene.objects.filter(o => o.type === 'number-piece');
+  const numberPieces = currentScene.objects.filter(o => o.digit !== undefined);
   const roomComplete = isRoomComplete(sessionState, currentScene);
   const allComplete = allRoomsComplete(sessionState, Object.values(scenes));
   const projectScenes = Object.values(scenes);
@@ -553,7 +553,7 @@ export default function Player() {
                       discovered.includes(np.id) ? 'bg-amber-600 text-white' : 'bg-gray-700 text-gray-500'
                     }`}
                   >
-                    {discovered.includes(np.id) ? np.number : '?'}
+                    {discovered.includes(np.id) ? np.digit : '?'}
                   </div>
                 ))}
               </div>

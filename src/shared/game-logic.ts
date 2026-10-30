@@ -224,12 +224,12 @@ export function applyItemToObject(
 }
 
 /**
- * Check if a room/scene is complete (all number-pieces discovered).
+ * Check if a room/scene is complete (all objects with digits discovered).
  */
 export function isRoomComplete(state: SessionState, scene: Scene): boolean {
   const discovered = state.discoveredObjects[scene.id] || [];
-  const numberPieces = scene.objects.filter(o => o.type === 'number-piece');
-  return numberPieces.every(np => discovered.includes(np.id));
+  const digitObjects = scene.objects.filter(o => o.digit !== undefined);
+  return digitObjects.every(obj => discovered.includes(obj.id));
 }
 
 /**
@@ -238,8 +238,8 @@ export function isRoomComplete(state: SessionState, scene: Scene): boolean {
 export function getRoomDigits(state: SessionState, scene: Scene): { digit: number; objectId: string }[] {
   const discovered = state.discoveredObjects[scene.id] || [];
   return scene.objects
-    .filter(o => o.type === 'number-piece' && discovered.includes(o.id) && o.number !== undefined)
-    .map(o => ({ digit: o.number!, objectId: o.id }));
+    .filter(o => o.digit !== undefined && discovered.includes(o.id))
+    .map(o => ({ digit: o.digit!, objectId: o.id }));
 }
 
 /**
