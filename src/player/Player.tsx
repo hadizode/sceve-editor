@@ -375,7 +375,7 @@ export default function Player() {
   const store = usePlayerStore();
   const {
     session, scenes, currentSceneId, sessionState, gameStarted, gameComplete,
-    selectedItem, initSession, clickObject, useItemOnObject, selectItem, switchScene,
+    selectedItem, initSession, clickObject, useItemOnObject, pickupObject, selectItem, switchScene,
   } = store;
 
   const [activeView, setActiveView] = useState<{ view: View; parentObjectId: string } | null>(null);
@@ -412,10 +412,15 @@ export default function Player() {
   const projectScenes = Object.values(scenes);
 
   const handleObjectClick = (obj: SceneObject) => {
-    if (selectedItem && (obj.type === 'container' || obj.requiresItem)) {
-      useItemOnObject(selectedItem, obj.id);
-      return;
+    // If using an item on an object
+    if (selectedItem) {
+      if (obj.type === 'container' || obj.requiresItem || obj.transforms) {
+        useItemOnObject(selectedItem, obj.id);
+        return;
+      }
     }
+    
+    // If object has a view, open it
     if (obj.view) {
       if (obj.view.requiresItem && obj.view.requiresItem.length > 0) {
         const hasItems = obj.view.requiresItem.every(item => sessionState.inventory.includes(item));
@@ -428,6 +433,17 @@ export default function Player() {
       setActiveView({ view: obj.view, parentObjectId: obj.id });
       return;
     }
+    
+    // If object is pickupable, pick it up
+    if (obj.pickupable) {
+      const discovered = sessionState.discoveredObjects[currentSceneId] || [];
+      if (!discovered.includes(obj.id)) {
+        pickupObject(obj.id);
+        return;
+      }
+    }
+    
+    // Normal discovery
     clickObject(obj.id);
   };
 

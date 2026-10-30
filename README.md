@@ -45,7 +45,12 @@ src/
 - ✅ Click-to-discover objects
 - ✅ Clue message display (long duration: 5-7 seconds)
 - ✅ **Interactive Views** (close-up zoomable views with zoom/pan inside)
-- ✅ Item & container system
+- ✅ **Full Inventory System**:
+  - Pickupable objects (configurable per object)
+  - Items added to inventory with custom messages
+  - Use items on objects to trigger transforms
+  - Objects can change image/name after item use
+  - Items can be consumed or kept after use
 - ✅ Room digit counter
 - ✅ Final lock with numeric keypad
 - ✅ Victory animation
@@ -80,7 +85,15 @@ The seed project includes:
   - **View:** Wall Clock opens an interactive close-up view
 - **Room 2:** Basement Room (exit digit: 3)
   - Chain: Note → Photo Frame → Number 3
+  - **Inventory Example:** Wire Cutter (pickupable) → use on Bare Wire End → transforms to Fixed Wire
 - **Final Lock Code:** 73
+
+### Inventory Demo in Seed Game
+1. In Room 2, find the **Wire Cutter** (🔧) and click it → added to inventory
+2. Find the **Bare Wire End** (⚡) - it's dangerous!
+3. Select "Wire Cutter" from inventory, then click "Bare Wire End"
+4. The wire transforms to "Fixed Wire" (✅) - now safe!
+5. Wire cutter is NOT consumed (can be used on other wires if added)
 
 ## Interactive Views
 
@@ -91,6 +104,69 @@ Objects can have an interactive `view` property. When a player clicks an object 
 4. Views support zoom (scroll) and pan (Space + drag)
 5. Views can have conditions (requiresItem) to open
 6. All discoveries in views are tracked separately
+
+## Inventory & Transforms System
+
+### Pickupable Objects
+Objects can be configured as `pickupable: true` to allow players to pick them up and add them to inventory:
+- `pickupable: boolean` - Whether this object can be picked up
+- `pickupItemId: string` - The item ID added to inventory (defaults to object ID)
+- `pickupMessage: string` - Message shown when picked up (Persian/Farsi)
+
+Example:
+```typescript
+{
+  id: 'wire-cutter',
+  name: 'Wire Cutter',
+  type: 'inventory',
+  pickupable: true,
+  pickupItemId: 'wire-cutter',
+  pickupMessage: '🔧 You picked up the wire cutter!',
+  // ... other properties
+}
+```
+
+### Object Transforms
+Objects can have `transforms` array that defines how they change when specific items are used on them:
+
+```typescript
+{
+  id: 'bare-wire',
+  name: 'Bare Wire End',
+  transforms: [
+    {
+      requiresItem: 'wire-cutter',      // Item needed to trigger this transform
+      newImageUrl: 'path/to/fixed.png', // New image after transform
+      newName: 'Fixed Wire',            // New name after transform
+      newMessage: '✅ Wire is now safe!', // Message shown (Persian/Farsi)
+      grantsItem: 'copper-wire',        // Optional: item granted after transform
+      consumesItem: false,              // Whether the used item is consumed (default: true)
+      triggersDiscovery: true,          // Whether this counts as discovering the object
+    },
+  ],
+}
+```
+
+### Transform Flow Example
+1. Player finds "Bare Wire End" (dangerous, unusable)
+2. Player picks up "Wire Cutter" from another location → added to inventory
+3. Player selects "Wire Cutter" from inventory
+4. Player clicks "Bare Wire End" → transform is triggered
+5. "Bare Wire End" becomes "Fixed Wire" (new image, new name)
+6. Message shown: "✅ Wire is now safe!"
+7. Wire cutter is NOT consumed (can be used again)
+
+### Multiple Transforms
+Objects can have multiple transform rules that chain together:
+```typescript
+transforms: [
+  { requiresItem: 'key', newImageUrl: 'unlocked.png' },      // State 0 → 1
+  { requiresItem: 'crowbar', newImageUrl: 'open.png' },      // State 1 → 2
+  { requiresItem: 'flashlight', newImageUrl: 'lit.png' },    // State 2 → 3
+]
+```
+
+Each transform advances the object to the next state. The `currentTransform` property tracks which state the object is in.
 
 ## Controls
 
