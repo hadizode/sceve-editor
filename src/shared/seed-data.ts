@@ -1,4 +1,4 @@
-import type { Project, Scene, Session, SceneObject } from './types';
+import type { Project, Scene, Session, SceneObject, Asset } from './types';
 
 // SVG placeholder generator with better visuals
 function makeSvg(text: string, color: string, w = 100, h = 100, emoji = ''): string {
@@ -73,12 +73,10 @@ const CLOCK_VIEW = {
       <rect width="100%" height="100%" fill="url(#clockbg)"/>
       <circle cx="200" cy="200" r="150" fill="#1a1a2e" stroke="#c9a84c" stroke-width="4"/>
       <circle cx="200" cy="200" r="140" fill="none" stroke="#8b7332" stroke-width="1"/>
-      <!-- Clock numbers -->
       <text x="200" y="80" text-anchor="middle" fill="#c9a84c" font-size="20" font-family="Vazirmatn">۱۲</text>
       <text x="320" y="210" text-anchor="middle" fill="#c9a84c" font-size="20" font-family="Vazirmatn">۳</text>
       <text x="200" y="340" text-anchor="middle" fill="#c9a84c" font-size="20" font-family="Vazirmatn">۶</text>
       <text x="80" y="210" text-anchor="middle" fill="#c9a84c" font-size="20" font-family="Vazirmatn">۹</text>
-      <!-- Hands at 3:15 -->
       <line x1="200" y1="200" x2="280" y2="200" stroke="#c9a84c" stroke-width="4" stroke-linecap="round"/>
       <line x1="200" y1="200" x2="200" y2="120" stroke="#c9a84c" stroke-width="3" stroke-linecap="round"/>
       <circle cx="200" cy="200" r="6" fill="#c9a84c"/>
@@ -90,7 +88,7 @@ const CLOCK_VIEW = {
     {
       id: 'view-clock-secret',
       name: 'رمز ساعت',
-      type: 'clue',
+      type: 'decoration',
       imageUrl: makeSvg('۳:۱۵', '#c9a84c', 80, 40, ''),
       x: 160,
       y: 350,
@@ -98,6 +96,7 @@ const CLOCK_VIEW = {
       height: 35,
       rotation: 0,
       zIndex: 1,
+      layerIndex: 1,
       visible: true,
       oneTimeUse: false,
       message: '🕐 عقربه‌ها ساعت ۳:۱۵ را نشان می‌دهند... شاید این یک رمز باشد!',
@@ -110,12 +109,23 @@ const CLOCK_VIEW = {
 export const SEED_PROJECT: Project = {
   id: 'proj-seed-001',
   name: 'Escape Room: Old Library',
-  description: 'A classic escape room with chained clues in an old library. Find all number pieces and unlock the final lock.',
+  description: 'A classic escape room with chained clues in an old library. Find all digits and unlock the final lock.',
   scenes: ['scene-room-001', 'scene-room-002'],
   finalLockDigits: '73',
+  assets: ['asset-bg-library', 'asset-bg-basement'],
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 };
+
+export const SEED_ASSETS: Asset[] = [
+  {
+    id: 'asset-bg-library',
+    name: 'Library Background',
+    url: SEED_BACKGROUND,
+    tags: ['background', 'library'],
+    createdAt: new Date().toISOString(),
+  },
+];
 
 export const SEED_SCENE: Scene = {
   id: 'scene-room-001',
@@ -128,7 +138,7 @@ export const SEED_SCENE: Scene = {
     {
       id: 'obj-clue-book',
       name: 'Red Ancient Book',
-      type: 'clue',
+      type: 'decoration',
       imageUrl: makeSvg('Red Book', '#dc2626', 70, 90, '📕'),
       x: 80,
       y: 130,
@@ -136,14 +146,15 @@ export const SEED_SCENE: Scene = {
       height: 80,
       rotation: -5,
       zIndex: 2,
+      layerIndex: 2,
       visible: true,
       oneTimeUse: false,
-      message: '📜 You found a note inside the book: "The key is hidden under the rug"',
+      message: '📜 یک یادداشت داخل کتاب پیدا کردید: "کلید زیر فرش است"',
     },
     {
       id: 'obj-clue-painting',
       name: 'Wall Painting',
-      type: 'clue',
+      type: 'decoration',
       imageUrl: makeSvg('Painting', '#0ea5e9', 100, 80, '🖼️'),
       x: 550,
       y: 120,
@@ -151,14 +162,15 @@ export const SEED_SCENE: Scene = {
       height: 70,
       rotation: 0,
       zIndex: 1,
+      layerIndex: 1,
       visible: true,
       oneTimeUse: false,
-      message: '🔍 Behind the painting there is a note: "The first number is in the box, the second in the vase"',
+      message: '🔍 پشت تابلو نوشته: "عدد اول در صندوق است، عدد دوم در گلدان"',
     },
     {
       id: 'obj-clue-rug',
       name: 'Ornamental Rug',
-      type: 'clue',
+      type: 'decoration',
       imageUrl: makeSvg('Rug', '#92400e', 140, 80, '🟫'),
       x: 330,
       y: 440,
@@ -166,9 +178,10 @@ export const SEED_SCENE: Scene = {
       height: 70,
       rotation: 0,
       zIndex: 1,
+      layerIndex: 1,
       visible: true,
       oneTimeUse: false,
-      message: '🔑 You found a small golden key under the rug!',
+      message: '🔑 زیر فرش یک کلید کوچک طلایی پیدا کردید!',
       grantsItem: 'key-gold',
     },
     {
@@ -182,28 +195,13 @@ export const SEED_SCENE: Scene = {
       height: 60,
       rotation: 0,
       zIndex: 3,
+      layerIndex: 3,
       visible: true,
       oneTimeUse: true,
-      message: '🔓 The box opened! Number 7 was inside!',
+      message: '🔓 صندوق باز شد! عدد ۷ داخل آن بود!',
       requiresItem: ['key-gold'],
-      number: 7,
+      digit: 7,
       grantsItem: 'digit-7',
-    },
-    {
-      id: 'obj-number-7',
-      name: 'Number 7',
-      type: 'number-piece',
-      imageUrl: makeSvg('7', '#f59e0b', 50, 50, ''),
-      x: 580,
-      y: 290,
-      width: 45,
-      height: 45,
-      rotation: 0,
-      zIndex: 4,
-      visible: true,
-      oneTimeUse: false,
-      number: 7,
-      message: '✨ You found number 7! This is the exit digit for this room.',
     },
     {
       id: 'obj-deco-clock',
@@ -216,9 +214,10 @@ export const SEED_SCENE: Scene = {
       height: 55,
       rotation: 0,
       zIndex: 1,
+      layerIndex: 1,
       visible: true,
       oneTimeUse: false,
-      message: '🕐 An old clock. The hands are frozen at 3:15...',
+      message: '🕐 یک ساعت قدیمی. عقربه‌ها روی ۳:۱۵ متوقف شده‌اند...',
       view: CLOCK_VIEW,
     },
     {
@@ -232,12 +231,13 @@ export const SEED_SCENE: Scene = {
       height: 50,
       rotation: 0,
       zIndex: 2,
+      layerIndex: 2,
       visible: true,
       oneTimeUse: false,
-      message: '🕯️ The candle is still lit. It gives a faint glow.',
+      message: '🕯️ شمع هنوز روشن است. نور ضعیفی دارد.',
     },
   ],
-  clueChain: ['obj-clue-book', 'obj-clue-rug', 'obj-container-box', 'obj-number-7'],
+  clueChain: ['obj-clue-book', 'obj-clue-rug', 'obj-container-box'],
   exitNumber: 7,
 };
 
@@ -265,7 +265,7 @@ export const SEED_SCENE_2: Scene = {
     {
       id: 'obj2-clue-note',
       name: 'Note on Table',
-      type: 'clue',
+      type: 'decoration',
       imageUrl: makeSvg('Note', '#fbbf24', 80, 60, '📝'),
       x: 350,
       y: 250,
@@ -273,14 +273,15 @@ export const SEED_SCENE_2: Scene = {
       height: 50,
       rotation: 3,
       zIndex: 2,
+      layerIndex: 2,
       visible: true,
       oneTimeUse: false,
-      message: '📝 The note says: "Number 3 is hidden behind the photo frame"',
+      message: '📝 یادداشت: "عدد ۳ پشت قاب عکس پنهان شده"',
     },
     {
       id: 'obj2-clue-frame',
       name: 'Photo Frame',
-      type: 'clue',
+      type: 'decoration',
       imageUrl: makeSvg('Frame', '#8b5cf6', 80, 100, '🖼️'),
       x: 150,
       y: 150,
@@ -288,26 +289,12 @@ export const SEED_SCENE_2: Scene = {
       height: 90,
       rotation: 0,
       zIndex: 1,
+      layerIndex: 1,
       visible: true,
       oneTimeUse: false,
-      message: '🔢 Behind the photo frame, number 3 is carved!',
+      message: '🔢 پشت قاب عکس، عدد ۳ حک شده!',
       grantsItem: 'digit-3',
-    },
-    {
-      id: 'obj2-number-3',
-      name: 'Number 3',
-      type: 'number-piece',
-      imageUrl: makeSvg('3', '#10b981', 50, 50, ''),
-      x: 170,
-      y: 260,
-      width: 45,
-      height: 45,
-      rotation: 0,
-      zIndex: 3,
-      visible: true,
-      oneTimeUse: false,
-      number: 3,
-      message: '✨ You found number 3!',
+      digit: 3,
     },
     {
       id: 'obj2-deco-skull',
@@ -320,11 +307,11 @@ export const SEED_SCENE_2: Scene = {
       height: 45,
       rotation: 0,
       zIndex: 1,
+      layerIndex: 1,
       visible: true,
       oneTimeUse: false,
-      message: '💀 An old skull. Maybe it belonged to a pirate!',
+      message: '💀 یک جمجمه قدیمی. شاید متعلق به دزد دریایی باشد!',
     },
-    // Example: Pickupable wire that can be transformed
     {
       id: 'obj2-wire-bare',
       name: 'Bare Wire End',
@@ -336,22 +323,21 @@ export const SEED_SCENE_2: Scene = {
       height: 35,
       rotation: 0,
       zIndex: 2,
+      layerIndex: 2,
       visible: true,
       oneTimeUse: false,
-      message: '⚡ A bare wire end. It looks dangerous without insulation.',
-      // This wire can be transformed when wire-cutter is used on it
+      message: '⚡ یک سر سیم لخت. بدون عایق خطرناک به نظر می‌رسد.',
       transforms: [
         {
           requiresItem: 'wire-cutter',
           newImageUrl: makeSvg('Fixed Wire', '#10b981', 60, 40, '✓'),
           newName: 'Fixed Wire',
-          newMessage: '✅ You used the wire cutter to fix the bare wire. It is now safe!',
-          consumesItem: false, // wire-cutter is not consumed
+          newMessage: '✅ سیم‌چین را استفاده کردید و سیم لخت به سیم سالم تبدیل شد!',
+          consumesItem: false,
           triggersDiscovery: true,
         },
       ],
     },
-    // Example: Pickupable wire cutter
     {
       id: 'obj2-wire-cutter',
       name: 'Wire Cutter',
@@ -363,14 +349,15 @@ export const SEED_SCENE_2: Scene = {
       height: 45,
       rotation: 0,
       zIndex: 2,
+      layerIndex: 2,
       visible: true,
       oneTimeUse: false,
       pickupable: true,
       pickupItemId: 'wire-cutter',
-      pickupMessage: '🔧 You picked up the wire cutter. It might be useful!',
+      pickupMessage: '🔧 سیم‌چین را برداشتید. شاید به درد بخورد!',
     },
   ],
-  clueChain: ['obj2-clue-note', 'obj2-clue-frame', 'obj2-number-3'],
+  clueChain: ['obj2-clue-note', 'obj2-clue-frame'],
   exitNumber: 3,
 };
 

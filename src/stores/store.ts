@@ -70,6 +70,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       description,
       scenes: [],
       finalLockDigits: '',
+      assets: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };

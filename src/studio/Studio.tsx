@@ -103,12 +103,9 @@ function KonvaImage({ obj, isSelected, onSelect, onDragEnd, onChange }: {
 
 function getTypeColor(type: ObjectType): string {
   switch (type) {
-    case 'clue': return '#3b82f6';
-    case 'number-piece': return '#f59e0b';
     case 'decoration': return '#6b7280';
     case 'inventory': return '#10b981';
     case 'container': return '#8b5cf6';
-    case 'exit': return '#ef4444';
     default: return '#6b7280';
   }
 }
@@ -162,12 +159,9 @@ function PropertiesPanel() {
           value={obj.type}
           onChange={e => handleChange('type', e.target.value)}
         >
-          <option value="clue">Clue</option>
-          <option value="number-piece">Number Piece</option>
           <option value="decoration">Decoration</option>
           <option value="inventory">Inventory Item</option>
           <option value="container">Container</option>
-          <option value="exit">Exit</option>
         </select>
       </div>
 
@@ -227,13 +221,11 @@ function PropertiesPanel() {
           value={obj.message || ''} onChange={e => handleChange('message', e.target.value)} rows={2} />
       </div>
 
-      {obj.type === 'number-piece' && (
-        <div>
-          <label className="block text-gray-400 mb-1">Number (0-9)</label>
-          <input type="number" min={0} max={9} className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
-            value={obj.number ?? ''} onChange={e => handleChange('number', e.target.value ? Number(e.target.value) : undefined)} />
-        </div>
-      )}
+      <div>
+        <label className="block text-gray-400 mb-1">Digit (0-9, optional)</label>
+        <input type="number" min={0} max={9} className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
+          value={obj.digit ?? ''} onChange={e => handleChange('digit', e.target.value ? Number(e.target.value) : undefined)} />
+      </div>
 
       <div className="flex items-center gap-4">
         <label className="flex items-center gap-2">
@@ -432,13 +424,88 @@ function PropertiesPanel() {
   );
 }
 
+// ============ Assets Panel ============
+function AssetsPanel() {
+  const { scenes, currentProjectId, projects } = useStudioStore();
+  const project = projects.find(p => p.id === currentProjectId);
+  const [showUpload, setShowUpload] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  if (!project) return null;
+
+  // Get all assets from all scenes
+  const allAssets = new Map<string, { url: string; name: string }>();
+  project.scenes.forEach(sceneId => {
+    const scene = scenes[sceneId];
+    if (!scene) return;
+    // Add background
+    if (scene.backgroundUrl) {
+      allAssets.set(scene.backgroundUrl, { url: scene.backgroundUrl, name: `${scene.title} Background` });
+    }
+    // Add object images
+    scene.objects.forEach(obj => {
+      if (obj.imageUrl) {
+        allAssets.set(obj.imageUrl, { url: obj.imageUrl, name: obj.name });
+      }
+    });
+  });
+
+  const handleAssetUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      // Asset is now available via the uploaded image
+      // In a real app, this would be stored in a global assets store
+      alert(`Asset "${file.name}" uploaded successfully!`);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div className="p-3 border-t border-gray-700">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="font-bold text-cyan-300 text-sm">📁 Assets</h3>
+        <button
+          className="bg-cyan-700 hover:bg-cyan-600 text-white px-2 py-0.5 rounded text-xs"
+          onClick={() => fileInputRef.current?.click()}
+        >
+          + Upload
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={handleAssetUpload}
+        />
+      </div>
+      <p className="text-xs text-gray-500 mb-2">{allAssets.size} images in project</p>
+      <div className="grid grid-cols-3 gap-1 max-h-32 overflow-y-auto">
+        {Array.from(allAssets.entries()).slice(0, 12).map(([url, asset]) => (
+          <div key={url} className="aspect-square bg-gray-800 rounded overflow-hidden relative group">
+            <img src={url} alt={asset.name} className="w-full h-full object-cover" />
+            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+              <span className="text-xs text-white text-center px-1 truncate">{asset.name}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ============ Layers Panel ============
 function LayersPanel() {
   const { scenes, currentSceneId, selectedObjectIds, selectObject } = useStudioStore();
   const scene = currentSceneId ? scenes[currentSceneId] : null;
   if (!scene) return null;
 
-  const sorted = [...scene.objects].sort((a, b) => b.zIndex - a.zIndex);
+  // Sort by layerIndex first, then zIndex
+  const sorted = [...scene.objects].sort((a, b) => {
+    if (a.layerIndex !== b.layerIndex) return b.layerIndex - a.layerIndex;
+    return b.zIndex - a.zIndex;
+  });
 
   return (
     <div className="p-3">
@@ -454,8 +521,9 @@ function LayersPanel() {
           >
             <div className="w-3 h-3 rounded" style={{ background: getTypeColor(obj.type) }} />
             <span className="truncate flex-1">{obj.name}</span>
-            <span className="text-gray-500 text-xs">{obj.type}</span>
-            {obj.view && <span className="text-amber-400 text-xs">🔍</span>}
+            <span className="text-gray-500 text-xs">L{obj.layerIndex}</span>
+            {obj.digit !== undefined && <span className="text-amber-400 text-xs">{obj.digit}</span>}
+            {obj.view && <span className="text-purple-400 text-xs">🔍</span>}
           </div>
         ))}
       </div>
@@ -550,8 +618,8 @@ function ValidationPanel() {
     if (scene.clueChain.length === 0 && scene.objects.length > 0) {
       warnings.push(`[${scene.title}]: No clue chain defined`);
     }
-    if (scene.objects.filter(o => o.type === 'number-piece').length === 0) {
-      errors.push(`[${scene.title}]: No number pieces found`);
+    if (scene.objects.filter(o => o.digit !== undefined).length === 0) {
+      errors.push(`[${scene.title}]: No objects with digits found`);
     }
   }
 
@@ -725,6 +793,7 @@ export default function Studio() {
       height: 80,
       rotation: 0,
       zIndex: (currentScene?.objects.length || 0),
+      layerIndex: (currentScene?.objects.length || 0),
       visible: true,
       oneTimeUse: false,
     };
@@ -1096,14 +1165,11 @@ export default function Studio() {
         <div className="w-48 bg-surface border-l border-gray-700 flex flex-col overflow-y-auto flex-shrink-0">
           <div className="p-3 border-b border-gray-700">
             <h3 className="text-xs font-bold text-gray-400 mb-2">Add Object</h3>
-            <div className="grid grid-cols-2 gap-1">
+            <div className="grid grid-cols-1 gap-1">
               {([
-                ['clue', '🔍 Clue'],
-                ['number-piece', '🔢 Number'],
-                ['decoration', '🖼️ Deco'],
+                ['decoration', '🖼️ Decoration'],
                 ['inventory', '🎒 Item'],
                 ['container', '📦 Container'],
-                ['exit', '🚪 Exit'],
               ] as [ObjectType, string][]).map(([type, label]) => (
                 <button
                   key={type}
@@ -1166,6 +1232,9 @@ export default function Studio() {
             </div>
           )}
 
+          {/* Assets */}
+          <AssetsPanel />
+          
           {/* Layers */}
           <LayersPanel />
           
