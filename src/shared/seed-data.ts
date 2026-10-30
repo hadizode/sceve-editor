@@ -1,8 +1,8 @@
-import type { Project, Scene, Session } from './types';
+import type { Project, Scene, Session, SceneObject } from './types';
 
 // SVG placeholder generator with better visuals
 function makeSvg(text: string, color: string, w = 100, h = 100, emoji = ''): string {
-  return `data:image/svg+xml,${encodeURIComponent(
+  return `image/svg+xml,${encodeURIComponent(
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">
       <defs>
         <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -17,7 +17,7 @@ function makeSvg(text: string, color: string, w = 100, h = 100, emoji = ''): str
   )}`;
 }
 
-export const SEED_BACKGROUND = `data:image/svg+xml,${encodeURIComponent(
+export const SEED_BACKGROUND = `image/svg+xml,${encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600">
     <defs>
       <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -34,43 +34,83 @@ export const SEED_BACKGROUND = `data:image/svg+xml,${encodeURIComponent(
       </pattern>
     </defs>
     <rect width="100%" height="100%" fill="url(#bg)"/>
-    <!-- Floor -->
     <rect x="0" y="420" width="800" height="180" fill="url(#wood)" opacity="0.7"/>
-    <!-- Walls -->
     <rect x="0" y="0" width="800" height="420" fill="none" stroke="#334155" stroke-width="1"/>
-    <!-- Window -->
     <rect x="320" y="40" width="160" height="120" fill="#0a1628" stroke="#4a5568" stroke-width="3" rx="4"/>
     <line x1="400" y1="40" x2="400" y2="160" stroke="#4a5568" stroke-width="2"/>
     <line x1="320" y1="100" x2="480" y2="100" stroke="#4a5568" stroke-width="2"/>
-    <!-- Stars in window -->
     <circle cx="350" cy="65" r="1.5" fill="#fbbf24"/>
     <circle cx="380" cy="80" r="1" fill="#fbbf24"/>
     <circle cx="420" cy="55" r="1.5" fill="#fbbf24"/>
     <circle cx="450" cy="75" r="1" fill="#fbbf24"/>
     <circle cx="460" cy="130" r="1.5" fill="#fbbf24"/>
-    <!-- Moon -->
     <circle cx="440" cy="60" r="12" fill="#fde68a" opacity="0.8"/>
-    <!-- Bookshelf -->
     <rect x="50" y="100" width="200" height="300" fill="#3d2216" stroke="#5c3a1e" stroke-width="2" rx="4"/>
     <line x1="50" y1="180" x2="250" y2="180" stroke="#5c3a1e" stroke-width="3"/>
     <line x1="50" y1="260" x2="250" y2="260" stroke="#5c3a1e" stroke-width="3"/>
     <line x1="50" y1="340" x2="250" y2="340" stroke="#5c3a1e" stroke-width="3"/>
-    <!-- Desk -->
     <rect x="500" y="320" width="250" height="100" fill="#4a2c17" stroke="#5c3a1e" stroke-width="2" rx="4"/>
     <rect x="520" y="420" width="15" height="80" fill="#3d2216"/>
     <rect x="720" y="420" width="15" height="80" fill="#3d2216"/>
-    <!-- Rug -->
     <ellipse cx="400" cy="480" rx="150" ry="60" fill="#7c2d12" opacity="0.6" stroke="#92400e" stroke-width="2"/>
     <ellipse cx="400" cy="480" rx="120" ry="45" fill="none" stroke="#b45309" stroke-width="1" opacity="0.5"/>
-    <!-- Room label -->
     <text x="400" y="590" text-anchor="middle" fill="#475569" font-size="11" font-family="Vazirmatn">اتاق کتابخانه قدیمی</text>
   </svg>`
 )}`;
 
+// Clock View - interactive view when clicking the clock
+const CLOCK_VIEW = {
+  id: 'view-clock',
+  title: 'نمای نزدیک ساعت',
+  backgroundUrl: `image/svg+xml,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400">
+      <defs>
+        <radialGradient id="clockbg">
+          <stop offset="0%" style="stop-color:#2d1b4e"/>
+          <stop offset="100%" style="stop-color:#1a0a2e"/>
+        </radialGradient>
+      </defs>
+      <rect width="100%" height="100%" fill="url(#clockbg)"/>
+      <circle cx="200" cy="200" r="150" fill="#1a1a2e" stroke="#c9a84c" stroke-width="4"/>
+      <circle cx="200" cy="200" r="140" fill="none" stroke="#8b7332" stroke-width="1"/>
+      <!-- Clock numbers -->
+      <text x="200" y="80" text-anchor="middle" fill="#c9a84c" font-size="20" font-family="Vazirmatn">۱۲</text>
+      <text x="320" y="210" text-anchor="middle" fill="#c9a84c" font-size="20" font-family="Vazirmatn">۳</text>
+      <text x="200" y="340" text-anchor="middle" fill="#c9a84c" font-size="20" font-family="Vazirmatn">۶</text>
+      <text x="80" y="210" text-anchor="middle" fill="#c9a84c" font-size="20" font-family="Vazirmatn">۹</text>
+      <!-- Hands at 3:15 -->
+      <line x1="200" y1="200" x2="280" y2="200" stroke="#c9a84c" stroke-width="4" stroke-linecap="round"/>
+      <line x1="200" y1="200" x2="200" y2="120" stroke="#c9a84c" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="200" cy="200" r="6" fill="#c9a84c"/>
+    </svg>`
+  )}`,
+  width: 400,
+  height: 400,
+  objects: [
+    {
+      id: 'view-clock-secret',
+      name: 'رمز ساعت',
+      type: 'clue',
+      imageUrl: makeSvg('۳:۱۵', '#c9a84c', 80, 40, ''),
+      x: 160,
+      y: 350,
+      width: 80,
+      height: 35,
+      rotation: 0,
+      zIndex: 1,
+      visible: true,
+      oneTimeUse: false,
+      message: '🕐 عقربه‌ها ساعت ۳:۱۵ را نشان می‌دهند... شاید این یک رمز باشد!',
+    },
+  ] as SceneObject[],
+  requiresItem: undefined,
+  closeMessage: 'ساعت را بستید',
+};
+
 export const SEED_PROJECT: Project = {
   id: 'proj-seed-001',
-  name: 'اتاق فرار کتابخانه',
-  description: 'یک اتاق فرار با زنجیره سرنخ‌ها در کتابخانه قدیمی. سه قطعه عدد را پیدا کنید و قفل نهایی را باز کنید.',
+  name: 'Escape Room: Old Library',
+  description: 'A classic escape room with chained clues in an old library. Find all number pieces and unlock the final lock.',
   scenes: ['scene-room-001', 'scene-room-002'],
   finalLockDigits: '73',
   createdAt: new Date().toISOString(),
@@ -80,16 +120,16 @@ export const SEED_PROJECT: Project = {
 export const SEED_SCENE: Scene = {
   id: 'scene-room-001',
   projectId: 'proj-seed-001',
-  title: 'کتابخانه قدیمی',
+  title: 'Old Library',
   width: 800,
   height: 600,
   backgroundUrl: SEED_BACKGROUND,
   objects: [
     {
       id: 'obj-clue-book',
-      name: 'کتاب قرمز قدیمی',
+      name: 'Red Ancient Book',
       type: 'clue',
-      imageUrl: makeSvg('کتاب قرمز', '#dc2626', 70, 90, '📕'),
+      imageUrl: makeSvg('Red Book', '#dc2626', 70, 90, '📕'),
       x: 80,
       y: 130,
       width: 60,
@@ -98,13 +138,13 @@ export const SEED_SCENE: Scene = {
       zIndex: 2,
       visible: true,
       oneTimeUse: false,
-      message: '📜 یک یادداشت داخل کتاب: "کلید زیر فرش پنهان شده است"',
+      message: '📜 You found a note inside the book: "The key is hidden under the rug"',
     },
     {
       id: 'obj-clue-painting',
-      name: 'تابلوی روی دیوار',
+      name: 'Wall Painting',
       type: 'clue',
-      imageUrl: makeSvg('تابلو', '#0ea5e9', 100, 80, '🖼️'),
+      imageUrl: makeSvg('Painting', '#0ea5e9', 100, 80, '🖼️'),
       x: 550,
       y: 120,
       width: 90,
@@ -113,13 +153,13 @@ export const SEED_SCENE: Scene = {
       zIndex: 1,
       visible: true,
       oneTimeUse: false,
-      message: '🔍 پشت تابلو نوشته: "عدد اول در صندوق است، عدد دوم در گلدان"',
+      message: '🔍 Behind the painting there is a note: "The first number is in the box, the second in the vase"',
     },
     {
       id: 'obj-clue-rug',
-      name: 'فرش زینتی',
+      name: 'Ornamental Rug',
       type: 'clue',
-      imageUrl: makeSvg('فرش', '#92400e', 140, 80, '🟫'),
+      imageUrl: makeSvg('Rug', '#92400e', 140, 80, '🟫'),
       x: 330,
       y: 440,
       width: 140,
@@ -128,14 +168,14 @@ export const SEED_SCENE: Scene = {
       zIndex: 1,
       visible: true,
       oneTimeUse: false,
-      message: '🔑 زیر فرش یک کلید کوچک طلایی پیدا کردید!',
+      message: '🔑 You found a small golden key under the rug!',
       grantsItem: 'key-gold',
     },
     {
       id: 'obj-container-box',
-      name: 'صندوق چوبی قفل‌دار',
+      name: 'Locked Wooden Box',
       type: 'container',
-      imageUrl: makeSvg('صندوق', '#7c3aed', 90, 70, '📦'),
+      imageUrl: makeSvg('Box', '#7c3aed', 90, 70, '📦'),
       x: 560,
       y: 330,
       width: 80,
@@ -144,16 +184,16 @@ export const SEED_SCENE: Scene = {
       zIndex: 3,
       visible: true,
       oneTimeUse: true,
-      message: '🔓 صندوق باز شد! عدد ۷ داخل آن بود!',
+      message: '🔓 The box opened! Number 7 was inside!',
       requiresItem: ['key-gold'],
       number: 7,
       grantsItem: 'digit-7',
     },
     {
       id: 'obj-number-7',
-      name: 'عدد ۷',
+      name: 'Number 7',
       type: 'number-piece',
-      imageUrl: makeSvg('۷', '#f59e0b', 50, 50, ''),
+      imageUrl: makeSvg('7', '#f59e0b', 50, 50, ''),
       x: 580,
       y: 290,
       width: 45,
@@ -163,13 +203,13 @@ export const SEED_SCENE: Scene = {
       visible: true,
       oneTimeUse: false,
       number: 7,
-      message: '✨ عدد ۷ را پیدا کردید! این عدد خروجی این اتاق است.',
+      message: '✨ You found number 7! This is the exit digit for this room.',
     },
     {
       id: 'obj-deco-clock',
-      name: 'ساعت دیواری',
+      name: 'Wall Clock',
       type: 'decoration',
-      imageUrl: makeSvg('ساعت', '#6b7280', 60, 60, '🕐'),
+      imageUrl: makeSvg('Clock', '#6b7280', 60, 60, '🕐'),
       x: 300,
       y: 60,
       width: 55,
@@ -178,13 +218,14 @@ export const SEED_SCENE: Scene = {
       zIndex: 1,
       visible: true,
       oneTimeUse: false,
-      message: '🕐 ساعت قدیمی متوقف شده. عقربه‌ها روی ۳:۱۵ هستند...',
+      message: '🕐 An old clock. The hands are frozen at 3:15...',
+      view: CLOCK_VIEW,
     },
     {
       id: 'obj-deco-candle',
-      name: 'شمعدان',
+      name: 'Candlestick',
       type: 'decoration',
-      imageUrl: makeSvg('شمع', '#f59e0b', 40, 60, '🕯️'),
+      imageUrl: makeSvg('Candle', '#f59e0b', 40, 60, '🕯️'),
       x: 650,
       y: 290,
       width: 35,
@@ -193,21 +234,20 @@ export const SEED_SCENE: Scene = {
       zIndex: 2,
       visible: true,
       oneTimeUse: false,
-      message: '🕯️ شمع هنوز روشن است. نور ضعیفی دارد.',
+      message: '🕯️ The candle is still lit. It gives a faint glow.',
     },
   ],
   clueChain: ['obj-clue-book', 'obj-clue-rug', 'obj-container-box', 'obj-number-7'],
   exitNumber: 7,
 };
 
-// Second scene for the multi-room experience
 export const SEED_SCENE_2: Scene = {
   id: 'scene-room-002',
   projectId: 'proj-seed-001',
-  title: 'اتاق زیرزمین',
+  title: 'Basement Room',
   width: 800,
   height: 600,
-  backgroundUrl: `data:image/svg+xml,${encodeURIComponent(
+  backgroundUrl: `image/svg+xml,${encodeURIComponent(
     `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600">
       <defs>
         <linearGradient id="bg2" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -224,9 +264,9 @@ export const SEED_SCENE_2: Scene = {
   objects: [
     {
       id: 'obj2-clue-note',
-      name: 'یادداشت روی میز',
+      name: 'Note on Table',
       type: 'clue',
-      imageUrl: makeSvg('یادداشت', '#fbbf24', 80, 60, '📝'),
+      imageUrl: makeSvg('Note', '#fbbf24', 80, 60, '📝'),
       x: 350,
       y: 250,
       width: 70,
@@ -235,13 +275,13 @@ export const SEED_SCENE_2: Scene = {
       zIndex: 2,
       visible: true,
       oneTimeUse: false,
-      message: '📝 یادداشت: "عدد ۳ پشت قاب عکس پنهان شده"',
+      message: '📝 The note says: "Number 3 is hidden behind the photo frame"',
     },
     {
       id: 'obj2-clue-frame',
-      name: 'قاب عکس',
+      name: 'Photo Frame',
       type: 'clue',
-      imageUrl: makeSvg('قاب عکس', '#8b5cf6', 80, 100, '🖼️'),
+      imageUrl: makeSvg('Frame', '#8b5cf6', 80, 100, '🖼️'),
       x: 150,
       y: 150,
       width: 70,
@@ -250,14 +290,14 @@ export const SEED_SCENE_2: Scene = {
       zIndex: 1,
       visible: true,
       oneTimeUse: false,
-      message: '🔢 پشت قاب عکس، عدد ۳ حک شده!',
+      message: '🔢 Behind the photo frame, number 3 is carved!',
       grantsItem: 'digit-3',
     },
     {
       id: 'obj2-number-3',
-      name: 'عدد ۳',
+      name: 'Number 3',
       type: 'number-piece',
-      imageUrl: makeSvg('۳', '#10b981', 50, 50, ''),
+      imageUrl: makeSvg('3', '#10b981', 50, 50, ''),
       x: 170,
       y: 260,
       width: 45,
@@ -267,13 +307,13 @@ export const SEED_SCENE_2: Scene = {
       visible: true,
       oneTimeUse: false,
       number: 3,
-      message: '✨ عدد ۳ را پیدا کردید!',
+      message: '✨ You found number 3!',
     },
     {
       id: 'obj2-deco-skull',
-      name: 'جمجمه تزئینی',
+      name: 'Decorative Skull',
       type: 'decoration',
-      imageUrl: makeSvg('جمجمه', '#6b7280', 50, 50, '💀'),
+      imageUrl: makeSvg('Skull', '#6b7280', 50, 50, '💀'),
       x: 550,
       y: 350,
       width: 45,
@@ -282,7 +322,7 @@ export const SEED_SCENE_2: Scene = {
       zIndex: 1,
       visible: true,
       oneTimeUse: false,
-      message: '💀 یک جمجمه قدیمی. شاید متعلق به دزد دریایی باشد!',
+      message: '💀 An old skull. Maybe it belonged to a pirate!',
     },
   ],
   clueChain: ['obj2-clue-note', 'obj2-clue-frame', 'obj2-number-3'],
@@ -294,8 +334,8 @@ export const SEED_SESSION: Session = {
   token: 'seed-token-abc123',
   projectId: 'proj-seed-001',
   players: [
-    { telegramId: 'user-1', name: 'بازیکن ۱', online: true, ready: false },
-    { telegramId: 'user-2', name: 'بازیکن ۲', online: true, ready: false },
+    { telegramId: 'user-1', name: 'Player 1', online: true, ready: false },
+    { telegramId: 'user-2', name: 'Player 2', online: true, ready: false },
   ],
   state: {
     currentSceneId: 'scene-room-001',

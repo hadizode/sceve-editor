@@ -1,8 +1,8 @@
-import React, { useState, useRef, useCallback } from 'react';
-import { Stage, Layer, Image as KImage, Rect, Text, Transformer, Group, Line, Circle } from 'react-konva';
+import React, { useState, useRef } from 'react';
+import { Stage, Layer, Image as KImage, Rect, Text, Transformer, Group, Line } from 'react-konva';
 import useImage from 'use-image';
 import { useStudioStore } from '../stores/store';
-import type { SceneObject, ObjectType } from '../shared/types';
+import type { SceneObject, ObjectType, View } from '../shared/types';
 import { validateScene } from '../shared/types';
 
 // ============ Konva Image Component ============
@@ -85,6 +85,18 @@ function KonvaImage({ obj, isSelected, onSelect, onDragEnd, onChange }: {
         align="center"
         listening={false}
       />
+      {/* View indicator */}
+      {obj.view && (
+        <Rect
+          x={obj.x + obj.width - 16}
+          y={obj.y + obj.height - 16}
+          width={14}
+          height={14}
+          fill="#6366f1"
+          cornerRadius={3}
+          listening={false}
+        />
+      )}
     </Group>
   );
 }
@@ -106,11 +118,12 @@ function PropertiesPanel() {
   const { scenes, currentSceneId, selectedObjectIds, updateObject } = useStudioStore();
   const scene = currentSceneId ? scenes[currentSceneId] : null;
   const obj = scene?.objects.find(o => o.id === selectedObjectIds[0]);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   if (!obj) {
     return (
       <div className="p-4 text-gray-400 text-sm">
-        <p>یک شیء را انتخاب کنید تا ویژگی‌های آن نمایش داده شود</p>
+        <p>Select an object to edit its properties</p>
       </div>
     );
   }
@@ -119,12 +132,22 @@ function PropertiesPanel() {
     updateObject(obj.id, { [field]: value });
   };
 
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      handleChange('imageUrl', reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
   return (
     <div className="p-3 space-y-3 text-sm overflow-y-auto max-h-[calc(100vh-200px)]">
-      <h3 className="font-bold text-indigo-300 text-base">ویژگی‌های شیء</h3>
+      <h3 className="font-bold text-indigo-300 text-base">Object Properties</h3>
       
       <div>
-        <label className="block text-gray-400 mb-1">نام</label>
+        <label className="block text-gray-400 mb-1">Name</label>
         <input
           className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
           value={obj.name}
@@ -133,19 +156,40 @@ function PropertiesPanel() {
       </div>
 
       <div>
-        <label className="block text-gray-400 mb-1">نوع</label>
+        <label className="block text-gray-400 mb-1">Type</label>
         <select
           className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
           value={obj.type}
           onChange={e => handleChange('type', e.target.value)}
         >
-          <option value="clue">سرنخ</option>
-          <option value="number-piece">قطعه عدد</option>
-          <option value="decoration">تزئینی</option>
-          <option value="inventory">آیتم</option>
-          <option value="container">ظرف</option>
-          <option value="exit">خروجی</option>
+          <option value="clue">Clue</option>
+          <option value="number-piece">Number Piece</option>
+          <option value="decoration">Decoration</option>
+          <option value="inventory">Inventory Item</option>
+          <option value="container">Container</option>
+          <option value="exit">Exit</option>
         </select>
+      </div>
+
+      {/* Image Upload */}
+      <div>
+        <label className="block text-gray-400 mb-1">Image</label>
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={handleImageUpload}
+        />
+        <button
+          className="w-full bg-gray-700 hover:bg-gray-600 text-white px-2 py-1.5 rounded text-xs"
+          onClick={() => imageInputRef.current?.click()}
+        >
+          📁 Upload Image
+        </button>
+        <div className="mt-2 w-full h-16 bg-gray-800 rounded overflow-hidden flex items-center justify-center">
+          <img src={obj.imageUrl} alt="Preview" className="max-w-full max-h-full object-contain" />
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -160,32 +204,32 @@ function PropertiesPanel() {
             value={Math.round(obj.y)} onChange={e => handleChange('y', Number(e.target.value))} />
         </div>
         <div>
-          <label className="block text-gray-400 mb-1">عرض</label>
+          <label className="block text-gray-400 mb-1">Width</label>
           <input type="number" className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
             value={Math.round(obj.width)} onChange={e => handleChange('width', Number(e.target.value))} />
         </div>
         <div>
-          <label className="block text-gray-400 mb-1">ارتفاع</label>
+          <label className="block text-gray-400 mb-1">Height</label>
           <input type="number" className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
             value={Math.round(obj.height)} onChange={e => handleChange('height', Number(e.target.value))} />
         </div>
       </div>
 
       <div>
-        <label className="block text-gray-400 mb-1">چرخش (درجه)</label>
+        <label className="block text-gray-400 mb-1">Rotation (deg)</label>
         <input type="number" className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
           value={Math.round(obj.rotation)} onChange={e => handleChange('rotation', Number(e.target.value))} />
       </div>
 
       <div>
-        <label className="block text-gray-400 mb-1">پیام</label>
-        <textarea className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
+        <label className="block text-gray-400 mb-1">Message (shown on click)</label>
+        <textarea className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white" dir="rtl" lang="fa"
           value={obj.message || ''} onChange={e => handleChange('message', e.target.value)} rows={2} />
       </div>
 
       {obj.type === 'number-piece' && (
         <div>
-          <label className="block text-gray-400 mb-1">عدد (۰-۹)</label>
+          <label className="block text-gray-400 mb-1">Number (0-9)</label>
           <input type="number" min={0} max={9} className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
             value={obj.number ?? ''} onChange={e => handleChange('number', e.target.value ? Number(e.target.value) : undefined)} />
         </div>
@@ -194,26 +238,61 @@ function PropertiesPanel() {
       <div className="flex items-center gap-4">
         <label className="flex items-center gap-2">
           <input type="checkbox" checked={obj.visible} onChange={e => handleChange('visible', e.target.checked)} />
-          <span className="text-gray-300">نمایش</span>
+          <span className="text-gray-300">Visible</span>
         </label>
         <label className="flex items-center gap-2">
           <input type="checkbox" checked={obj.oneTimeUse} onChange={e => handleChange('oneTimeUse', e.target.checked)} />
-          <span className="text-gray-300">یکبار مصرف</span>
+          <span className="text-gray-300">One-time use</span>
         </label>
       </div>
 
       <div>
-        <label className="block text-gray-400 mb-1">نیاز به آیتم (IDs با کاما)</label>
+        <label className="block text-gray-400 mb-1">Requires Items (comma-separated IDs)</label>
         <input className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
           value={obj.requiresItem?.join(', ') || ''}
           onChange={e => handleChange('requiresItem', e.target.value ? e.target.value.split(',').map(s => s.trim()) : undefined)} />
       </div>
 
       <div>
-        <label className="block text-gray-400 mb-1">آیتم اعطایی (ID)</label>
+        <label className="block text-gray-400 mb-1">Grants Item (ID)</label>
         <input className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
           value={obj.grantsItem || ''}
           onChange={e => handleChange('grantsItem', e.target.value || undefined)} />
+      </div>
+
+      {/* View Section */}
+      <div className="border-t border-gray-700 pt-3 mt-3">
+        <h4 className="font-bold text-amber-300 text-sm mb-2">🔍 Interactive View</h4>
+        {obj.view ? (
+          <div className="space-y-2">
+            <p className="text-xs text-green-400">✓ View is configured</p>
+            <p className="text-xs text-gray-400">Title: {obj.view.title}</p>
+            <p className="text-xs text-gray-400">Objects: {obj.view.objects.length}</p>
+            <button
+              className="w-full bg-red-700 hover:bg-red-600 text-white px-2 py-1 rounded text-xs"
+              onClick={() => handleChange('view', undefined)}
+            >
+              Remove View
+            </button>
+          </div>
+        ) : (
+          <button
+            className="w-full bg-amber-700 hover:bg-amber-600 text-white px-2 py-1.5 rounded text-xs"
+            onClick={() => {
+              const newView: View = {
+                id: `view-${Date.now()}`,
+                title: obj.name + ' - Close-up',
+                backgroundUrl: obj.imageUrl,
+                width: 400,
+                height: 400,
+                objects: [],
+              };
+              handleChange('view', newView);
+            }}
+          >
+            + Add Interactive View
+          </button>
+        )}
       </div>
     </div>
   );
@@ -221,7 +300,7 @@ function PropertiesPanel() {
 
 // ============ Layers Panel ============
 function LayersPanel() {
-  const { scenes, currentSceneId, selectedObjectIds, selectObject, reorderObjects } = useStudioStore();
+  const { scenes, currentSceneId, selectedObjectIds, selectObject } = useStudioStore();
   const scene = currentSceneId ? scenes[currentSceneId] : null;
   if (!scene) return null;
 
@@ -229,7 +308,7 @@ function LayersPanel() {
 
   return (
     <div className="p-3">
-      <h3 className="font-bold text-indigo-300 mb-2">لایه‌ها</h3>
+      <h3 className="font-bold text-indigo-300 mb-2">Layers</h3>
       <div className="space-y-1 max-h-48 overflow-y-auto">
         {sorted.map(obj => (
           <div
@@ -242,6 +321,7 @@ function LayersPanel() {
             <div className="w-3 h-3 rounded" style={{ background: getTypeColor(obj.type) }} />
             <span className="truncate flex-1">{obj.name}</span>
             <span className="text-gray-500 text-xs">{obj.type}</span>
+            {obj.view && <span className="text-amber-400 text-xs">🔍</span>}
           </div>
         ))}
       </div>
@@ -280,7 +360,7 @@ function ClueChainPanel() {
 
   return (
     <div className="p-3 border-t border-gray-700">
-      <h3 className="font-bold text-indigo-300 mb-2">زنجیره سرنخ</h3>
+      <h3 className="font-bold text-indigo-300 mb-2">Clue Chain</h3>
       {errors.length > 0 && (
         <div className="mb-2 p-2 bg-red-900/30 border border-red-700 rounded text-xs text-red-300">
           {errors.map((e, i) => <div key={i}>⚠️ {e}</div>)}
@@ -303,7 +383,7 @@ function ClueChainPanel() {
         onChange={e => { if (e.target.value) addToChain(e.target.value); e.target.value = ''; }}
         defaultValue=""
       >
-        <option value="">+ افزودن به زنجیره...</option>
+        <option value="">+ Add to chain...</option>
         {scene.objects.filter(o => !scene.clueChain.includes(o.id)).map(o => (
           <option key={o.id} value={o.id}>{o.name} ({o.type})</option>
         ))}
@@ -323,10 +403,10 @@ function ValidationPanel() {
   const warnings: string[] = [];
 
   if (project.scenes.length === 0) {
-    errors.push('پروژه باید حداقل یک اتاق داشته باشد');
+    errors.push('Project must have at least one room');
   }
   if (project.finalLockDigits.length !== project.scenes.length && project.scenes.length > 0) {
-    errors.push(`تعداد ارقام قفل نهایی (${project.finalLockDigits.length}) باید برابر تعداد اتاق‌ها (${project.scenes.length}) باشد`);
+    errors.push(`Final lock digits (${project.finalLockDigits.length}) must match number of rooms (${project.scenes.length})`);
   }
 
   for (const scene of projectScenes) {
@@ -334,25 +414,25 @@ function ValidationPanel() {
     errors.push(...sceneErrors.map(e => `[${scene.title}]: ${e}`));
     
     if (scene.clueChain.length === 0 && scene.objects.length > 0) {
-      warnings.push(`[${scene.title}]: زنجیره سرنخ تعریف نشده`);
+      warnings.push(`[${scene.title}]: No clue chain defined`);
     }
     if (scene.objects.filter(o => o.type === 'number-piece').length === 0) {
-      errors.push(`[${scene.title}]: هیچ قطعه عددی وجود ندارد`);
+      errors.push(`[${scene.title}]: No number pieces found`);
     }
   }
 
   if (errors.length === 0 && warnings.length === 0) {
     return (
       <div className="p-3 border-t border-gray-700">
-        <h3 className="font-bold text-green-400 text-sm mb-1">✓ اعتبارسنجی</h3>
-        <p className="text-xs text-gray-400">همه بررسی‌ها با موفقیت انجام شد</p>
+        <h3 className="font-bold text-green-400 text-sm mb-1">✓ Validation</h3>
+        <p className="text-xs text-gray-400">All checks passed</p>
       </div>
     );
   }
 
   return (
     <div className="p-3 border-t border-gray-700">
-      <h3 className="font-bold text-amber-300 text-sm mb-2">⚠️ اعتبارسنجی</h3>
+      <h3 className="font-bold text-amber-300 text-sm mb-2">⚠️ Validation</h3>
       <div className="space-y-1 max-h-32 overflow-y-auto">
         {errors.map((e, i) => (
           <div key={`e${i}`} className="text-xs text-red-400 flex items-start gap-1">
@@ -377,18 +457,18 @@ function PreviewMode() {
   const [previewMessage, setPreviewMessage] = useState<string | null>(null);
   const [previewInventory, setPreviewInventory] = useState<string[]>([]);
 
-  if (!scene) return <div className="text-center text-gray-400 p-8">صحنه‌ای برای پیش‌نمایش نیست</div>;
+  if (!scene) return <div className="text-center text-gray-400 p-8">No scene to preview</div>;
 
   const handleClick = (obj: SceneObject) => {
     if (previewDiscovered.has(obj.id)) {
-      setPreviewMessage('قبلاً کشف شده');
-      setTimeout(() => setPreviewMessage(null), 1500);
+      setPreviewMessage('Already discovered');
+      setTimeout(() => setPreviewMessage(null), 2000);
       return;
     }
     setPreviewDiscovered(prev => new Set([...prev, obj.id]));
     if (obj.message) {
       setPreviewMessage(obj.message);
-      setTimeout(() => setPreviewMessage(null), 3000);
+      setTimeout(() => setPreviewMessage(null), 5000);
     }
     if (obj.grantsItem && !previewInventory.includes(obj.grantsItem)) {
       setPreviewInventory(prev => [...prev, obj.grantsItem!]);
@@ -399,7 +479,7 @@ function PreviewMode() {
     <div className="h-full flex flex-col bg-gray-900">
       {previewMessage && (
         <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 animate-fade-in">
-          <div className="bg-indigo-600 text-white px-4 py-2 rounded-xl shadow-xl text-sm">{previewMessage}</div>
+          <div className="bg-indigo-600 text-white px-4 py-3 rounded-xl shadow-xl text-sm" dir="rtl" lang="fa">{previewMessage}</div>
         </div>
       )}
       <div className="flex-1 flex items-center justify-center p-4 overflow-auto">
@@ -424,8 +504,8 @@ function PreviewMode() {
         </Stage>
       </div>
       <div className="bg-surface p-3 border-t border-gray-700 text-center text-sm text-gray-400">
-        حالت پیش‌نمایش • {previewDiscovered.size}/{scene.objects.length} شیء کشف شده
-        {previewInventory.length > 0 && <span> • آیتم‌ها: {previewInventory.join(', ')}</span>}
+        Preview Mode • {previewDiscovered.size}/{scene.objects.length} objects discovered
+        {previewInventory.length > 0 && <span> • Items: {previewInventory.join(', ')}</span>}
       </div>
     </div>
   );
@@ -443,13 +523,16 @@ export default function Studio() {
     duplicateScene, exportProject, importProject, undo, redo, pushUndo,
   } = store;
   const [previewMode, setPreviewMode] = useState(false);
-
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectDesc, setNewProjectDesc] = useState('');
   const [showImport, setShowImport] = useState(false);
   const [importJson, setImportJson] = useState('');
   const [newSceneName, setNewSceneName] = useState('');
+  const [isPanning, setIsPanning] = useState(false);
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const lastPanPos = useRef({ x: 0, y: 0 });
   const stageRef = useRef<any>(null);
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const currentProject = projects.find(p => p.id === currentProjectId);
@@ -459,12 +542,12 @@ export default function Studio() {
     const id = `obj-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const newObj: SceneObject = {
       id,
-      name: `شیء جدید`,
+      name: `New Object`,
       type,
-      imageUrl: `data:image/svg+xml,${encodeURIComponent(
+      imageUrl: `image/svg+xml,${encodeURIComponent(
         `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80">
           <rect width="100%" height="100%" fill="${getTypeColor(type)}" rx="8"/>
-          <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="white" font-size="12">شیء</text>
+          <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="white" font-size="12">Object</text>
         </svg>`
       )}`,
       x: 100 + Math.random() * 200,
@@ -529,31 +612,73 @@ export default function Studio() {
       }
       if (e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); }
       if (e.ctrlKey && e.key === 'y') { e.preventDefault(); redo(); }
+      if (e.code === 'Space' && !previewMode) {
+        e.preventDefault();
+        setSpaceHeld(true);
+      }
+    };
+    const upHandler = (e: KeyboardEvent) => {
+      if (e.code === 'Space') setSpaceHeld(false);
     };
     window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [selectedObjectIds, deleteObject, undo, redo, pushUndo]);
+    window.addEventListener('keyup', upHandler);
+    return () => {
+      window.removeEventListener('keydown', handler);
+      window.removeEventListener('keyup', upHandler);
+    };
+  }, [selectedObjectIds, deleteObject, undo, redo, pushUndo, previewMode]);
+
+  // Canvas wheel zoom handler
+  const handleCanvasWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+    setZoom(zoom + delta);
+  };
+
+  // Canvas pan handlers
+  const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    // Middle mouse button or space+left click
+    if (e.button === 1 || (e.button === 0 && spaceHeld)) {
+      e.preventDefault();
+      setIsPanning(true);
+      lastPanPos.current = { x: e.clientX, y: e.clientY };
+    }
+  };
+
+  const handleCanvasMouseMove = (e: React.MouseEvent) => {
+    if (isPanning) {
+      const dx = e.clientX - lastPanPos.current.x;
+      const dy = e.clientY - lastPanPos.current.y;
+      setPan(panX + dx, panY + dy);
+      lastPanPos.current = { x: e.clientX, y: e.clientY };
+    }
+  };
+
+  const handleCanvasMouseUp = () => {
+    setIsPanning(false);
+  };
 
   // ============ Projects View ============
   if (view === 'projects') {
     return (
       <div className="min-h-screen p-4 md:p-8 animate-fade-in">
         <div className="max-w-4xl mx-auto">
-          <h1 className="text-2xl md:text-3xl font-bold text-indigo-300 mb-6">🎮 مدیریت پروژه‌ها</h1>
+          <h1 className="text-2xl md:text-3xl font-bold text-indigo-300 mb-6">🎮 Project Management</h1>
           
           {/* Create Project */}
           <div className="bg-surface rounded-xl p-4 mb-6 border border-gray-700">
-            <h2 className="text-lg font-semibold mb-3">ایجاد پروژه جدید</h2>
+            <h2 className="text-lg font-semibold mb-3">Create New Project</h2>
             <div className="flex flex-col md:flex-row gap-3">
               <input
                 className="flex-1 bg-surface-light border border-gray-600 rounded-lg px-3 py-2 text-white"
-                placeholder="نام پروژه"
+                placeholder="Project name"
                 value={newProjectName}
                 onChange={e => setNewProjectName(e.target.value)}
               />
               <input
                 className="flex-1 bg-surface-light border border-gray-600 rounded-lg px-3 py-2 text-white"
-                placeholder="توضیحات"
+                placeholder="Description"
                 value={newProjectDesc}
                 onChange={e => setNewProjectDesc(e.target.value)}
               />
@@ -567,7 +692,7 @@ export default function Studio() {
                   }
                 }}
               >
-                ایجاد
+                Create
               </button>
             </div>
           </div>
@@ -580,24 +705,24 @@ export default function Studio() {
                   <div className="flex-1">
                     <h3 className="text-lg font-semibold text-white">{project.name}</h3>
                     <p className="text-gray-400 text-sm mt-1">{project.description}</p>
-                    <p className="text-gray-500 text-xs mt-1">{project.scenes.length} اتاق</p>
+                    <p className="text-gray-500 text-xs mt-1">{project.scenes.length} room(s)</p>
                   </div>
                   <div className="flex gap-2">
                     <button
                       className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm transition-colors"
                       onClick={() => selectProject(project.id)}
                     >
-                      ویرایش
+                      Edit
                     </button>
                     <button
                       className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1.5 rounded-lg text-sm transition-colors"
                       onClick={() => {
-                        if (confirm('آیا از حذف این پروژه مطمئن هستید؟')) {
+                        if (confirm('Are you sure you want to delete this project?')) {
                           deleteProject(project.id);
                         }
                       }}
                     >
-                      حذف
+                      Delete
                     </button>
                   </div>
                 </div>
@@ -611,14 +736,14 @@ export default function Studio() {
 
   // ============ Editor View ============
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
+    <div className="fixed inset-0 flex flex-col overflow-hidden" style={{ height: '100vh' }}>
       {/* Top Toolbar */}
-      <div className="bg-surface border-b border-gray-700 px-3 py-2 flex items-center gap-2 flex-wrap">
+      <div className="bg-surface border-b border-gray-700 px-3 py-2 flex items-center gap-2 flex-wrap flex-shrink-0">
         <button
           className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1.5 rounded text-sm"
           onClick={() => setView('projects')}
         >
-          ← پروژه‌ها
+          ← Projects
         </button>
         <span className="text-indigo-300 font-semibold text-sm">{currentProject?.name}</span>
         
@@ -633,7 +758,7 @@ export default function Studio() {
               className={`px-3 py-1 rounded text-sm ${sid === currentSceneId ? 'bg-indigo-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
               onClick={() => selectScene(sid)}
             >
-              {s?.title || 'بدون نام'}
+              {s?.title || 'Untitled'}
             </button>
           );
         })}
@@ -645,11 +770,11 @@ export default function Studio() {
               addScene(newSceneName);
               setNewSceneName('');
             } else {
-              addScene(`اتاق ${Date.now() % 1000}`);
+              addScene(`Room ${Date.now() % 1000}`);
             }
           }}
         >
-          + اتاق
+          + Room
         </button>
 
         <div className="h-5 w-px bg-gray-600" />
@@ -666,29 +791,29 @@ export default function Studio() {
           className={`px-2 py-1 rounded text-xs ${showGrid ? 'bg-indigo-600' : 'bg-gray-700'} text-white`}
           onClick={toggleGrid}
         >
-          شبکه
+          Grid
         </button>
         <button
           className={`px-2 py-1 rounded text-xs ${snapToGrid ? 'bg-indigo-600' : 'bg-gray-700'} text-white`}
           onClick={toggleSnap}
         >
-          چسبندگی
+          Snap
         </button>
 
         <div className="h-5 w-px bg-gray-600" />
 
         {/* Undo/Redo */}
-        <button className="text-gray-300 hover:text-white px-1 text-sm" onClick={undo} title="بازگشت">↶</button>
-        <button className="text-gray-300 hover:text-white px-1 text-sm" onClick={redo} title="از نو">↷</button>
+        <button className="text-gray-300 hover:text-white px-1 text-sm" onClick={undo} title="Undo">↶</button>
+        <button className="text-gray-300 hover:text-white px-1 text-sm" onClick={redo} title="Redo">↷</button>
 
         <div className="h-5 w-px bg-gray-600" />
 
         {/* Export/Import */}
         <button className="bg-gray-700 hover:bg-gray-600 text-white px-2 py-1 rounded text-xs" onClick={handleExport}>
-          خروجی JSON
+          Export JSON
         </button>
         <button className="bg-gray-700 hover:bg-gray-600 text-white px-2 py-1 rounded text-xs" onClick={() => setShowImport(!showImport)}>
-          ورود JSON
+          Import JSON
         </button>
         
         <div className="h-5 w-px bg-gray-600" />
@@ -697,7 +822,7 @@ export default function Studio() {
           className={`px-2 py-1 rounded text-xs ${previewMode ? 'bg-amber-600' : 'bg-gray-700 hover:bg-gray-600'} text-white`}
           onClick={() => setPreviewMode(!previewMode)}
         >
-          {previewMode ? '✏️ ویرایش' : '▶️ پیش‌نمایش'}
+          {previewMode ? '✏️ Edit' : '▶️ Preview'}
         </button>
       </div>
 
@@ -706,16 +831,16 @@ export default function Studio() {
         <div className="bg-surface-light border-b border-gray-700 p-3">
           <textarea
             className="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white text-sm h-32"
-            placeholder="JSON پروژه را اینجا بچسبانید..."
+            placeholder="Paste project JSON here..."
             value={importJson}
             onChange={e => setImportJson(e.target.value)}
           />
           <div className="flex gap-2 mt-2">
             <button className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-sm" onClick={handleImport}>
-              وارد کردن
+              Import
             </button>
             <button className="bg-gray-700 text-white px-3 py-1 rounded text-sm" onClick={() => setShowImport(false)}>
-              انصراف
+              Cancel
             </button>
           </div>
         </div>
@@ -723,23 +848,23 @@ export default function Studio() {
 
       {/* Main Content */}
       {previewMode ? (
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 overflow-hidden min-h-0">
           <PreviewMode />
         </div>
       ) : (
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden min-h-0">
         {/* Left Sidebar - Tools */}
-        <div className="w-48 bg-surface border-l border-gray-700 flex flex-col overflow-y-auto">
+        <div className="w-48 bg-surface border-l border-gray-700 flex flex-col overflow-y-auto flex-shrink-0">
           <div className="p-3 border-b border-gray-700">
-            <h3 className="text-xs font-bold text-gray-400 mb-2">افزودن شیء</h3>
+            <h3 className="text-xs font-bold text-gray-400 mb-2">Add Object</h3>
             <div className="grid grid-cols-2 gap-1">
               {([
-                ['clue', '🔍 سرنخ'],
-                ['number-piece', '🔢 عدد'],
-                ['decoration', '🖼️ تزئینی'],
-                ['inventory', '🎒 آیتم'],
-                ['container', '📦 ظرف'],
-                ['exit', '🚪 خروجی'],
+                ['clue', '🔍 Clue'],
+                ['number-piece', '🔢 Number'],
+                ['decoration', '🖼️ Deco'],
+                ['inventory', '🎒 Item'],
+                ['container', '📦 Container'],
+                ['exit', '🚪 Exit'],
               ] as [ObjectType, string][]).map(([type, label]) => (
                 <button
                   key={type}
@@ -754,7 +879,7 @@ export default function Studio() {
 
           {/* Background Upload */}
           <div className="p-3 border-b border-gray-700">
-            <h3 className="text-xs font-bold text-gray-400 mb-2">پس‌زمینه</h3>
+            <h3 className="text-xs font-bold text-gray-400 mb-2">Background</h3>
             <input
               ref={fileInputRef}
               type="file"
@@ -766,17 +891,17 @@ export default function Studio() {
               className="w-full bg-gray-700 hover:bg-gray-600 text-white px-2 py-1.5 rounded text-xs"
               onClick={() => fileInputRef.current?.click()}
             >
-              📁 آپلود تصویر
+              📁 Upload Image
             </button>
           </div>
 
           {/* Scene Properties */}
           {currentScene && (
             <div className="p-3 border-b border-gray-700">
-              <h3 className="text-xs font-bold text-gray-400 mb-2">ویژگی‌های اتاق</h3>
+              <h3 className="text-xs font-bold text-gray-400 mb-2">Room Properties</h3>
               <div className="space-y-2 text-xs">
                 <div>
-                  <label className="text-gray-400">عنوان</label>
+                  <label className="text-gray-400">Title</label>
                   <input
                     className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white mt-1"
                     value={currentScene.title}
@@ -784,7 +909,7 @@ export default function Studio() {
                   />
                 </div>
                 <div>
-                  <label className="text-gray-400">عدد خروجی</label>
+                  <label className="text-gray-400">Exit Number</label>
                   <input
                     type="number" min={0} max={9}
                     className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white mt-1"
@@ -796,7 +921,7 @@ export default function Studio() {
                   className="w-full bg-gray-700 hover:bg-gray-600 text-white px-2 py-1 rounded"
                   onClick={() => duplicateScene(currentScene.id)}
                 >
-                  📋 تکثیر اتاق
+                  📋 Duplicate Room
                 </button>
               </div>
             </div>
@@ -811,11 +936,20 @@ export default function Studio() {
         </div>
 
         {/* Canvas Area */}
-        <div className="flex-1 bg-gray-900 overflow-hidden relative" onWheel={(e) => {
-          e.preventDefault();
-          const delta = e.deltaY > 0 ? -0.05 : 0.05;
-          setZoom(zoom + delta);
-        }}>
+        <div 
+          ref={canvasContainerRef}
+          className="flex-1 bg-gray-900 overflow-hidden relative select-none"
+          onWheel={handleCanvasWheel}
+          onMouseDown={handleCanvasMouseDown}
+          onMouseMove={handleCanvasMouseMove}
+          onMouseUp={handleCanvasMouseUp}
+          onMouseLeave={handleCanvasMouseUp}
+          onContextMenu={e => e.preventDefault()}
+          style={{ 
+            cursor: spaceHeld ? (isPanning ? 'grabbing' : 'grab') : 'default',
+            touchAction: 'none'
+          }}
+        >
           {currentScene ? (
             <Stage
               ref={stageRef}
@@ -826,11 +960,14 @@ export default function Studio() {
               x={panX}
               y={panY}
               onClick={(e) => {
-                if (e.target === e.target.getStage()) {
+                if (e.target === e.target.getStage() && !spaceHeld) {
                   clearSelection();
                 }
               }}
-              style={{ cursor: 'default' }}
+              style={{ 
+                cursor: spaceHeld ? (isPanning ? 'grabbing' : 'grab') : 'default',
+                touchAction: 'none'
+              }}
             >
               <Layer>
                 {/* Grid */}
@@ -875,13 +1012,13 @@ export default function Studio() {
             </Stage>
           ) : (
             <div className="flex items-center justify-center h-full text-gray-500">
-              <p>یک اتاق انتخاب یا ایجاد کنید</p>
+              <p>Select or create a room</p>
             </div>
           )}
         </div>
 
         {/* Right Sidebar - Properties */}
-        <div className="w-64 bg-surface border-r border-gray-700 overflow-y-auto">
+        <div className="w-64 bg-surface border-r border-gray-700 overflow-y-auto flex-shrink-0">
           <PropertiesPanel />
         </div>
       </div>

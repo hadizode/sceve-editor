@@ -6,15 +6,15 @@ type AppView = 'home' | 'studio' | 'player';
 
 function HomePage({ onNavigate }: { onNavigate: (view: AppView) => void }) {
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4 animate-fade-in" dir="rtl" lang="fa">
+    <div className="min-h-full flex flex-col items-center justify-center p-4 animate-fade-in overflow-auto" dir="rtl" lang="fa">
       {/* Hero */}
       <div className="text-center mb-12">
         <div className="text-6xl md:text-8xl mb-4">🔐</div>
         <h1 className="text-3xl md:text-5xl font-black text-white mb-3">
-          اتاق فرار <span className="text-indigo-400">گروهی</span>
+          Group <span className="text-indigo-400">Escape Room</span>
         </h1>
-        <p className="text-gray-400 text-lg md:text-xl max-w-lg mx-auto">
-          پلتفرم بازی اتاق فرار و اشیاء پنهان گروهی از طریق تلگرام
+        <p className="text-gray-400 text-lg md:text-xl max-w-lg mx-auto" dir="ltr">
+          A multiplayer escape room & hidden object platform via Telegram
         </p>
       </div>
 
@@ -26,16 +26,16 @@ function HomePage({ onNavigate }: { onNavigate: (view: AppView) => void }) {
           className="group bg-surface rounded-2xl p-6 md:p-8 border border-gray-700 hover:border-indigo-500 transition-all hover:shadow-xl hover:shadow-indigo-500/10 text-right"
         >
           <div className="text-4xl mb-3">🎨</div>
-          <h2 className="text-xl md:text-2xl font-bold text-white group-hover:text-indigo-300 transition-colors mb-2">
-            استودیو طراحی
+          <h2 className="text-xl md:text-2xl font-bold text-white group-hover:text-indigo-300 transition-colors mb-2" dir="ltr">
+            Design Studio
           </h2>
-          <p className="text-gray-400 text-sm md:text-base">
-            اتاق‌ها، اشیاء و زنجیره‌های سرنخ را طراحی کنید. خروجی JSON بگیرید.
+          <p className="text-gray-400 text-sm md:text-base" dir="ltr">
+            Design rooms, objects and clue chains. Export as JSON.
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
             <span className="text-xs bg-indigo-900/50 text-indigo-300 px-2 py-0.5 rounded">Konva</span>
-            <span className="text-xs bg-indigo-900/50 text-indigo-300 px-2 py-0.5 rounded">ویرایشگر</span>
-            <span className="text-xs bg-indigo-900/50 text-indigo-300 px-2 py-0.5 rounded">خروجی JSON</span>
+            <span className="text-xs bg-indigo-900/50 text-indigo-300 px-2 py-0.5 rounded">Editor</span>
+            <span className="text-xs bg-indigo-900/50 text-indigo-300 px-2 py-0.5 rounded">JSON Export</span>
           </div>
         </button>
 
@@ -45,15 +45,15 @@ function HomePage({ onNavigate }: { onNavigate: (view: AppView) => void }) {
           className="group bg-surface rounded-2xl p-6 md:p-8 border border-gray-700 hover:border-amber-500 transition-all hover:shadow-xl hover:shadow-amber-500/10 text-right"
         >
           <div className="text-4xl mb-3">🎮</div>
-          <h2 className="text-xl md:text-2xl font-bold text-white group-hover:text-amber-300 transition-colors mb-2">
-            بازی (بازیکن)
+          <h2 className="text-xl md:text-2xl font-bold text-white group-hover:text-amber-300 transition-colors mb-2" dir="ltr">
+            Play Game
           </h2>
-          <p className="text-gray-400 text-sm md:text-base">
-            بازی را تجربه کنید. اشیاء را کشف کنید، سرنخ‌ها را دنبال کنید و قفل را باز کنید.
+          <p className="text-gray-400 text-sm md:text-base" dir="ltr">
+            Experience the game. Discover objects, follow clues and unlock the final lock.
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
-            <span className="text-xs bg-amber-900/50 text-amber-300 px-2 py-0.5 rounded">بازی تعاملی</span>
-            <span className="text-xs bg-amber-900/50 text-amber-300 px-2 py-0.5 rounded">گروهی</span>
+            <span className="text-xs bg-amber-900/50 text-amber-300 px-2 py-0.5 rounded">Interactive</span>
+            <span className="text-xs bg-amber-900/50 text-amber-300 px-2 py-0.5 rounded">Multiplayer</span>
             <span className="text-xs bg-amber-900/50 text-amber-300 px-2 py-0.5 rounded">RTL</span>
           </div>
         </button>
@@ -62,10 +62,10 @@ function HomePage({ onNavigate }: { onNavigate: (view: AppView) => void }) {
       {/* Features */}
       <div className="mt-12 grid grid-cols-2 md:grid-cols-4 gap-4 max-w-2xl w-full">
         {[
-          { icon: '📱', label: 'موبایل‌محور' },
-          { icon: '👥', label: 'بازی گروهی' },
-          { icon: '🔗', label: 'زنجیره سرنخ' },
-          { icon: '🔢', label: 'قفل عددی' },
+          { icon: '📱', label: 'Mobile-first' },
+          { icon: '👥', label: 'Multiplayer' },
+          { icon: '🔗', label: 'Clue Chains' },
+          { icon: '🔢', label: 'Number Lock' },
         ].map(f => (
           <div key={f.label} className="bg-surface/50 rounded-xl p-3 text-center border border-gray-800">
             <div className="text-2xl mb-1">{f.icon}</div>
@@ -76,8 +76,8 @@ function HomePage({ onNavigate }: { onNavigate: (view: AppView) => void }) {
 
       {/* Footer */}
       <div className="mt-12 text-center text-gray-600 text-xs">
-        <p>ساخته شده با React + TypeScript + Konva + Zustand + TailwindCSS</p>
-        <p className="mt-1">فارسی • RTL • Vazirmatn</p>
+        <p>Built with React + TypeScript + Konva + Zustand + TailwindCSS</p>
+        <p className="mt-1" dir="rtl" lang="fa">فارسی • RTL • Vazirmatn</p>
       </div>
     </div>
   );
@@ -87,7 +87,7 @@ export default function App() {
   const [view, setView] = useState<AppView>('home');
 
   return (
-    <div className="min-h-screen bg-gray-900" dir="rtl" lang="fa">
+    <div className="h-screen bg-gray-900 overflow-hidden" dir="rtl" lang="fa">
       {/* Navigation */}
       {view !== 'home' && (
         <nav className="fixed top-0 left-0 right-0 z-50 bg-surface/95 backdrop-blur border-b border-gray-700 px-4 py-2 flex items-center justify-between">
@@ -95,7 +95,7 @@ export default function App() {
             className="text-gray-300 hover:text-white flex items-center gap-1 text-sm"
             onClick={() => setView('home')}
           >
-            <span className="rtl-mirror">←</span> بازگشت
+            <span className="rtl-mirror">←</span> Back
           </button>
           <div className="flex gap-2">
             <button
@@ -104,7 +104,7 @@ export default function App() {
               }`}
               onClick={() => setView('studio')}
             >
-              🎨 استودیو
+              🎨 Studio
             </button>
             <button
               className={`px-3 py-1 rounded-lg text-sm transition-colors ${
@@ -112,14 +112,14 @@ export default function App() {
               }`}
               onClick={() => setView('player')}
             >
-              🎮 بازی
+              🎮 Play
             </button>
           </div>
         </nav>
       )}
 
       {/* Content */}
-      <div className={view !== 'home' ? 'pt-11' : ''}>
+      <div className={view !== 'home' ? 'pt-11 h-full' : 'h-full overflow-auto'}>
         {view === 'home' && <HomePage onNavigate={setView} />}
         {view === 'studio' && <Studio />}
         {view === 'player' && <Player />}
