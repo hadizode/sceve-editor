@@ -4,8 +4,42 @@ import { z } from 'zod';
 export const ObjectTypeSchema = z.enum(['clue', 'number-piece', 'decoration', 'inventory', 'container', 'exit']);
 export type ObjectType = z.infer<typeof ObjectTypeSchema>;
 
+// ============ View (Interactive Scene within an Object) ============
+export interface View {
+  id: string;
+  title: string;
+  backgroundUrl: string;
+  width: number;
+  height: number;
+  objects: SceneObject[];
+  requiresItem?: string[]; // condition to open this view
+  closeMessage?: string; // message when closing view
+}
+
 // ============ SceneObject ============
-export const SceneObjectSchema = z.object({
+export interface SceneObject {
+  id: string;
+  name: string;
+  type: ObjectType;
+  imageUrl: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+  zIndex: number;
+  visible: boolean;
+  oneTimeUse: boolean;
+  message?: string;
+  number?: number;
+  requiresItem?: string[];
+  grantsItem?: string;
+  soundUrl?: string;
+  view?: View;
+  customData?: Record<string, string>;
+}
+
+export const SceneObjectSchema: z.ZodType<SceneObject> = z.object({
   id: z.string(),
   name: z.string(),
   type: ObjectTypeSchema,
@@ -23,9 +57,9 @@ export const SceneObjectSchema = z.object({
   requiresItem: z.array(z.string()).optional(),
   grantsItem: z.string().optional(),
   soundUrl: z.string().optional(),
+  view: z.any().optional(),
   customData: z.record(z.string(), z.string()).optional(),
 });
-export type SceneObject = z.infer<typeof SceneObjectSchema>;
 
 // ============ Scene ============
 export const SceneSchema = z.object({

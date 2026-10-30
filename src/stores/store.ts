@@ -332,14 +332,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const result = discoverObject(sessionState, currentSceneId, objectId, scene.objects);
     
     if (result.alreadyDiscovered) {
-      set({ toast: 'این مورد قبلاً کشف شده است' });
-      setTimeout(() => set({ toast: null }), 2000);
+      set({ toast: 'Already discovered' });
+      setTimeout(() => set({ toast: null }), 4000);
       return;
     }
 
     if (result.message) {
       set({ toast: result.message });
-      setTimeout(() => set({ toast: null }), 3000);
+      setTimeout(() => set({ toast: null }), 7000);
     }
 
     let newState = result.newState;
@@ -352,8 +352,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           ...newState,
           completedScenes: [...newState.completedScenes, currentSceneId],
         };
-        set({ toast: `🎉 اتاق "${scene.title}" کامل شد! عدد: ${scene.exitNumber}` });
-        setTimeout(() => set({ toast: null }), 4000);
+        set({ toast: `🎉 Room "${scene.title}" complete! Digit: ${scene.exitNumber}` });
+        setTimeout(() => set({ toast: null }), 6000);
       }
     }
 
@@ -382,10 +382,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         toast: result.message,
         session: state.session ? { ...state.session, state: result.newState } : null,
       }));
-      setTimeout(() => set({ toast: null }), 3000);
+      setTimeout(() => set({ toast: null }), 6000);
     } else {
       set({ toast: result.message });
-      setTimeout(() => set({ toast: null }), 2000);
+      setTimeout(() => set({ toast: null }), 4000);
     }
   },
 
@@ -424,10 +424,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const expected = allScenes.map(s => s.exitNumber.toString()).join('');
     
     if (lockInput === expected) {
-      set({ gameComplete: true, toast: '🎊 تبریک! شما برنده شدید!' });
+      set({ gameComplete: true, toast: '🎊 Congratulations! You won!' });
     } else {
-      set({ lockInput: '', toast: '❌ رمز اشتباه است. دوباره تلاش کنید.' });
-      setTimeout(() => set({ toast: null }), 3000);
+      set({ lockInput: '', toast: '❌ Wrong code. Try again.' });
+      setTimeout(() => set({ toast: null }), 5000);
     }
   },
 

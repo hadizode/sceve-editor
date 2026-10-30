@@ -1,14 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Stage, Layer, Image as KImage, Rect, Text, Circle, Group } from 'react-konva';
 import useImage from 'use-image';
 import { usePlayerStore } from '../stores/store';
 import { SEED_SESSION, SEED_SCENE, SEED_SCENE_2 } from '../shared/seed-data';
-import { isRoomComplete, allRoomsComplete, getRoomDigits } from '../shared/game-logic';
-import type { SceneObject } from '../shared/types';
+import { isRoomComplete, allRoomsComplete } from '../shared/game-logic';
+import type { SceneObject, View } from '../shared/types';
 
 // ============ Lobby Component ============
 function Lobby() {
-  const { session, gameStarted, startGame, setPlayerReady } = usePlayerStore();
+  const { session, startGame, setPlayerReady } = usePlayerStore();
   const [showGuide, setShowGuide] = useState(false);
   if (!session) return null;
 
@@ -17,30 +17,32 @@ function Lobby() {
   return (
     <div className="min-h-screen flex items-center justify-center p-4 animate-fade-in">
       <div className="bg-surface rounded-2xl p-6 md:p-8 max-w-md w-full border border-gray-700 shadow-2xl">
-        <h1 className="text-2xl font-bold text-indigo-300 text-center mb-2">🎮 لابی بازی</h1>
-        <p className="text-center text-gray-500 text-sm mb-6">اتاق فرار گروهی - کتابخانه قدیمی</p>
+        <h1 className="text-2xl font-bold text-indigo-300 text-center mb-2">🎮 Game Lobby</h1>
+        <p className="text-center text-gray-500 text-sm mb-6">Group Escape Room - Old Library</p>
         
         {/* How to Play */}
         <button
           className="w-full text-center text-indigo-400 text-sm mb-4 hover:text-indigo-300"
           onClick={() => setShowGuide(!showGuide)}
         >
-          {showGuide ? '▲ بستن راهنما' : '▼ نحوه بازی'}
+          {showGuide ? '▲ Hide Guide' : '▼ How to Play'}
         </button>
         
         {showGuide && (
-          <div className="bg-surface-light rounded-xl p-4 mb-4 text-sm text-gray-300 space-y-2 animate-fade-in">
-            <p>🔍 <strong>کاوش:</strong> روی اشیاء مختلف بزنید تا سرنخ‌ها را کشف کنید</p>
-            <p>🔗 <strong>زنجیره:</strong> هر سرنخ شما را به شیء بعدی هدایت می‌کند</p>
-            <p>🔢 <strong>اعداد:</strong> قطعات عدد را پیدا کنید تا اتاق کامل شود</p>
-            <p>🎒 <strong>آیتم‌ها:</strong> آیتم‌های جمع‌آوری شده را روی اشیاء مناسب بکشید</p>
-            <p>🔐 <strong>قفل نهایی:</strong> وقتی همه اتاق‌ها کامل شد، رمز نهایی را وارد کنید</p>
-            <p>👥 <strong>گروهی:</strong> با هم‌تیمی‌هایتان همکاری کنید!</p>
+          <div className="bg-surface-light rounded-xl p-4 mb-4 text-sm text-gray-300 space-y-2 animate-fade-in" dir="rtl" lang="fa">
+            <p>🔍 <strong>Explore:</strong> Click objects to discover clues</p>
+            <p>🔗 <strong>Chain:</strong> Each clue leads you to the next object</p>
+            <p>🔢 <strong>Numbers:</strong> Find number pieces to complete each room</p>
+            <p>🎒 <strong>Items:</strong> Use collected items on matching objects</p>
+            <p>🔍 <strong>Views:</strong> Some objects open a close-up interactive view</p>
+            <p>🖱️ <strong>Controls:</strong> Scroll to zoom, hold Space + drag to pan</p>
+            <p>🔐 <strong>Final Lock:</strong> Enter the combined code when all rooms are complete</p>
+            <p>👥 <strong>Teamwork:</strong> Collaborate with your teammates!</p>
           </div>
         )}
 
         <div className="space-y-3 mb-6">
-          <h2 className="text-sm font-semibold text-gray-400">بازیکنان:</h2>
+          <h2 className="text-sm font-semibold text-gray-400">Players:</h2>
           {session.players.map(player => (
             <div key={player.telegramId} className="flex items-center justify-between bg-surface-light rounded-lg p-3">
               <div className="flex items-center gap-2">
@@ -48,7 +50,7 @@ function Lobby() {
                 <span className="text-white">{player.name}</span>
               </div>
               <span className={`text-xs px-2 py-0.5 rounded ${player.ready ? 'bg-green-600 text-white' : 'bg-gray-600 text-gray-300'}`}>
-                {player.ready ? '✓ آماده' : 'در انتظار'}
+                {player.ready ? '✓ Ready' : 'Waiting'}
               </span>
             </div>
           ))}
@@ -58,24 +60,24 @@ function Lobby() {
           <button
             className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-bold text-lg transition-colors active:scale-95"
             onClick={setPlayerReady}
-            aria-label="اعلام آمادگی"
+            aria-label="Mark as ready"
           >
-            ✓ آماده‌ام
+            ✓ I'm Ready
           </button>
           
           {allReady && (
             <button
               className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold text-lg transition-colors animate-pulse-glow active:scale-95"
               onClick={startGame}
-              aria-label="شروع بازی"
+              aria-label="Start game"
             >
-              🚀 شروع بازی
+              🚀 Start Game
             </button>
           )}
         </div>
 
         <p className="text-center text-gray-600 text-xs mt-4">
-          🔗 لینک بازی: play.example.com/s/seed-token-abc123
+          🔗 Link: play.example.com/s/seed-token-abc123
         </p>
       </div>
     </div>
@@ -83,10 +85,10 @@ function Lobby() {
 }
 
 // ============ Game Object Component ============
-function GameObject({ obj, discovered, isSelected, onClick }: {
+function GameObject({ obj, discovered, isHighlighted, onClick }: {
   obj: SceneObject;
   discovered: boolean;
-  isSelected: boolean;
+  isHighlighted: boolean;
   onClick: () => void;
 }) {
   const [image] = useImage(obj.imageUrl);
@@ -107,6 +109,17 @@ function GameObject({ obj, discovered, isSelected, onClick }: {
         onTap={onClick}
         cursor="pointer"
       />
+      {/* View indicator */}
+      {obj.view && !discovered && (
+        <Circle
+          x={obj.x + 8}
+          y={obj.y + 8}
+          radius={6}
+          fill="#6366f1"
+          stroke="white"
+          strokeWidth={1}
+        />
+      )}
       {discovered && (
         <Circle
           x={obj.x + obj.width - 10}
@@ -117,7 +130,7 @@ function GameObject({ obj, discovered, isSelected, onClick }: {
           strokeWidth={1}
         />
       )}
-      {isSelected && (
+      {isHighlighted && (
         <Rect
           x={obj.x - 3}
           y={obj.y - 3}
@@ -140,26 +153,141 @@ function GameBackground({ url, width, height }: { url: string; width: number; he
   return <KImage image={image} x={0} y={0} width={width} height={height} />;
 }
 
+// ============ View Overlay (Interactive close-up) ============
+function ViewOverlay({ view, onClose, discoveredObjects, onObjectClick }: {
+  view: View;
+  onClose: () => void;
+  discoveredObjects: string[];
+  onObjectClick: (obj: SceneObject) => void;
+}) {
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const lastPos = useRef({ x: 0, y: 0 });
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { if (e.code === 'Space') { e.preventDefault(); setSpaceHeld(true); } };
+    const up = (e: KeyboardEvent) => { if (e.code === 'Space') setSpaceHeld(false); };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
+  }, []);
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+    setZoom(z => Math.max(0.5, Math.min(3, z + delta)));
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (spaceHeld) {
+      setIsPanning(true);
+      lastPos.current = { x: e.clientX, y: e.clientY };
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isPanning) {
+      const dx = e.clientX - lastPos.current.x;
+      const dy = e.clientY - lastPos.current.y;
+      setPan(p => ({ x: p.x + dx, y: p.y + dy }));
+      lastPos.current = { x: e.clientX, y: e.clientY };
+    }
+  };
+
+  const handleMouseUp = () => setIsPanning(false);
+
+  const displayW = Math.min(view.width, 500);
+  const scale = displayW / view.width;
+
+  return (
+    <div className="fixed inset-0 bg-black/85 z-40 flex items-center justify-center animate-fade-in">
+      <div className="bg-surface rounded-2xl border border-gray-600 shadow-2xl overflow-hidden max-w-[95vw] max-h-[90vh]">
+        {/* View Header */}
+        <div className="flex items-center justify-between px-4 py-2 bg-surface-light border-b border-gray-700">
+          <h3 className="text-sm font-bold text-indigo-300" dir="rtl" lang="fa">🔍 {view.title}</h3>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">{Math.round(zoom * 100)}%</span>
+            <button
+              className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm"
+              onClick={onClose}
+              aria-label="Close view"
+            >
+              ✕ Close
+            </button>
+          </div>
+        </div>
+        
+        {/* View Canvas */}
+        <div
+          ref={containerRef}
+          className="relative overflow-hidden"
+          onWheel={handleWheel}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+          style={{ cursor: spaceHeld ? (isPanning ? 'grabbing' : 'grab') : 'default' }}
+        >
+          <Stage
+            width={displayW}
+            height={view.height * scale}
+            scaleX={zoom * scale}
+            scaleY={zoom * scale}
+            x={pan.x}
+            y={pan.y}
+          >
+            <Layer>
+              <GameBackground url={view.backgroundUrl} width={view.width} height={view.height} />
+              {view.objects
+                .sort((a, b) => a.zIndex - b.zIndex)
+                .map(obj => (
+                  <GameObject
+                    key={obj.id}
+                    obj={obj}
+                    discovered={discoveredObjects.includes(obj.id)}
+                    isHighlighted={false}
+                    onClick={() => onObjectClick(obj)}
+                  />
+                ))}
+            </Layer>
+          </Stage>
+        </div>
+
+        {/* View Controls hint */}
+        <div className="px-4 py-2 bg-surface-light border-t border-gray-700 text-xs text-gray-500 flex justify-between">
+          <span>Scroll = Zoom | Space + Drag = Pan</span>
+          <span dir="rtl" lang="fa">اسکرول = زوم | Space + درگ = جابجایی</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ============ Inventory Panel ============
 function InventoryPanel() {
   const { sessionState, selectedItem, selectItem } = usePlayerStore();
   
   const itemNames: Record<string, string> = {
-    'key-small': '🔑 کلید کوچک',
-    'digit-7': '🔢 عدد ۷',
+    'key-gold': '🔑 Golden Key',
+    'key-small': '🔑 Small Key',
+    'digit-7': '🔢 Number 7',
+    'digit-3': '🔢 Number 3',
   };
 
   if (sessionState.inventory.length === 0) {
     return (
       <div className="bg-surface/80 backdrop-blur rounded-xl p-3 text-center text-gray-400 text-sm">
-        کوله‌پشتی خالی است
+        🎒 Inventory is empty
       </div>
     );
   }
 
   return (
     <div className="bg-surface/80 backdrop-blur rounded-xl p-3">
-      <h3 className="text-xs font-bold text-gray-400 mb-2">🎒 کوله‌پشتی</h3>
+      <h3 className="text-xs font-bold text-gray-400 mb-2">🎒 Inventory</h3>
       <div className="flex gap-2 flex-wrap">
         {sessionState.inventory.map(item => (
           <button
@@ -176,7 +304,7 @@ function InventoryPanel() {
         ))}
       </div>
       {selectedItem && (
-        <p className="text-xs text-amber-300 mt-2">آیتم انتخاب شد. روی یک شیء بزنید تا استفاده شود.</p>
+        <p className="text-xs text-amber-300 mt-2">Item selected. Click an object to use it.</p>
       )}
     </div>
   );
@@ -191,9 +319,15 @@ function FinalLock() {
       <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 animate-fade-in">
         <div className="bg-surface rounded-2xl p-8 text-center animate-victory">
           <div className="text-6xl mb-4">🎊</div>
-          <h2 className="text-3xl font-bold text-amber-400 mb-2">تبریک!</h2>
-          <p className="text-gray-300 text-lg">شما با موفقیت از اتاق فرار خارج شدید!</p>
+          <h2 className="text-3xl font-bold text-amber-400 mb-2">Congratulations!</h2>
+          <p className="text-gray-300 text-lg">You successfully escaped the room!</p>
           <div className="mt-4 text-4xl font-mono text-green-400">{lockInput}</div>
+          <button
+            className="mt-6 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-xl"
+            onClick={() => window.location.reload()}
+          >
+            Play Again
+          </button>
         </div>
       </div>
     );
@@ -201,7 +335,7 @@ function FinalLock() {
 
   return (
     <div className="bg-surface rounded-2xl p-4 md:p-6 border border-gray-700">
-      <h2 className="text-lg font-bold text-center text-amber-300 mb-4">🔐 قفل نهایی</h2>
+      <h2 className="text-lg font-bold text-center text-amber-300 mb-4">🔐 Final Lock</h2>
       
       {/* Display */}
       <div className="bg-gray-800 rounded-xl p-4 mb-4 text-center">
@@ -217,18 +351,18 @@ function FinalLock() {
             key={n}
             className="num-key"
             onClick={() => enterLockDigit(n.toString())}
-            aria-label={`عدد ${n}`}
+            aria-label={`Number ${n}`}
           >
             {n}
           </button>
         ))}
-        <button className="num-key bg-red-900/50 border-red-700" onClick={clearLockDigit} aria-label="پاک کردن">
+        <button className="num-key bg-red-900/50 border-red-700" onClick={clearLockDigit} aria-label="Delete">
           ←
         </button>
-        <button className="num-key" onClick={() => enterLockDigit('0')} aria-label="عدد ۰">
+        <button className="num-key" onClick={() => enterLockDigit('0')} aria-label="Number 0">
           0
         </button>
-        <button className="num-key bg-green-900/50 border-green-700" onClick={submitLock} aria-label="تایید">
+        <button className="num-key bg-green-900/50 border-green-700" onClick={submitLock} aria-label="Submit">
           ✓
         </button>
       </div>
@@ -236,44 +370,16 @@ function FinalLock() {
   );
 }
 
-// ============ Toast Component ============
+// ============ Toast Component (longer display) ============
 function Toast() {
   const { toast } = usePlayerStore();
   if (!toast) return null;
   return (
     <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 animate-fade-in">
-      <div className="bg-indigo-600 text-white px-6 py-3 rounded-xl shadow-2xl text-sm md:text-base font-medium max-w-sm text-center">
+      <div className="bg-indigo-600 text-white px-6 py-4 rounded-xl shadow-2xl text-sm md:text-base font-medium max-w-sm text-center" dir="rtl" lang="fa">
         {toast}
       </div>
     </div>
-  );
-}
-
-// ============ Responsive Stage Component ============
-function ResponsiveStage({ scene, children }: { scene: any; children: React.ReactNode }) {
-  const [dims, setDims] = useState({ w: scene.width, h: scene.height, scale: 1 });
-  
-  useEffect(() => {
-    const update = () => {
-      const maxW = Math.min(window.innerWidth - 32, 800);
-      const scale = Math.min(1, maxW / scene.width);
-      setDims({ w: scene.width, h: scene.height, scale });
-    };
-    update();
-    window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
-  }, [scene.width, scene.height]);
-
-  return (
-    <Stage
-      width={dims.w * dims.scale}
-      height={dims.h * dims.scale}
-      scaleX={dims.scale}
-      scaleY={dims.scale}
-      style={{ touchAction: 'none' }}
-    >
-      {children}
-    </Stage>
   );
 }
 
@@ -285,10 +391,20 @@ export default function Player() {
     selectedItem, initSession, clickObject, useItemOnObject, selectItem, switchScene,
   } = store;
 
+  // View state
+  const [activeView, setActiveView] = useState<{ view: View; parentObjectId: string } | null>(null);
+  
+  // Zoom & Pan state
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const lastPos = useRef({ x: 0, y: 0 });
+  const containerRef = useRef<HTMLDivElement>(null);
+
   // Initialize with seed data
   useEffect(() => {
     if (!session) {
-      // Try to restore from localStorage
       try {
         const saved = localStorage.getItem('escape-room-state');
         if (saved) {
@@ -301,15 +417,30 @@ export default function Player() {
     }
   }, []);
 
+  // Keyboard events for space-based panning
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !activeView) {
+        e.preventDefault();
+        setSpaceHeld(true);
+      }
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.code === 'Space') setSpaceHeld(false);
+    };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
+  }, [activeView]);
+
   if (!session) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="text-gray-400">در حال بارگذاری...</div>
+        <div className="text-gray-400">Loading...</div>
       </div>
     );
   }
 
-  // Show lobby if game hasn't started
   if (!gameStarted) {
     return (
       <>
@@ -319,40 +450,146 @@ export default function Player() {
     );
   }
 
-  // Show victory
   if (gameComplete) {
     return <FinalLock />;
   }
 
   const currentScene = scenes[currentSceneId];
   if (!currentScene) {
-    return <div className="text-center text-gray-400 p-8">صحنه یافت نشد</div>;
+    return <div className="text-center text-gray-400 p-8">Scene not found</div>;
   }
 
   const discovered = sessionState.discoveredObjects[currentSceneId] || [];
+  const viewDiscovered = activeView
+    ? (sessionState.discoveredObjects[activeView.view.id] || [])
+    : [];
   const numberPieces = currentScene.objects.filter(o => o.type === 'number-piece');
-  const discoveredDigits = numberPieces.filter(np => discovered.includes(np.id));
   const roomComplete = isRoomComplete(sessionState, currentScene);
   const allComplete = allRoomsComplete(sessionState, Object.values(scenes));
-  const projectScenes = session.projectId ? Object.values(scenes) : [];
+  const projectScenes = Object.values(scenes);
 
-  const handleObjectClick = (obj: SceneObject) => {
+  const handleObjectClick = (obj: SceneObject, fromView = false) => {
+    // If using an item on an object
     if (selectedItem && (obj.type === 'container' || obj.requiresItem)) {
       useItemOnObject(selectedItem, obj.id);
-    } else {
-      clickObject(obj.id);
+      return;
+    }
+
+    // If object has a view, open it
+    if (obj.view && !fromView) {
+      // Check requiresItem condition
+      if (obj.view.requiresItem && obj.view.requiresItem.length > 0) {
+        const hasItems = obj.view.requiresItem.every(item => sessionState.inventory.includes(item));
+        if (!hasItems) {
+          store.setToast('You need a specific item to open this view');
+          setTimeout(() => store.setToast(null), 3000);
+          return;
+        }
+      }
+      setActiveView({ view: obj.view, parentObjectId: obj.id });
+      return;
+    }
+
+    // Normal discovery
+    clickObject(obj.id);
+  };
+
+  const handleViewObjectClick = (obj: SceneObject) => {
+    // Discover in the view's context
+    if (activeView) {
+      const viewId = activeView.view.id;
+      const viewDiscovered = sessionState.discoveredObjects[viewId] || [];
+      if (viewDiscovered.includes(obj.id)) {
+        store.setToast('Already discovered');
+        setTimeout(() => store.setToast(null), 2000);
+        return;
+      }
+      
+      // Use clickObject with the view's ID as scene context
+      // We need to handle this specially - discover in the view
+      const scene = { ...currentScene, id: viewId, objects: activeView.view.objects };
+      const result = (() => {
+        const newDiscovered = [...viewDiscovered, obj.id];
+        const newDiscoveredObjects = { ...sessionState.discoveredObjects, [viewId]: newDiscovered };
+        let newInventory = [...sessionState.inventory];
+        if (obj.grantsItem && !newInventory.includes(obj.grantsItem)) {
+          newInventory.push(obj.grantsItem);
+        }
+        return {
+          newState: { ...sessionState, discoveredObjects: newDiscoveredObjects, inventory: newInventory },
+          message: obj.message,
+          grantsItem: obj.grantsItem,
+        };
+      })();
+
+      if (result.message) {
+        store.setToast(result.message);
+        setTimeout(() => store.setToast(null), 5000);
+      }
+      
+      // Update state directly
+      const updatedSession = { ...session, state: result.newState };
+      store.initSession(updatedSession, scenes);
+      
+      try {
+        localStorage.setItem('escape-room-state', JSON.stringify(result.newState));
+      } catch {}
     }
   };
+
+  // Responsive canvas sizing
+  const maxCanvasW = typeof window !== 'undefined' ? Math.min(window.innerWidth - 32, 800) : 800;
+  const canvasScale = Math.min(1, maxCanvasW / currentScene.width);
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+    setZoom(z => Math.max(0.3, Math.min(4, z + delta)));
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (spaceHeld) {
+      setIsPanning(true);
+      lastPos.current = { x: e.clientX, y: e.clientY };
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isPanning) {
+      const dx = e.clientX - lastPos.current.x;
+      const dy = e.clientY - lastPos.current.y;
+      setPan(p => ({ x: p.x + dx, y: p.y + dy }));
+      lastPos.current = { x: e.clientX, y: e.clientY };
+    }
+  };
+
+  const handleMouseUp = () => setIsPanning(false);
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-900">
       <Toast />
       
+      {/* View Overlay */}
+      {activeView && (
+        <ViewOverlay
+          view={activeView.view}
+          onClose={() => {
+            if (activeView.view.closeMessage) {
+              store.setToast(activeView.view.closeMessage);
+              setTimeout(() => store.setToast(null), 3000);
+            }
+            setActiveView(null);
+          }}
+          discoveredObjects={viewDiscovered}
+          onObjectClick={handleViewObjectClick}
+        />
+      )}
+      
       {/* Header */}
       <div className="bg-surface/90 backdrop-blur border-b border-gray-700 px-3 py-2">
         <div className="flex items-center justify-between max-w-2xl mx-auto">
           <h1 className="text-sm md:text-base font-bold text-indigo-300">{currentScene.title}</h1>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             {/* Online players */}
             {session.players.map(p => (
               <div key={p.telegramId} className="flex items-center gap-1" title={p.name}>
@@ -364,26 +601,64 @@ export default function Player() {
         </div>
       </div>
 
-      {/* Game Canvas */}
+      {/* Game Canvas with Zoom/Pan */}
       <div className="flex-1 flex items-center justify-center p-2 md:p-4 overflow-auto">
         <div className="relative rounded-xl overflow-hidden shadow-2xl border border-gray-700">
-          <ResponsiveStage scene={currentScene}>
-            <Layer>
-              <GameBackground url={currentScene.backgroundUrl} width={currentScene.width} height={currentScene.height} />
-              {currentScene.objects
-                .sort((a, b) => a.zIndex - b.zIndex)
-                .map(obj => (
-                  <GameObject
-                    key={obj.id}
-                    obj={obj}
-                    discovered={discovered.includes(obj.id)}
-                    isSelected={selectedItem !== null && (obj.type === 'container' || !!obj.requiresItem)}
-                    onClick={() => handleObjectClick(obj)}
-                  />
-                ))}
-            </Layer>
-          </ResponsiveStage>
+          <div
+            ref={containerRef}
+            onWheel={handleWheel}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+            style={{ cursor: spaceHeld ? (isPanning ? 'grabbing' : 'grab') : 'default' }}
+          >
+            <Stage
+              width={currentScene.width * canvasScale * zoom}
+              height={currentScene.height * canvasScale * zoom}
+              scaleX={canvasScale * zoom}
+              scaleY={canvasScale * zoom}
+              x={pan.x}
+              y={pan.y}
+              style={{ touchAction: 'none' }}
+            >
+              <Layer>
+                <GameBackground url={currentScene.backgroundUrl} width={currentScene.width} height={currentScene.height} />
+                {currentScene.objects
+                  .sort((a, b) => a.zIndex - b.zIndex)
+                  .map(obj => (
+                    <GameObject
+                      key={obj.id}
+                      obj={obj}
+                      discovered={discovered.includes(obj.id)}
+                      isHighlighted={selectedItem !== null && (obj.type === 'container' || !!obj.requiresItem)}
+                      onClick={() => handleObjectClick(obj)}
+                    />
+                  ))}
+              </Layer>
+            </Stage>
+          </div>
         </div>
+      </div>
+
+      {/* Zoom Controls */}
+      <div className="fixed bottom-32 left-3 flex flex-col gap-1 z-30">
+        <button
+          className="w-8 h-8 bg-surface/80 backdrop-blur border border-gray-600 rounded-lg text-white text-sm hover:bg-surface-light"
+          onClick={() => setZoom(z => Math.min(4, z + 0.2))}
+          aria-label="Zoom in"
+        >+</button>
+        <span className="text-xs text-gray-400 text-center">{Math.round(zoom * 100)}%</span>
+        <button
+          className="w-8 h-8 bg-surface/80 backdrop-blur border border-gray-600 rounded-lg text-white text-sm hover:bg-surface-light"
+          onClick={() => setZoom(z => Math.max(0.3, z - 0.2))}
+          aria-label="Zoom out"
+        >−</button>
+        <button
+          className="w-8 h-8 bg-surface/80 backdrop-blur border border-gray-600 rounded-lg text-white text-xs hover:bg-surface-light"
+          onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
+          aria-label="Reset view"
+        >⟲</button>
       </div>
 
       {/* Bottom Panel */}
@@ -392,9 +667,9 @@ export default function Player() {
           {/* Room Progress */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-400">اعداد کشف شده:</span>
+              <span className="text-xs text-gray-400">Digits found:</span>
               <div className="flex gap-1">
-                {numberPieces.map((np, i) => (
+                {numberPieces.map((np) => (
                   <div
                     key={np.id}
                     className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm font-bold ${
@@ -408,7 +683,7 @@ export default function Player() {
             </div>
             {roomComplete && (
               <span className="text-xs bg-green-600 text-white px-2 py-1 rounded-lg">
-                ✓ اتاق کامل! عدد: {currentScene.exitNumber}
+                ✓ Room complete! Digit: {currentScene.exitNumber}
               </span>
             )}
           </div>
@@ -436,6 +711,11 @@ export default function Player() {
 
           {/* Inventory */}
           <InventoryPanel />
+
+          {/* Controls hint */}
+          <div className="text-xs text-gray-600 text-center">
+            Scroll = Zoom | Space + Drag = Pan | Click objects to explore
+          </div>
 
           {/* Final Lock */}
           {allComplete && !gameComplete && (

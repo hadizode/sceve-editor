@@ -138,7 +138,7 @@ export function applyItemToContainer(
   // Remove used item from inventory if oneTimeUse
   let newInventory = [...state.inventory];
   if (obj.oneTimeUse) {
-    newInventory = newInventory.filter(i => i !== itemId);
+    newInventory = newInventory.filter((i: string) => i !== itemId);
   }
 
   // Discover the object
