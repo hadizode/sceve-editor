@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { Project, Scene, SceneObject, Session, SessionState } from '../shared/types';
 import { SEED_PROJECT, SEED_SCENE, SEED_SCENE_2, SEED_SESSION } from '../shared/seed-data';
-import { discoverObject, isRoomComplete, applyItemToContainer } from '../shared/game-logic';
+import { discoverObject, isRoomComplete, applyItemToObject, pickupObject } from '../shared/game-logic';
 
 // ============ Studio Store ============
 interface StudioState {
@@ -289,6 +289,7 @@ interface PlayerState {
   initSession: (session: Session, scenes: Record<string, Scene>) => void;
   clickObject: (objectId: string) => void;
   useItemOnObject: (itemId: string, objectId: string) => void;
+  pickupObject: (objectId: string) => void;
   selectItem: (itemId: string | null) => void;
   setToast: (msg: string | null) => void;
   startGame: () => void;
@@ -373,19 +374,56 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const scene = scenes[currentSceneId];
     if (!scene || !session) return;
 
-    const result = applyItemToContainer(sessionState, currentSceneId, objectId, itemId, scene.objects);
+    const result = applyItemToObject(sessionState, currentSceneId, objectId, itemId, scene.objects);
     
     if (result.success) {
-      set(state => ({
-        sessionState: result.newState,
-        selectedItem: null,
-        toast: result.message,
-        session: state.session ? { ...state.session, state: result.newState } : null,
-      }));
+      // If transformed, update the object in the scene
+      if (result.transformed && result.newObjectState) {
+        const updatedScene = {
+          ...scene,
+          objects: scene.objects.map(o => 
+            o.id === objectId ? { ...o, ...result.newObjectState } : o
+          ),
+        };
+        set(state => ({
+          sessionState: result.newState,
+          selectedItem: null,
+          toast: result.message,
+          session: state.session ? { ...state.session, state: result.newState } : null,
+          scenes: { ...state.scenes, [currentSceneId]: updatedScene },
+        }));
+      } else {
+        set(state => ({
+          sessionState: result.newState,
+          selectedItem: null,
+          toast: result.message,
+          session: state.session ? { ...state.session, state: result.newState } : null,
+        }));
+      }
       setTimeout(() => set({ toast: null }), 6000);
     } else {
       set({ toast: result.message });
       setTimeout(() => set({ toast: null }), 4000);
+    }
+  },
+
+  pickupObject: (objectId) => {
+    const { sessionState, currentSceneId, scenes, session } = get();
+    const scene = scenes[currentSceneId];
+    if (!scene || !session) return;
+
+    const result = pickupObject(sessionState, currentSceneId, objectId, scene.objects);
+    
+    if (result.success) {
+      set(state => ({
+        sessionState: result.newState,
+        toast: result.message,
+        session: state.session ? { ...state.session, state: result.newState } : null,
+      }));
+      setTimeout(() => set({ toast: null }), 5000);
+    } else {
+      set({ toast: result.message });
+      setTimeout(() => set({ toast: null }), 3000);
     }
   },
 

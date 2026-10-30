@@ -16,6 +16,17 @@ export interface View {
   closeMessage?: string; // message when closing view
 }
 
+// ============ Transform Rule (when item is used on object) ============
+export interface TransformRule {
+  requiresItem: string;        // item ID that must be used
+  newImageUrl?: string;        // new image after transform
+  newName?: string;            // new name after transform
+  newMessage?: string;         // message shown after transform
+  grantsItem?: string;         // item granted after transform
+  consumesItem?: boolean;      // whether the used item is consumed (default: true)
+  triggersDiscovery?: boolean; // whether this counts as discovering the object
+}
+
 // ============ SceneObject ============
 export interface SceneObject {
   id: string;
@@ -37,7 +48,23 @@ export interface SceneObject {
   soundUrl?: string;
   view?: View;
   customData?: Record<string, string>;
+  // Inventory & Transform
+  pickupable?: boolean;        // can this object be picked up into inventory?
+  pickupItemId?: string;       // the item ID added to inventory when picked up
+  pickupMessage?: string;      // message shown when picked up
+  transforms?: TransformRule[]; // rules for transforming when items are used on this
+  currentTransform?: number;   // index of current transform state (-1 = original)
 }
+
+export const TransformRuleSchema: z.ZodType<TransformRule> = z.object({
+  requiresItem: z.string(),
+  newImageUrl: z.string().optional(),
+  newName: z.string().optional(),
+  newMessage: z.string().optional(),
+  grantsItem: z.string().optional(),
+  consumesItem: z.boolean().optional(),
+  triggersDiscovery: z.boolean().optional(),
+});
 
 export const SceneObjectSchema: z.ZodType<SceneObject> = z.object({
   id: z.string(),
@@ -59,6 +86,11 @@ export const SceneObjectSchema: z.ZodType<SceneObject> = z.object({
   soundUrl: z.string().optional(),
   view: z.any().optional(),
   customData: z.record(z.string(), z.string()).optional(),
+  pickupable: z.boolean().optional(),
+  pickupItemId: z.string().optional(),
+  pickupMessage: z.string().optional(),
+  transforms: z.array(TransformRuleSchema).optional(),
+  currentTransform: z.number().optional(),
 });
 
 // ============ Scene ============

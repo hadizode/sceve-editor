@@ -260,6 +260,140 @@ function PropertiesPanel() {
           onChange={e => handleChange('grantsItem', e.target.value || undefined)} />
       </div>
 
+      {/* Pickup / Inventory Section */}
+      <div className="border-t border-gray-700 pt-3 mt-3">
+        <h4 className="font-bold text-green-300 text-sm mb-2">🎒 Inventory / Pickup</h4>
+        <div className="space-y-2">
+          <label className="flex items-center gap-2">
+            <input 
+              type="checkbox" 
+              checked={obj.pickupable || false} 
+              onChange={e => handleChange('pickupable', e.target.checked)} 
+            />
+            <span className="text-gray-300">Pickupable (can be added to inventory)</span>
+          </label>
+          
+          {obj.pickupable && (
+            <>
+              <div>
+                <label className="block text-gray-400 mb-1 text-xs">Pickup Item ID</label>
+                <input 
+                  className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white text-xs"
+                  value={obj.pickupItemId || ''}
+                  placeholder="e.g., wire-cutter"
+                  onChange={e => handleChange('pickupItemId', e.target.value || undefined)} 
+                />
+              </div>
+              <div>
+                <label className="block text-gray-400 mb-1 text-xs">Pickup Message (Persian)</label>
+                <textarea 
+                  className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white text-xs"
+                  dir="rtl" lang="fa"
+                  value={obj.pickupMessage || ''}
+                  placeholder="پیام هنگام برداشتن..."
+                  onChange={e => handleChange('pickupMessage', e.target.value || undefined)} 
+                  rows={2}
+                />
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Transforms Section */}
+      <div className="border-t border-gray-700 pt-3 mt-3">
+        <h4 className="font-bold text-purple-300 text-sm mb-2">🔄 Transforms</h4>
+        <p className="text-xs text-gray-500 mb-2">Rules for when items are used on this object</p>
+        
+        {obj.transforms && obj.transforms.length > 0 ? (
+          <div className="space-y-2">
+            {obj.transforms.map((rule, i) => (
+              <div key={i} className="bg-surface-light rounded p-2 text-xs space-y-1">
+                <div className="flex justify-between items-center">
+                  <span className="text-purple-300">Transform {i + 1}</span>
+                  <button 
+                    className="text-red-400 hover:text-red-300"
+                    onClick={() => {
+                      const newTransforms = [...(obj.transforms || [])];
+                      newTransforms.splice(i, 1);
+                      handleChange('transforms', newTransforms.length > 0 ? newTransforms : undefined);
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div>
+                  <label className="text-gray-500">Requires Item:</label>
+                  <input 
+                    className="w-full bg-gray-800 border border-gray-600 rounded px-1 py-0.5 text-white"
+                    value={rule.requiresItem}
+                    onChange={e => {
+                      const newTransforms = [...(obj.transforms || [])];
+                      newTransforms[i] = { ...newTransforms[i], requiresItem: e.target.value };
+                      handleChange('transforms', newTransforms);
+                    }}
+                  />
+                </div>
+                <div>
+                  <label className="text-gray-500">New Message:</label>
+                  <input 
+                    className="w-full bg-gray-800 border border-gray-600 rounded px-1 py-0.5 text-white"
+                    dir="rtl" lang="fa"
+                    value={rule.newMessage || ''}
+                    onChange={e => {
+                      const newTransforms = [...(obj.transforms || [])];
+                      newTransforms[i] = { ...newTransforms[i], newMessage: e.target.value || undefined };
+                      handleChange('transforms', newTransforms);
+                    }}
+                  />
+                </div>
+                <div>
+                  <label className="text-gray-500">Grants Item:</label>
+                  <input 
+                    className="w-full bg-gray-800 border border-gray-600 rounded px-1 py-0.5 text-white"
+                    value={rule.grantsItem || ''}
+                    onChange={e => {
+                      const newTransforms = [...(obj.transforms || [])];
+                      newTransforms[i] = { ...newTransforms[i], grantsItem: e.target.value || undefined };
+                      handleChange('transforms', newTransforms);
+                    }}
+                  />
+                </div>
+                <label className="flex items-center gap-1">
+                  <input 
+                    type="checkbox" 
+                    checked={rule.consumesItem !== false}
+                    onChange={e => {
+                      const newTransforms = [...(obj.transforms || [])];
+                      newTransforms[i] = { ...newTransforms[i], consumesItem: e.target.checked };
+                      handleChange('transforms', newTransforms);
+                    }}
+                  />
+                  <span className="text-gray-400">Consumes item</span>
+                </label>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-gray-600">No transforms defined</p>
+        )}
+        
+        <button
+          className="w-full bg-purple-700 hover:bg-purple-600 text-white px-2 py-1.5 rounded text-xs mt-2"
+          onClick={() => {
+            const newTransforms = [...(obj.transforms || [])];
+            newTransforms.push({
+              requiresItem: '',
+              newMessage: '',
+              consumesItem: true,
+            });
+            handleChange('transforms', newTransforms);
+          }}
+        >
+          + Add Transform Rule
+        </button>
+      </div>
+
       {/* View Section */}
       <div className="border-t border-gray-700 pt-3 mt-3">
         <h4 className="font-bold text-amber-300 text-sm mb-2">🔍 Interactive View</h4>
