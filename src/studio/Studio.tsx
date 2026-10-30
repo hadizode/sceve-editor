@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Stage, Layer, Image as KImage, Rect, Text, Transformer, Group, Line } from 'react-konva';
+import { Stage, Layer, Image as KImage, Rect, Text, Transformer, Group, Line, Circle } from 'react-konva';
 import useImage from 'use-image';
 import { useStudioStore } from '../stores/store';
 import type { SceneObject, ObjectType, View } from '../shared/types';
@@ -664,10 +664,45 @@ export default function Studio() {
   const [newSceneName, setNewSceneName] = useState('');
   const [isPanning, setIsPanning] = useState(false);
   const [spaceHeld, setSpaceHeld] = useState(false);
+  const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
   const lastPanPos = useRef({ x: 0, y: 0 });
   const stageRef = useRef<any>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Measure container size for Stage
+  React.useEffect(() => {
+    const container = canvasContainerRef.current;
+    if (!container) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          setContainerSize({ width, height });
+        }
+      }
+    });
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [view, previewMode]);
+
+  // Auto-center when scene changes (using setTimeout to avoid ordering issues)
+  React.useEffect(() => {
+    if (currentSceneId && containerSize.width > 0) {
+      const scene = scenes[currentSceneId];
+      if (scene) {
+        const scaleX = containerSize.width / scene.width;
+        const scaleY = containerSize.height / scene.height;
+        const fitScale = Math.min(scaleX, scaleY) * 0.85;
+        const newZoom = Math.max(0.1, Math.min(5, fitScale));
+        const newPanX = (containerSize.width - scene.width * newZoom) / 2;
+        const newPanY = (containerSize.height - scene.height * newZoom) / 2;
+        setZoom(newZoom);
+        setPan(newPanX, newPanY);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSceneId]);
 
   const currentProject = projects.find(p => p.id === currentProjectId);
   const currentScene = currentSceneId ? scenes[currentSceneId] : null;
@@ -762,15 +797,33 @@ export default function Studio() {
     };
   }, [selectedObjectIds, deleteObject, undo, redo, pushUndo, previewMode]);
 
-  // Canvas wheel zoom handler
+  // Canvas wheel zoom handler - zoom to cursor position
   const handleCanvasWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    const delta = e.deltaY > 0 ? -0.1 : 0.1;
-    setZoom(zoom + delta);
+    
+    const container = canvasContainerRef.current;
+    if (!container) return;
+    
+    const rect = container.getBoundingClientRect();
+    // Mouse position relative to container
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    
+    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+    const newZoom = Math.max(0.1, Math.min(5, zoom * zoomFactor));
+    
+    // Adjust pan so zoom centers on mouse position
+    // Formula: newPan = mouse - (mouse - oldPan) * (newZoom / oldZoom)
+    const scale = newZoom / zoom;
+    const newPanX = mouseX - (mouseX - panX) * scale;
+    const newPanY = mouseY - (mouseY - panY) * scale;
+    
+    setZoom(newZoom);
+    setPan(newPanX, newPanY);
   };
 
-  // Canvas pan handlers
+  // Canvas pan handlers - unlimited free movement
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
     // Middle mouse button or space+left click
     if (e.button === 1 || (e.button === 0 && spaceHeld)) {
@@ -791,6 +844,51 @@ export default function Studio() {
 
   const handleCanvasMouseUp = () => {
     setIsPanning(false);
+  };
+
+  // Center view on scene
+  const centerOnScene = () => {
+    const scene = currentSceneId ? scenes[currentSceneId] : null;
+    if (!scene) return;
+    const scaleX = containerSize.width / scene.width;
+    const scaleY = containerSize.height / scene.height;
+    const fitScale = Math.min(scaleX, scaleY) * 0.85;
+    const newZoom = Math.max(0.1, Math.min(5, fitScale));
+    const newPanX = (containerSize.width - scene.width * newZoom) / 2;
+    const newPanY = (containerSize.height - scene.height * newZoom) / 2;
+    setZoom(newZoom);
+    setPan(newPanX, newPanY);
+  };
+
+  // Compute infinite grid lines based on viewport
+  const getGridLines = () => {
+    if (!currentScene || !showGrid) return { vertical: [], horizontal: [] };
+    
+    // Compute visible area in scene coordinates
+    const viewLeft = -panX / zoom;
+    const viewTop = -panY / zoom;
+    const viewRight = (containerSize.width - panX) / zoom;
+    const viewBottom = (containerSize.height - panY) / zoom;
+    
+    // Extend grid beyond scene bounds for infinite feel
+    const gridLeft = Math.floor(Math.min(viewLeft, 0) / gridSize) * gridSize - gridSize;
+    const gridTop = Math.floor(Math.min(viewTop, 0) / gridSize) * gridSize - gridSize;
+    const gridRight = Math.ceil(Math.max(viewRight, currentScene.width) / gridSize) * gridSize + gridSize;
+    const gridBottom = Math.ceil(Math.max(viewBottom, currentScene.height) / gridSize) * gridSize + gridSize;
+    
+    // Limit grid lines to prevent performance issues
+    const maxLines = 200;
+    const vertical: number[] = [];
+    const horizontal: number[] = [];
+    
+    for (let x = gridLeft; x <= gridRight && vertical.length < maxLines; x += gridSize) {
+      vertical.push(x);
+    }
+    for (let y = gridTop; y <= gridBottom && horizontal.length < maxLines; y += gridSize) {
+      horizontal.push(y);
+    }
+    
+    return { vertical, horizontal };
   };
 
   // ============ Projects View ============
@@ -915,8 +1013,15 @@ export default function Studio() {
 
         {/* Zoom */}
         <button className="text-gray-300 hover:text-white px-1" onClick={() => setZoom(zoom - 0.1)}>−</button>
-        <span className="text-gray-400 text-xs w-10 text-center">{Math.round(zoom * 100)}%</span>
+        <span className="text-gray-400 text-xs w-12 text-center">{Math.round(zoom * 100)}%</span>
         <button className="text-gray-300 hover:text-white px-1" onClick={() => setZoom(zoom + 0.1)}>+</button>
+        <button 
+          className="text-gray-400 hover:text-white px-1 text-xs" 
+          onClick={centerOnScene}
+          title="Fit scene to view"
+        >
+          ⊡
+        </button>
 
         <div className="h-5 w-px bg-gray-600" />
 
@@ -1084,67 +1189,106 @@ export default function Studio() {
             touchAction: 'none'
           }}
         >
-          {currentScene ? (
-            <Stage
-              ref={stageRef}
-              width={800}
-              height={600}
-              scaleX={zoom}
-              scaleY={zoom}
-              x={panX}
-              y={panY}
-              onClick={(e) => {
-                if (e.target === e.target.getStage() && !spaceHeld) {
-                  clearSelection();
-                }
-              }}
-              style={{ 
-                cursor: spaceHeld ? (isPanning ? 'grabbing' : 'grab') : 'default',
-                touchAction: 'none'
-              }}
-            >
-              <Layer>
-                {/* Grid */}
-                {showGrid && (
-                  <>
-                    {Array.from({ length: Math.ceil(currentScene.width / gridSize) + 1 }).map((_, i) => (
-                      <Line
-                        key={`v${i}`}
-                        points={[i * gridSize, 0, i * gridSize, currentScene.height]}
-                        stroke="#334155"
-                        strokeWidth={0.5}
-                      />
-                    ))}
-                    {Array.from({ length: Math.ceil(currentScene.height / gridSize) + 1 }).map((_, i) => (
-                      <Line
-                        key={`h${i}`}
-                        points={[0, i * gridSize, currentScene.width, i * gridSize]}
-                        stroke="#334155"
-                        strokeWidth={0.5}
-                      />
-                    ))}
-                  </>
-                )}
-
-                {/* Background */}
-                <BackgroundImage url={currentScene.backgroundUrl} width={currentScene.width} height={currentScene.height} />
-
-                {/* Objects */}
-                {currentScene.objects
-                  .sort((a, b) => a.zIndex - b.zIndex)
-                  .map(obj => (
-                    <KonvaImage
-                      key={obj.id}
-                      obj={obj}
-                      isSelected={selectedObjectIds.includes(obj.id)}
-                      onSelect={selectObject}
-                      onDragEnd={handleDragEnd}
-                      onChange={updateObject}
+          {/* Coordinates HUD */}
+          <div className="absolute bottom-2 left-2 bg-black/60 backdrop-blur text-gray-400 text-xs px-2 py-1 rounded font-mono pointer-events-none z-10">
+            Pan: {Math.round(panX)}, {Math.round(panY)} | Zoom: {Math.round(zoom * 100)}%
+            {currentScene && ` | Scene: ${currentScene.width}×${currentScene.height}`}
+          </div>
+          {/* Help hint */}
+          <div className="absolute top-2 left-2 bg-black/60 backdrop-blur text-gray-500 text-xs px-2 py-1 rounded pointer-events-none z-10">
+            Scroll = Zoom • Space+Drag = Pan • Middle-click = Pan
+          </div>
+          {currentScene ? (() => {
+            const grid = getGridLines();
+            // Scene bounds in world coordinates
+            const sceneX = 0;
+            const sceneY = 0;
+            const sceneW = currentScene.width;
+            const sceneH = currentScene.height;
+            
+            return (
+              <Stage
+                ref={stageRef}
+                width={containerSize.width}
+                height={containerSize.height}
+                scaleX={zoom}
+                scaleY={zoom}
+                x={panX}
+                y={panY}
+                onClick={(e) => {
+                  if (e.target === e.target.getStage() && !spaceHeld) {
+                    clearSelection();
+                  }
+                }}
+                style={{ 
+                  cursor: spaceHeld ? (isPanning ? 'grabbing' : 'grab') : 'default',
+                  touchAction: 'none',
+                  display: 'block'
+                }}
+              >
+                <Layer>
+                  {/* Infinite Grid */}
+                  {showGrid && grid.vertical.map((x, i) => (
+                    <Line
+                      key={`v${i}`}
+                      points={[x, -5000, x, 5000]}
+                      stroke={x === 0 || x === sceneW ? '#475569' : '#1e293b'}
+                      strokeWidth={x === 0 || x === sceneW ? 1 / zoom : 0.5 / zoom}
+                      listening={false}
                     />
                   ))}
-              </Layer>
-            </Stage>
-          ) : (
+                  {showGrid && grid.horizontal.map((y, i) => (
+                    <Line
+                      key={`h${i}`}
+                      points={[-5000, y, 5000, y]}
+                      stroke={y === 0 || y === sceneH ? '#475569' : '#1e293b'}
+                      strokeWidth={y === 0 || y === sceneH ? 1 / zoom : 0.5 / zoom}
+                      listening={false}
+                    />
+                  ))}
+
+                  {/* Scene bounds indicator (dashed border) */}
+                  <Rect
+                    x={sceneX}
+                    y={sceneY}
+                    width={sceneW}
+                    height={sceneH}
+                    stroke="#6366f1"
+                    strokeWidth={1.5 / zoom}
+                    dash={[8 / zoom, 4 / zoom]}
+                    fill="transparent"
+                    listening={false}
+                  />
+
+                  {/* Background */}
+                  <BackgroundImage url={currentScene.backgroundUrl} width={currentScene.width} height={currentScene.height} />
+
+                  {/* Origin marker */}
+                  <Circle
+                    x={0}
+                    y={0}
+                    radius={4 / zoom}
+                    fill="#6366f1"
+                    listening={false}
+                  />
+
+                  {/* Objects */}
+                  {currentScene.objects
+                    .sort((a, b) => a.zIndex - b.zIndex)
+                    .map(obj => (
+                      <KonvaImage
+                        key={obj.id}
+                        obj={obj}
+                        isSelected={selectedObjectIds.includes(obj.id)}
+                        onSelect={selectObject}
+                        onDragEnd={handleDragEnd}
+                        onChange={updateObject}
+                      />
+                    ))}
+                </Layer>
+              </Stage>
+            );
+          })() : (
             <div className="flex items-center justify-center h-full text-gray-500">
               <p>Select or create a room</p>
             </div>
