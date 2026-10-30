@@ -1,12 +1,13 @@
 import { create } from 'zustand';
-import type { Project, Scene, SceneObject, Session, SessionState } from '../shared/types';
-import { SEED_PROJECT, SEED_SCENE, SEED_SCENE_2, SEED_SESSION } from '../shared/seed-data';
+import type { Project, Scene, SceneObject, Session, SessionState, Asset } from '../shared/types';
+import { SEED_PROJECT, SEED_SCENE, SEED_SCENE_2, SEED_SESSION, SEED_ASSETS } from '../shared/seed-data';
 import { discoverObject, isRoomComplete, applyItemToObject, pickupObject } from '../shared/game-logic';
 
 // ============ Studio Store ============
 interface StudioState {
   projects: Project[];
   scenes: Record<string, Scene>;
+  assets: Record<string, Asset>; // assetId -> Asset
   currentProjectId: string | null;
   currentSceneId: string | null;
   selectedObjectIds: string[];
@@ -44,11 +45,16 @@ interface StudioState {
   pushUndo: () => void;
   undo: () => void;
   redo: () => void;
+  // Assets
+  addAsset: (asset: Asset) => void;
+  removeAsset: (id: string) => void;
+  uploadAssets: (files: FileList) => Promise<void>;
 }
 
 export const useStudioStore = create<StudioState>((set, get) => ({
   projects: [SEED_PROJECT],
   scenes: { [SEED_SCENE.id]: SEED_SCENE, [SEED_SCENE_2.id]: SEED_SCENE_2 },
+  assets: Object.fromEntries(SEED_ASSETS.map(a => [a.id, a])),
   currentProjectId: null,
   currentSceneId: null,
   selectedObjectIds: [],
@@ -86,10 +92,12 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
   selectProject: (id) => {
     const project = get().projects.find(p => p.id === id);
-    if (project && project.scenes.length > 0) {
-      set({ currentProjectId: id, currentSceneId: project.scenes[0], view: 'editor' });
-    } else {
-      set({ currentProjectId: id, view: 'editor' });
+    if (project) {
+      set({ 
+        currentProjectId: id, 
+        currentSceneId: project.scenes.length > 0 ? project.scenes[0] : null,
+        view: 'editor' 
+      });
     }
   },
 
@@ -272,6 +280,39 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     const newScenes = { ...scenes } as Record<string, Scene>;
     newScenes[currentSceneId] = next;
     set({ redoStack: redoStack.slice(0, -1), undoStack: [...undoStack, saved], scenes: newScenes });
+  },
+
+  // Assets
+  addAsset: (asset) => {
+    set(state => ({ assets: { ...state.assets, [asset.id]: asset } }));
+  },
+
+  removeAsset: (id) => {
+    set(state => {
+      const newAssets = { ...state.assets };
+      delete newAssets[id];
+      return { assets: newAssets };
+    });
+  },
+
+  uploadAssets: async (files) => {
+    const fileArray = Array.from(files);
+    const imageFiles = fileArray.filter(f => f.type.startsWith('image/'));
+    
+    for (const file of imageFiles) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const asset: Asset = {
+          id: `asset-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name: file.name,
+          url: reader.result as string,
+          tags: [],
+          createdAt: new Date().toISOString(),
+        };
+        get().addAsset(asset);
+      };
+      reader.readAsDataURL(file);
+    }
   },
 }));
 
