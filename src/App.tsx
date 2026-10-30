@@ -6,7 +6,7 @@ type AppView = 'home' | 'studio' | 'player';
 
 function HomePage({ onNavigate }: { onNavigate: (view: AppView) => void }) {
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4 animate-fade-in" dir="rtl" lang="fa">
+    <div className="min-h-full flex flex-col items-center justify-center p-4 animate-fade-in overflow-auto" dir="rtl" lang="fa">
       {/* Hero */}
       <div className="text-center mb-12">
         <div className="text-6xl md:text-8xl mb-4">🔐</div>
@@ -87,7 +87,7 @@ export default function App() {
   const [view, setView] = useState<AppView>('home');
 
   return (
-    <div className="min-h-screen bg-gray-900" dir="rtl" lang="fa">
+    <div className="h-screen bg-gray-900 overflow-hidden" dir="rtl" lang="fa">
       {/* Navigation */}
       {view !== 'home' && (
         <nav className="fixed top-0 left-0 right-0 z-50 bg-surface/95 backdrop-blur border-b border-gray-700 px-4 py-2 flex items-center justify-between">
@@ -119,7 +119,7 @@ export default function App() {
       )}
 
       {/* Content */}
-      <div className={view !== 'home' ? 'pt-11' : ''}>
+      <div className={view !== 'home' ? 'pt-11 h-full' : 'h-full overflow-auto'}>
         {view === 'home' && <HomePage onNavigate={setView} />}
         {view === 'studio' && <Studio />}
         {view === 'player' && <Player />}

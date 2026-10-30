@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Stage, Layer, Image as KImage, Rect, Text, Circle, Group } from 'react-konva';
+import React, { useState, useEffect, useRef } from 'react';
+import { Stage, Layer, Image as KImage, Rect, Circle, Group } from 'react-konva';
 import useImage from 'use-image';
 import { usePlayerStore } from '../stores/store';
 import { SEED_SESSION, SEED_SCENE, SEED_SCENE_2 } from '../shared/seed-data';
@@ -15,12 +15,11 @@ function Lobby() {
   const allReady = session.players.every(p => p.ready);
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 animate-fade-in">
+    <div className="h-full flex items-center justify-center p-4 animate-fade-in overflow-auto">
       <div className="bg-surface rounded-2xl p-6 md:p-8 max-w-md w-full border border-gray-700 shadow-2xl">
         <h1 className="text-2xl font-bold text-indigo-300 text-center mb-2">🎮 Game Lobby</h1>
         <p className="text-center text-gray-500 text-sm mb-6">Group Escape Room - Old Library</p>
         
-        {/* How to Play */}
         <button
           className="w-full text-center text-indigo-400 text-sm mb-4 hover:text-indigo-300"
           onClick={() => setShowGuide(!showGuide)}
@@ -29,13 +28,12 @@ function Lobby() {
         </button>
         
         {showGuide && (
-          <div className="bg-surface-light rounded-xl p-4 mb-4 text-sm text-gray-300 space-y-2 animate-fade-in" dir="rtl" lang="fa">
+          <div className="bg-surface-light rounded-xl p-4 mb-4 text-sm text-gray-300 space-y-2 animate-fade-in">
             <p>🔍 <strong>Explore:</strong> Click objects to discover clues</p>
             <p>🔗 <strong>Chain:</strong> Each clue leads you to the next object</p>
             <p>🔢 <strong>Numbers:</strong> Find number pieces to complete each room</p>
             <p>🎒 <strong>Items:</strong> Use collected items on matching objects</p>
-            <p>🔍 <strong>Views:</strong> Some objects open a close-up interactive view</p>
-            <p>🖱️ <strong>Controls:</strong> Scroll to zoom, hold Space + drag to pan</p>
+            <p>🔍 <strong>Views:</strong> Some objects open a close-up interactive view (zoom & pan inside)</p>
             <p>🔐 <strong>Final Lock:</strong> Enter the combined code when all rooms are complete</p>
             <p>👥 <strong>Teamwork:</strong> Collaborate with your teammates!</p>
           </div>
@@ -109,7 +107,6 @@ function GameObject({ obj, discovered, isHighlighted, onClick }: {
         onTap={onClick}
         cursor="pointer"
       />
-      {/* View indicator */}
       {obj.view && !discovered && (
         <Circle
           x={obj.x + 8}
@@ -153,7 +150,7 @@ function GameBackground({ url, width, height }: { url: string; width: number; he
   return <KImage image={image} x={0} y={0} width={width} height={height} />;
 }
 
-// ============ View Overlay (Interactive close-up) ============
+// ============ View Overlay (Interactive close-up with zoom/pan) ============
 function ViewOverlay({ view, onClose, discoveredObjects, onObjectClick }: {
   view: View;
   onClose: () => void;
@@ -177,12 +174,14 @@ function ViewOverlay({ view, onClose, discoveredObjects, onObjectClick }: {
 
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     const delta = e.deltaY > 0 ? -0.1 : 0.1;
     setZoom(z => Math.max(0.5, Math.min(3, z + delta)));
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (spaceHeld) {
+    if (spaceHeld || e.button === 1) {
+      e.preventDefault();
       setIsPanning(true);
       lastPos.current = { x: e.clientX, y: e.clientY };
     }
@@ -205,7 +204,6 @@ function ViewOverlay({ view, onClose, discoveredObjects, onObjectClick }: {
   return (
     <div className="fixed inset-0 bg-black/85 z-40 flex items-center justify-center animate-fade-in">
       <div className="bg-surface rounded-2xl border border-gray-600 shadow-2xl overflow-hidden max-w-[95vw] max-h-[90vh]">
-        {/* View Header */}
         <div className="flex items-center justify-between px-4 py-2 bg-surface-light border-b border-gray-700">
           <h3 className="text-sm font-bold text-indigo-300" dir="rtl" lang="fa">🔍 {view.title}</h3>
           <div className="flex items-center gap-2">
@@ -220,15 +218,15 @@ function ViewOverlay({ view, onClose, discoveredObjects, onObjectClick }: {
           </div>
         </div>
         
-        {/* View Canvas */}
         <div
           ref={containerRef}
-          className="relative overflow-hidden"
+          className="relative overflow-hidden select-none"
           onWheel={handleWheel}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
+          onContextMenu={e => e.preventDefault()}
           style={{ cursor: spaceHeld ? (isPanning ? 'grabbing' : 'grab') : 'default' }}
         >
           <Stage
@@ -256,7 +254,6 @@ function ViewOverlay({ view, onClose, discoveredObjects, onObjectClick }: {
           </Stage>
         </div>
 
-        {/* View Controls hint */}
         <div className="px-4 py-2 bg-surface-light border-t border-gray-700 text-xs text-gray-500 flex justify-between">
           <span>Scroll = Zoom | Space + Drag = Pan</span>
           <span dir="rtl" lang="fa">اسکرول = زوم | Space + درگ = جابجایی</span>
@@ -336,15 +333,11 @@ function FinalLock() {
   return (
     <div className="bg-surface rounded-2xl p-4 md:p-6 border border-gray-700">
       <h2 className="text-lg font-bold text-center text-amber-300 mb-4">🔐 Final Lock</h2>
-      
-      {/* Display */}
       <div className="bg-gray-800 rounded-xl p-4 mb-4 text-center">
         <div className="text-3xl font-mono tracking-widest text-white min-h-[48px]">
           {lockInput || '—'}
         </div>
       </div>
-
-      {/* Keypad */}
       <div className="grid grid-cols-3 gap-2 max-w-[220px] mx-auto">
         {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
           <button
@@ -356,21 +349,15 @@ function FinalLock() {
             {n}
           </button>
         ))}
-        <button className="num-key bg-red-900/50 border-red-700" onClick={clearLockDigit} aria-label="Delete">
-          ←
-        </button>
-        <button className="num-key" onClick={() => enterLockDigit('0')} aria-label="Number 0">
-          0
-        </button>
-        <button className="num-key bg-green-900/50 border-green-700" onClick={submitLock} aria-label="Submit">
-          ✓
-        </button>
+        <button className="num-key bg-red-900/50 border-red-700" onClick={clearLockDigit} aria-label="Delete">←</button>
+        <button className="num-key" onClick={() => enterLockDigit('0')} aria-label="Number 0">0</button>
+        <button className="num-key bg-green-900/50 border-green-700" onClick={submitLock} aria-label="Submit">✓</button>
       </div>
     </div>
   );
 }
 
-// ============ Toast Component (longer display) ============
+// ============ Toast Component ============
 function Toast() {
   const { toast } = usePlayerStore();
   if (!toast) return null;
@@ -391,18 +378,8 @@ export default function Player() {
     selectedItem, initSession, clickObject, useItemOnObject, selectItem, switchScene,
   } = store;
 
-  // View state
   const [activeView, setActiveView] = useState<{ view: View; parentObjectId: string } | null>(null);
-  
-  // Zoom & Pan state
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [isPanning, setIsPanning] = useState(false);
-  const [spaceHeld, setSpaceHeld] = useState(false);
-  const lastPos = useRef({ x: 0, y: 0 });
-  const containerRef = useRef<HTMLDivElement>(null);
 
-  // Initialize with seed data
   useEffect(() => {
     if (!session) {
       try {
@@ -417,166 +394,84 @@ export default function Player() {
     }
   }, []);
 
-  // Keyboard events for space-based panning
-  useEffect(() => {
-    const down = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && !activeView) {
-        e.preventDefault();
-        setSpaceHeld(true);
-      }
-    };
-    const up = (e: KeyboardEvent) => {
-      if (e.code === 'Space') setSpaceHeld(false);
-    };
-    window.addEventListener('keydown', down);
-    window.addEventListener('keyup', up);
-    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
-  }, [activeView]);
-
   if (!session) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-gray-400">Loading...</div>
-      </div>
-    );
+    return <div className="min-h-screen flex items-center justify-center"><div className="text-gray-400">Loading...</div></div>;
   }
 
-  if (!gameStarted) {
-    return (
-      <>
-        <Lobby />
-        <Toast />
-      </>
-    );
-  }
-
-  if (gameComplete) {
-    return <FinalLock />;
-  }
+  if (!gameStarted) return <><Lobby /><Toast /></>;
+  if (gameComplete) return <FinalLock />;
 
   const currentScene = scenes[currentSceneId];
-  if (!currentScene) {
-    return <div className="text-center text-gray-400 p-8">Scene not found</div>;
-  }
+  if (!currentScene) return <div className="text-center text-gray-400 p-8">Scene not found</div>;
 
   const discovered = sessionState.discoveredObjects[currentSceneId] || [];
-  const viewDiscovered = activeView
-    ? (sessionState.discoveredObjects[activeView.view.id] || [])
-    : [];
+  const viewDiscovered = activeView ? (sessionState.discoveredObjects[activeView.view.id] || []) : [];
   const numberPieces = currentScene.objects.filter(o => o.type === 'number-piece');
   const roomComplete = isRoomComplete(sessionState, currentScene);
   const allComplete = allRoomsComplete(sessionState, Object.values(scenes));
   const projectScenes = Object.values(scenes);
 
-  const handleObjectClick = (obj: SceneObject, fromView = false) => {
-    // If using an item on an object
+  const handleObjectClick = (obj: SceneObject) => {
     if (selectedItem && (obj.type === 'container' || obj.requiresItem)) {
       useItemOnObject(selectedItem, obj.id);
       return;
     }
-
-    // If object has a view, open it
-    if (obj.view && !fromView) {
-      // Check requiresItem condition
+    if (obj.view) {
       if (obj.view.requiresItem && obj.view.requiresItem.length > 0) {
         const hasItems = obj.view.requiresItem.every(item => sessionState.inventory.includes(item));
         if (!hasItems) {
           store.setToast('You need a specific item to open this view');
-          setTimeout(() => store.setToast(null), 3000);
+          setTimeout(() => store.setToast(null), 4000);
           return;
         }
       }
       setActiveView({ view: obj.view, parentObjectId: obj.id });
       return;
     }
-
-    // Normal discovery
     clickObject(obj.id);
   };
 
   const handleViewObjectClick = (obj: SceneObject) => {
-    // Discover in the view's context
     if (activeView) {
       const viewId = activeView.view.id;
-      const viewDiscovered = sessionState.discoveredObjects[viewId] || [];
-      if (viewDiscovered.includes(obj.id)) {
+      const vd = sessionState.discoveredObjects[viewId] || [];
+      if (vd.includes(obj.id)) {
         store.setToast('Already discovered');
-        setTimeout(() => store.setToast(null), 2000);
+        setTimeout(() => store.setToast(null), 3000);
         return;
       }
-      
-      // Use clickObject with the view's ID as scene context
-      // We need to handle this specially - discover in the view
-      const scene = { ...currentScene, id: viewId, objects: activeView.view.objects };
-      const result = (() => {
-        const newDiscovered = [...viewDiscovered, obj.id];
-        const newDiscoveredObjects = { ...sessionState.discoveredObjects, [viewId]: newDiscovered };
-        let newInventory = [...sessionState.inventory];
-        if (obj.grantsItem && !newInventory.includes(obj.grantsItem)) {
-          newInventory.push(obj.grantsItem);
-        }
-        return {
-          newState: { ...sessionState, discoveredObjects: newDiscoveredObjects, inventory: newInventory },
-          message: obj.message,
-          grantsItem: obj.grantsItem,
-        };
-      })();
-
-      if (result.message) {
-        store.setToast(result.message);
-        setTimeout(() => store.setToast(null), 5000);
+      const newDiscovered = [...vd, obj.id];
+      const newDiscoveredObjects = { ...sessionState.discoveredObjects, [viewId]: newDiscovered };
+      let newInventory = [...sessionState.inventory];
+      if (obj.grantsItem && !newInventory.includes(obj.grantsItem)) {
+        newInventory.push(obj.grantsItem);
       }
-      
-      // Update state directly
-      const updatedSession = { ...session, state: result.newState };
+      const newState = { ...sessionState, discoveredObjects: newDiscoveredObjects, inventory: newInventory };
+      if (obj.message) {
+        store.setToast(obj.message);
+        setTimeout(() => store.setToast(null), 7000);
+      }
+      const updatedSession = { ...session, state: newState };
       store.initSession(updatedSession, scenes);
-      
-      try {
-        localStorage.setItem('escape-room-state', JSON.stringify(result.newState));
-      } catch {}
+      try { localStorage.setItem('escape-room-state', JSON.stringify(newState)); } catch {}
     }
   };
 
-  // Responsive canvas sizing
+  // Responsive canvas - fits to container, no zoom/pan in main game
   const maxCanvasW = typeof window !== 'undefined' ? Math.min(window.innerWidth - 32, 800) : 800;
   const canvasScale = Math.min(1, maxCanvasW / currentScene.width);
 
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    const delta = e.deltaY > 0 ? -0.1 : 0.1;
-    setZoom(z => Math.max(0.3, Math.min(4, z + delta)));
-  };
-
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (spaceHeld) {
-      setIsPanning(true);
-      lastPos.current = { x: e.clientX, y: e.clientY };
-    }
-  };
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (isPanning) {
-      const dx = e.clientX - lastPos.current.x;
-      const dy = e.clientY - lastPos.current.y;
-      setPan(p => ({ x: p.x + dx, y: p.y + dy }));
-      lastPos.current = { x: e.clientX, y: e.clientY };
-    }
-  };
-
-  const handleMouseUp = () => setIsPanning(false);
-
   return (
-    <div className="min-h-screen flex flex-col bg-gray-900">
+    <div className="h-full flex flex-col bg-gray-900 overflow-hidden">
       <Toast />
       
-      {/* View Overlay */}
       {activeView && (
         <ViewOverlay
           view={activeView.view}
           onClose={() => {
             if (activeView.view.closeMessage) {
               store.setToast(activeView.view.closeMessage);
-              setTimeout(() => store.setToast(null), 3000);
+              setTimeout(() => store.setToast(null), 4000);
             }
             setActiveView(null);
           }}
@@ -590,7 +485,6 @@ export default function Player() {
         <div className="flex items-center justify-between max-w-2xl mx-auto">
           <h1 className="text-sm md:text-base font-bold text-indigo-300">{currentScene.title}</h1>
           <div className="flex items-center gap-3">
-            {/* Online players */}
             {session.players.map(p => (
               <div key={p.telegramId} className="flex items-center gap-1" title={p.name}>
                 <div className={`w-2 h-2 rounded-full ${p.online ? 'bg-green-500' : 'bg-gray-500'}`} />
@@ -601,70 +495,37 @@ export default function Player() {
         </div>
       </div>
 
-      {/* Game Canvas with Zoom/Pan */}
-      <div className="flex-1 flex items-center justify-center p-2 md:p-4 overflow-auto">
+      {/* Game Canvas - No zoom/pan, just responsive fit */}
+      <div className="flex-1 flex items-center justify-center p-2 md:p-4 overflow-hidden min-h-0">
         <div className="relative rounded-xl overflow-hidden shadow-2xl border border-gray-700">
-          <div
-            ref={containerRef}
-            onWheel={handleWheel}
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}
-            style={{ cursor: spaceHeld ? (isPanning ? 'grabbing' : 'grab') : 'default' }}
+          <Stage
+            width={currentScene.width * canvasScale}
+            height={currentScene.height * canvasScale}
+            scaleX={canvasScale}
+            scaleY={canvasScale}
+            style={{ touchAction: 'none', display: 'block' }}
           >
-            <Stage
-              width={currentScene.width * canvasScale * zoom}
-              height={currentScene.height * canvasScale * zoom}
-              scaleX={canvasScale * zoom}
-              scaleY={canvasScale * zoom}
-              x={pan.x}
-              y={pan.y}
-              style={{ touchAction: 'none' }}
-            >
-              <Layer>
-                <GameBackground url={currentScene.backgroundUrl} width={currentScene.width} height={currentScene.height} />
-                {currentScene.objects
-                  .sort((a, b) => a.zIndex - b.zIndex)
-                  .map(obj => (
-                    <GameObject
-                      key={obj.id}
-                      obj={obj}
-                      discovered={discovered.includes(obj.id)}
-                      isHighlighted={selectedItem !== null && (obj.type === 'container' || !!obj.requiresItem)}
-                      onClick={() => handleObjectClick(obj)}
-                    />
-                  ))}
-              </Layer>
-            </Stage>
-          </div>
+            <Layer>
+              <GameBackground url={currentScene.backgroundUrl} width={currentScene.width} height={currentScene.height} />
+              {currentScene.objects
+                .sort((a, b) => a.zIndex - b.zIndex)
+                .map(obj => (
+                  <GameObject
+                    key={obj.id}
+                    obj={obj}
+                    discovered={discovered.includes(obj.id)}
+                    isHighlighted={selectedItem !== null && (obj.type === 'container' || !!obj.requiresItem)}
+                    onClick={() => handleObjectClick(obj)}
+                  />
+                ))}
+            </Layer>
+          </Stage>
         </div>
       </div>
 
-      {/* Zoom Controls */}
-      <div className="fixed bottom-32 left-3 flex flex-col gap-1 z-30">
-        <button
-          className="w-8 h-8 bg-surface/80 backdrop-blur border border-gray-600 rounded-lg text-white text-sm hover:bg-surface-light"
-          onClick={() => setZoom(z => Math.min(4, z + 0.2))}
-          aria-label="Zoom in"
-        >+</button>
-        <span className="text-xs text-gray-400 text-center">{Math.round(zoom * 100)}%</span>
-        <button
-          className="w-8 h-8 bg-surface/80 backdrop-blur border border-gray-600 rounded-lg text-white text-sm hover:bg-surface-light"
-          onClick={() => setZoom(z => Math.max(0.3, z - 0.2))}
-          aria-label="Zoom out"
-        >−</button>
-        <button
-          className="w-8 h-8 bg-surface/80 backdrop-blur border border-gray-600 rounded-lg text-white text-xs hover:bg-surface-light"
-          onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
-          aria-label="Reset view"
-        >⟲</button>
-      </div>
-
       {/* Bottom Panel */}
-      <div className="bg-surface/90 backdrop-blur border-t border-gray-700 p-3 space-y-3">
+      <div className="bg-surface/90 backdrop-blur border-t border-gray-700 p-3 space-y-3 flex-shrink-0 overflow-y-auto max-h-[40vh]">
         <div className="max-w-2xl mx-auto space-y-3">
-          {/* Room Progress */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="text-xs text-gray-400">Digits found:</span>
@@ -688,7 +549,6 @@ export default function Player() {
             )}
           </div>
 
-          {/* Scene Navigation */}
           {projectScenes.length > 1 && (
             <div className="flex gap-2 overflow-x-auto">
               {projectScenes.map(s => (
@@ -709,18 +569,9 @@ export default function Player() {
             </div>
           )}
 
-          {/* Inventory */}
           <InventoryPanel />
 
-          {/* Controls hint */}
-          <div className="text-xs text-gray-600 text-center">
-            Scroll = Zoom | Space + Drag = Pan | Click objects to explore
-          </div>
-
-          {/* Final Lock */}
-          {allComplete && !gameComplete && (
-            <FinalLock />
-          )}
+          {allComplete && !gameComplete && <FinalLock />}
         </div>
       </div>
     </div>

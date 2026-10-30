@@ -41,13 +41,10 @@ src/
 
 ### Player
 - ✅ Lobby with player list & Ready button
-- ✅ Konva room rendering
+- ✅ Konva room rendering (responsive fit, no zoom/pan in main game)
 - ✅ Click-to-discover objects
 - ✅ Clue message display (long duration: 5-7 seconds)
-- ✅ **Interactive Views** (close-up zoomable views for objects)
-- ✅ **Zoom** (mouse scroll wheel)
-- ✅ **Pan** (hold Space + drag)
-- ✅ Zoom controls (+ / - / reset buttons)
+- ✅ **Interactive Views** (close-up zoomable views with zoom/pan inside)
 - ✅ Item & container system
 - ✅ Room digit counter
 - ✅ Final lock with numeric keypad
@@ -57,6 +54,13 @@ src/
 - ✅ localStorage save & resume
 - ✅ Mobile-first touch UX
 - ✅ ARIA labels on all buttons
+
+### Studio Canvas Controls
+- ✅ **Zoom:** Mouse scroll wheel
+- ✅ **Pan:** Hold Space + drag, or middle mouse button drag
+- ✅ **Web-app feel:** No browser scroll, fixed layout, overflow:hidden
+- ✅ **Grid & snap:** Toggleable grid with adjustable size
+- ✅ **Cursor feedback:** grab/grabbing when panning
 
 ## Running
 
@@ -90,14 +94,30 @@ Objects can have an interactive `view` property. When a player clicks an object 
 
 ## Controls
 
+### Studio (Editor)
 | Action | Control |
 |--------|---------|
 | Zoom | Mouse scroll wheel |
-| Pan | Hold Space + drag |
+| Pan | Hold Space + drag, or Middle mouse button drag |
+| Select object | Click on object |
+| Multi-select | Shift + Click |
+| Delete object | Delete key |
+| Undo | Ctrl + Z |
+| Redo | Ctrl + Y |
+
+### Player (Game)
+| Action | Control |
+|--------|---------|
 | Discover object | Click on object |
 | Use item | Select item → click target object |
 | Open view | Click object with 🔍 indicator |
 | Close view | Click "Close" button |
+
+### Inside Interactive Views (Player)
+| Action | Control |
+|--------|---------|
+| Zoom | Mouse scroll wheel |
+| Pan | Hold Space + drag |
 
 ## Bundle Size
 

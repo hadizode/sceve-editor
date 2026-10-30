@@ -528,7 +528,11 @@ export default function Studio() {
   const [showImport, setShowImport] = useState(false);
   const [importJson, setImportJson] = useState('');
   const [newSceneName, setNewSceneName] = useState('');
+  const [isPanning, setIsPanning] = useState(false);
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const lastPanPos = useRef({ x: 0, y: 0 });
   const stageRef = useRef<any>(null);
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const currentProject = projects.find(p => p.id === currentProjectId);
@@ -608,10 +612,52 @@ export default function Studio() {
       }
       if (e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); }
       if (e.ctrlKey && e.key === 'y') { e.preventDefault(); redo(); }
+      if (e.code === 'Space' && !previewMode) {
+        e.preventDefault();
+        setSpaceHeld(true);
+      }
+    };
+    const upHandler = (e: KeyboardEvent) => {
+      if (e.code === 'Space') setSpaceHeld(false);
     };
     window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [selectedObjectIds, deleteObject, undo, redo, pushUndo]);
+    window.addEventListener('keyup', upHandler);
+    return () => {
+      window.removeEventListener('keydown', handler);
+      window.removeEventListener('keyup', upHandler);
+    };
+  }, [selectedObjectIds, deleteObject, undo, redo, pushUndo, previewMode]);
+
+  // Canvas wheel zoom handler
+  const handleCanvasWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+    setZoom(zoom + delta);
+  };
+
+  // Canvas pan handlers
+  const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    // Middle mouse button or space+left click
+    if (e.button === 1 || (e.button === 0 && spaceHeld)) {
+      e.preventDefault();
+      setIsPanning(true);
+      lastPanPos.current = { x: e.clientX, y: e.clientY };
+    }
+  };
+
+  const handleCanvasMouseMove = (e: React.MouseEvent) => {
+    if (isPanning) {
+      const dx = e.clientX - lastPanPos.current.x;
+      const dy = e.clientY - lastPanPos.current.y;
+      setPan(panX + dx, panY + dy);
+      lastPanPos.current = { x: e.clientX, y: e.clientY };
+    }
+  };
+
+  const handleCanvasMouseUp = () => {
+    setIsPanning(false);
+  };
 
   // ============ Projects View ============
   if (view === 'projects') {
@@ -690,9 +736,9 @@ export default function Studio() {
 
   // ============ Editor View ============
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
+    <div className="fixed inset-0 flex flex-col overflow-hidden" style={{ height: '100vh' }}>
       {/* Top Toolbar */}
-      <div className="bg-surface border-b border-gray-700 px-3 py-2 flex items-center gap-2 flex-wrap">
+      <div className="bg-surface border-b border-gray-700 px-3 py-2 flex items-center gap-2 flex-wrap flex-shrink-0">
         <button
           className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1.5 rounded text-sm"
           onClick={() => setView('projects')}
@@ -802,13 +848,13 @@ export default function Studio() {
 
       {/* Main Content */}
       {previewMode ? (
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 overflow-hidden min-h-0">
           <PreviewMode />
         </div>
       ) : (
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden min-h-0">
         {/* Left Sidebar - Tools */}
-        <div className="w-48 bg-surface border-l border-gray-700 flex flex-col overflow-y-auto">
+        <div className="w-48 bg-surface border-l border-gray-700 flex flex-col overflow-y-auto flex-shrink-0">
           <div className="p-3 border-b border-gray-700">
             <h3 className="text-xs font-bold text-gray-400 mb-2">Add Object</h3>
             <div className="grid grid-cols-2 gap-1">
@@ -890,11 +936,20 @@ export default function Studio() {
         </div>
 
         {/* Canvas Area */}
-        <div className="flex-1 bg-gray-900 overflow-hidden relative" onWheel={(e) => {
-          e.preventDefault();
-          const delta = e.deltaY > 0 ? -0.05 : 0.05;
-          setZoom(zoom + delta);
-        }}>
+        <div 
+          ref={canvasContainerRef}
+          className="flex-1 bg-gray-900 overflow-hidden relative select-none"
+          onWheel={handleCanvasWheel}
+          onMouseDown={handleCanvasMouseDown}
+          onMouseMove={handleCanvasMouseMove}
+          onMouseUp={handleCanvasMouseUp}
+          onMouseLeave={handleCanvasMouseUp}
+          onContextMenu={e => e.preventDefault()}
+          style={{ 
+            cursor: spaceHeld ? (isPanning ? 'grabbing' : 'grab') : 'default',
+            touchAction: 'none'
+          }}
+        >
           {currentScene ? (
             <Stage
               ref={stageRef}
@@ -905,11 +960,14 @@ export default function Studio() {
               x={panX}
               y={panY}
               onClick={(e) => {
-                if (e.target === e.target.getStage()) {
+                if (e.target === e.target.getStage() && !spaceHeld) {
                   clearSelection();
                 }
               }}
-              style={{ cursor: 'default' }}
+              style={{ 
+                cursor: spaceHeld ? (isPanning ? 'grabbing' : 'grab') : 'default',
+                touchAction: 'none'
+              }}
             >
               <Layer>
                 {/* Grid */}
@@ -960,7 +1018,7 @@ export default function Studio() {
         </div>
 
         {/* Right Sidebar - Properties */}
-        <div className="w-64 bg-surface border-r border-gray-700 overflow-y-auto">
+        <div className="w-64 bg-surface border-r border-gray-700 overflow-y-auto flex-shrink-0">
           <PropertiesPanel />
         </div>
       </div>
