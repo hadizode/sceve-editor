@@ -25,6 +25,11 @@ src/
 ### Design Studio
 - ✅ Project management (create, delete, list)
 - ✅ **Assets Panel** - manage all images used in project
+  - 📂 **Folder upload** - upload entire folders at once
+  - 📄 **Files upload** - upload multiple files
+  - 🔍 **Search** - filter assets by name
+  - 🗑️ **Delete** - remove unused assets
+  - 🖼️ **Instant preview** - thumbnails shown immediately
 - ✅ Konva editor with infinite pan/zoom
 - ✅ Object CRUD with drag & resize
 - ✅ Properties panel for every SceneObject field

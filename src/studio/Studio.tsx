@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { Stage, Layer, Image as KImage, Rect, Text, Transformer, Group, Line, Circle } from 'react-konva';
 import useImage from 'use-image';
 import { useStudioStore } from '../stores/store';
-import type { SceneObject, ObjectType, View } from '../shared/types';
+import type { SceneObject, ObjectType, View, Asset } from '../shared/types';
 import { validateScene } from '../shared/types';
 
 // ============ Konva Image Component ============
@@ -426,71 +426,113 @@ function PropertiesPanel() {
 
 // ============ Assets Panel ============
 function AssetsPanel() {
-  const { scenes, currentProjectId, projects } = useStudioStore();
-  const project = projects.find(p => p.id === currentProjectId);
-  const [showUpload, setShowUpload] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { assets, uploadAssets, removeAsset } = useStudioStore();
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const filesInputRef = useRef<HTMLInputElement>(null);
+  const [searchTerm, setSearchTerm] = useState('');
 
-  if (!project) return null;
+  const allAssets = Object.values(assets);
+  const filteredAssets = searchTerm
+    ? allAssets.filter(a => a.name.toLowerCase().includes(searchTerm.toLowerCase()))
+    : allAssets;
 
-  // Get all assets from all scenes
-  const allAssets = new Map<string, { url: string; name: string }>();
-  project.scenes.forEach(sceneId => {
-    const scene = scenes[sceneId];
-    if (!scene) return;
-    // Add background
-    if (scene.backgroundUrl) {
-      allAssets.set(scene.backgroundUrl, { url: scene.backgroundUrl, name: `${scene.title} Background` });
+  const handleFolderUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      uploadAssets(e.target.files);
     }
-    // Add object images
-    scene.objects.forEach(obj => {
-      if (obj.imageUrl) {
-        allAssets.set(obj.imageUrl, { url: obj.imageUrl, name: obj.name });
-      }
-    });
-  });
+  };
 
-  const handleAssetUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      // Asset is now available via the uploaded image
-      // In a real app, this would be stored in a global assets store
-      alert(`Asset "${file.name}" uploaded successfully!`);
-    };
-    reader.readAsDataURL(file);
+  const handleFilesUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      uploadAssets(e.target.files);
+    }
   };
 
   return (
     <div className="p-3 border-t border-gray-700">
       <div className="flex items-center justify-between mb-2">
         <h3 className="font-bold text-cyan-300 text-sm">📁 Assets</h3>
-        <button
-          className="bg-cyan-700 hover:bg-cyan-600 text-white px-2 py-0.5 rounded text-xs"
-          onClick={() => fileInputRef.current?.click()}
-        >
-          + Upload
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={handleAssetUpload}
-        />
+        <span className="text-xs text-gray-500">{allAssets.length}</span>
       </div>
-      <p className="text-xs text-gray-500 mb-2">{allAssets.size} images in project</p>
-      <div className="grid grid-cols-3 gap-1 max-h-32 overflow-y-auto">
-        {Array.from(allAssets.entries()).slice(0, 12).map(([url, asset]) => (
-          <div key={url} className="aspect-square bg-gray-800 rounded overflow-hidden relative group">
-            <img src={url} alt={asset.name} className="w-full h-full object-cover" />
-            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-              <span className="text-xs text-white text-center px-1 truncate">{asset.name}</span>
+
+      {/* Upload buttons */}
+      <div className="flex gap-1 mb-2">
+        <button
+          className="flex-1 bg-cyan-700 hover:bg-cyan-600 text-white px-2 py-1 rounded text-xs"
+          onClick={() => folderInputRef.current?.click()}
+          title="Upload entire folder"
+        >
+          📂 Folder
+        </button>
+        <button
+          className="flex-1 bg-cyan-700 hover:bg-cyan-600 text-white px-2 py-1 rounded text-xs"
+          onClick={() => filesInputRef.current?.click()}
+          title="Upload files"
+        >
+          📄 Files
+        </button>
+      </div>
+
+      {/* Hidden file inputs */}
+      <input
+        ref={folderInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        // @ts-ignore - webkitdirectory is not in TypeScript types
+        webkitdirectory=""
+        // @ts-ignore
+        directory=""
+        className="hidden"
+        onChange={handleFolderUpload}
+      />
+      <input
+        ref={filesInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={handleFilesUpload}
+      />
+
+      {/* Search */}
+      {allAssets.length > 5 && (
+        <input
+          type="text"
+          placeholder="Search..."
+          value={searchTerm}
+          onChange={e => setSearchTerm(e.target.value)}
+          className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-xs text-white mb-2"
+        />
+      )}
+
+      {/* Assets grid */}
+      <div className="grid grid-cols-3 gap-1 max-h-40 overflow-y-auto">
+        {filteredAssets.map(asset => (
+          <div key={asset.id} className="aspect-square bg-gray-800 rounded overflow-hidden relative group">
+            <img src={asset.url} alt={asset.name} className="w-full h-full object-cover" />
+            <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-1">
+              <span className="text-xs text-white text-center truncate w-full px-1">{asset.name}</span>
+              <button
+                className="mt-1 bg-red-600 hover:bg-red-500 text-white px-2 py-0.5 rounded text-xs"
+                onClick={() => {
+                  if (confirm(`Delete "${asset.name}"?`)) {
+                    removeAsset(asset.id);
+                  }
+                }}
+              >
+                ✕
+              </button>
             </div>
           </div>
         ))}
       </div>
+
+      {allAssets.length === 0 && (
+        <p className="text-xs text-gray-500 text-center py-2">
+          No assets yet. Upload a folder or files.
+        </p>
+      )}
     </div>
   );
 }
