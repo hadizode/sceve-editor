@@ -1,54 +1,63 @@
-import { z } from 'zod';
+import { clamp, nowIso, placeholderSvg, uid } from './utils';
 
-// ============ Enums & Types ============
-export const ObjectTypeSchema = z.enum(['decoration', 'inventory', 'container']);
-export type ObjectType = z.infer<typeof ObjectTypeSchema>;
+// ============ Basic types ============
+export const OBJECT_TYPES = ['decoration', 'inventory', 'container'] as const;
+export type ObjectType = (typeof OBJECT_TYPES)[number];
 
-// ============ Asset (shared image library) ============
+export const TYPE_COLORS: Record<ObjectType, string> = {
+  decoration: '#6b7280',
+  inventory: '#10b981',
+  container: '#8b5cf6',
+};
+
 export interface Asset {
   id: string;
   name: string;
-  url: string;           // data URL or external URL
-  tags: string[];
+  url: string; // data URL or external URL
+  width: number;
+  height: number;
   createdAt: string;
 }
 
-// ============ View (Interactive Scene within an Object) ============
+/** Images are referenced as `asset:<id>` so the same picture is stored only once. */
+export const assetRef = (id: string) => `asset:${id}`;
+export function resolveUrl(url: string, assets: Record<string, Asset>): string {
+  if (url.startsWith('asset:')) return assets[url.slice(6)]?.url ?? '';
+  return url;
+}
+
+export interface BackgroundLayer {
+  id: string;
+  name: string;
+  imageUrl: string;
+  opacity: number; // 0-1
+  visible: boolean;
+  offsetX: number;
+  offsetY: number;
+}
+
+export interface TransformRule {
+  requiresItem: string;
+  newImageUrl?: string;
+  newName?: string;
+  newMessage?: string;
+  grantsItem?: string;
+  consumesItem?: boolean;
+  triggersDiscovery?: boolean;
+}
+
 export interface View {
   id: string;
   title: string;
   backgroundUrl: string;
-  backgroundLayers?: BackgroundLayer[]; // multiple layered backgrounds
   width: number;
   height: number;
   objects: SceneObject[];
-  requiresItem?: string[]; // condition to open this view
-  closeMessage?: string; // message when closing view
+  requiresItem?: string[];
+  closeMessage?: string;
 }
 
-// ============ Background Layer ============
-export interface BackgroundLayer {
-  id: string;
-  imageUrl: string;
-  layerIndex: number;    // z-order among backgrounds
-  opacity: number;       // 0-1
-  visible: boolean;
-  offsetX?: number;      // parallax offset
-  offsetY?: number;
-}
-
-// ============ Transform Rule (when item is used on object) ============
-export interface TransformRule {
-  requiresItem: string;        // item ID that must be used
-  newImageUrl?: string;        // new image after transform
-  newName?: string;            // new name after transform
-  newMessage?: string;         // message shown after transform
-  grantsItem?: string;         // item granted after transform
-  consumesItem?: boolean;      // whether the used item is consumed (default: true)
-  triggersDiscovery?: boolean; // whether this counts as discovering the object
-}
-
-// ============ SceneObject ============
+/** Draw order = position in the `objects` array (last = on top). */
 export interface SceneObject {
   id: string;
   name: string;
@@ -59,74 +68,21 @@ export interface SceneObject {
   width: number;
   height: number;
   rotation: number;
-  zIndex: number;
-  layerIndex: number;          // global layer index for z-ordering
   visible: boolean;
+  locked: boolean;
   oneTimeUse: boolean;
   message?: string;
-  digit?: number;              // 0-9, if this object represents a digit
+  digit?: number;
   requiresItem?: string[];
   grantsItem?: string;
   soundUrl?: string;
   view?: View;
-  customData?: Record<string, string>;
-  // Inventory & Transform
-  pickupable?: boolean;        // can this object be picked up into inventory?
-  pickupItemId?: string;       // the item ID added to inventory when picked up
-  pickupMessage?: string;      // message shown when picked up
-  transforms?: TransformRule[]; // rules for transforming when items are used on this
-  currentTransform?: number;   // index of current transform state (-1 = original)
+  pickupable?: boolean;
+  pickupItemId?: string;
+  pickupMessage?: string;
+  transforms?: TransformRule[];
 }
 
-export const TransformRuleSchema: z.ZodType<TransformRule> = z.object({
-  requiresItem: z.string(),
-  newImageUrl: z.string().optional(),
-  newName: z.string().optional(),
-  newMessage: z.string().optional(),
-  grantsItem: z.string().optional(),
-  consumesItem: z.boolean().optional(),
-  triggersDiscovery: z.boolean().optional(),
-});
-
-export const BackgroundLayerSchema: z.ZodType<BackgroundLayer> = z.object({
-  id: z.string(),
-  imageUrl: z.string(),
-  layerIndex: z.number(),
-  opacity: z.number().min(0).max(1),
-  visible: z.boolean(),
-  offsetX: z.number().optional(),
-  offsetY: z.number().optional(),
-});
-
-export const SceneObjectSchema: z.ZodType<SceneObject> = z.object({
-  id: z.string(),
-  name: z.string(),
-  type: ObjectTypeSchema,
-  imageUrl: z.string(),
-  x: z.number(),
-  y: z.number(),
-  width: z.number(),
-  height: z.number(),
-  rotation: z.number().default(0),
-  zIndex: z.number().default(0),
-  layerIndex: z.number().default(0),
-  visible: z.boolean().default(true),
-  oneTimeUse: z.boolean().default(false),
-  message: z.string().optional(),
-  digit: z.number().min(0).max(9).optional(),
-  requiresItem: z.array(z.string()).optional(),
-  grantsItem: z.string().optional(),
-  soundUrl: z.string().optional(),
-  view: z.any().optional(),
-  customData: z.record(z.string(), z.string()).optional(),
-  pickupable: z.boolean().optional(),
-  pickupItemId: z.string().optional(),
-  pickupMessage: z.string().optional(),
-  transforms: z.array(TransformRuleSchema).optional(),
-  currentTransform: z.number().optional(),
-});
-
-// ============ Scene ============
 export interface Scene {
   id: string;
   projectId: string;
@@ -134,134 +90,234 @@ export interface Scene {
   width: number;
   height: number;
   backgroundUrl: string;
-  backgroundLayers?: BackgroundLayer[]; // multiple layered backgrounds
+  backgroundLayers: BackgroundLayer[]; // drawn above backgroundUrl, in array order
   objects: SceneObject[];
   clueChain: string[];
   exitNumber: number;
 }
 
-export const SceneSchema: z.ZodType<Scene> = z.object({
-  id: z.string(),
-  projectId: z.string(),
-  title: z.string(),
-  width: z.number(),
-  height: z.number(),
-  backgroundUrl: z.string(),
-  backgroundLayers: z.array(BackgroundLayerSchema).optional(),
-  objects: z.array(SceneObjectSchema),
-  clueChain: z.array(z.string()),
-  exitNumber: z.number().min(0).max(9),
-});
-
-// ============ Project ============
 export interface Project {
   id: string;
   name: string;
   description: string;
   scenes: string[];
+  /** Derived automatically from every room's exitNumber (single source of truth). */
   finalLockDigits: string;
-  assets: string[];          // asset IDs used in this project
+  assets: string[];
   createdAt: string;
   updatedAt: string;
 }
 
-export const ProjectSchema: z.ZodType<Project> = z.object({
-  id: z.string(),
-  name: z.string(),
-  description: z.string(),
-  scenes: z.array(z.string()),
-  finalLockDigits: z.string(),
-  assets: z.array(z.string()),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-});
-
-// ============ Session ============
-export interface Player {
-  telegramId: string;
-  name: string;
-  online: boolean;
-  ready: boolean;
+export interface ProjectBundle {
+  format: 'escape-studio';
+  version: 2;
+  project: Project;
+  scenes: Scene[];
+  assets: Asset[];
 }
 
-export const PlayerSchema: z.ZodType<Player> = z.object({
-  telegramId: z.string(),
-  name: z.string(),
-  online: z.boolean().default(false),
-  ready: z.boolean().default(false),
-});
-
-export interface SessionState {
-  currentSceneId: string;
-  discoveredObjects: Record<string, string[]>;
-  inventory: string[];
-  completedScenes: string[];
-  finalLockEntered?: string;
+// ============ Factories ============
+export function createObject(type: ObjectType, p: Partial<SceneObject> = {}): SceneObject {
+  const label = { decoration: 'Decoration', inventory: 'Item', container: 'Container' }[type];
+  return {
+    id: uid('obj'),
+    name: label,
+    type,
+    imageUrl: placeholderSvg(label, TYPE_COLORS[type], 80, 80),
+    x: 100,
+    y: 100,
+    width: 80,
+    height: 80,
+    rotation: 0,
+    visible: true,
+    locked: false,
+    oneTimeUse: false,
+    ...(type === 'inventory' ? { pickupable: true } : {}),
+    ...p,
+  };
 }
 
-export const SessionStateSchema: z.ZodType<SessionState> = z.object({
-  currentSceneId: z.string(),
-  discoveredObjects: z.record(z.string(), z.array(z.string())),
-  inventory: z.array(z.string()),
-  completedScenes: z.array(z.string()),
-  finalLockEntered: z.string().optional(),
-});
-
-export interface Session {
-  id: string;
-  token: string;
-  projectId: string;
-  players: Player[];
-  state: SessionState;
-  createdAt: string;
-  expiresAt: string;
+export function createScene(projectId: string, title: string): Scene {
+  return {
+    id: uid('scene'),
+    projectId,
+    title,
+    width: 800,
+    height: 600,
+    backgroundUrl: '',
+    backgroundLayers: [],
+    objects: [],
+    clueChain: [],
+    exitNumber: 0,
+  };
 }
 
-export const SessionSchema: z.ZodType<Session> = z.object({
-  id: z.string(),
-  token: z.string(),
-  projectId: z.string(),
-  players: z.array(PlayerSchema),
-  state: SessionStateSchema,
-  createdAt: z.string(),
-  expiresAt: z.string(),
-});
-
-// ============ Validation Helpers ============
-export function validateScene(scene: Scene): string[] {
-  const errors: string[] = [];
-  // Check for objects with digits
-  const digitObjects = scene.objects.filter(o => o.digit !== undefined);
-  if (digitObjects.length === 0) {
-    errors.push('Every room must have at least one object with a digit');
-  }
-  const objectIds = new Set(scene.objects.map(o => o.id));
-  for (const chainId of scene.clueChain) {
-    if (!objectIds.has(chainId)) {
-      errors.push(`Clue chain item "${chainId}" does not exist`);
-    }
-  }
-  if (scene.clueChain.length > 0) {
-    const lastId = scene.clueChain[scene.clueChain.length - 1];
-    const lastObj = scene.objects.find(o => o.id === lastId);
-    if (lastObj && lastObj.digit === undefined) {
-      errors.push('Clue chain should end at an object with a digit');
-    }
-  }
-  return errors;
+export function cloneObject(o: SceneObject): SceneObject {
+  return {
+    ...o,
+    id: uid('obj'),
+    view: o.view
+      ? { ...o.view, id: uid('view'), objects: o.view.objects.map(cloneObject) }
+      : undefined,
+  };
 }
 
-export function validateProject(project: Project, scenes: Scene[]): string[] {
-  const errors: string[] = [];
-  if (project.scenes.length === 0) {
-    errors.push('Project must have at least one room');
+/** Deep clone with fresh ids; the clue chain is remapped to the new ids. */
+export function cloneScene(src: Scene, projectId: string, title: string): Scene {
+  const idMap = new Map<string, string>();
+  const objects = src.objects.map((o) => {
+    const c = cloneObject(o);
+    idMap.set(o.id, c.id);
+    return c;
+  });
+  return {
+    ...src,
+    id: uid('scene'),
+    projectId,
+    title,
+    objects,
+    clueChain: src.clueChain.map((id) => idMap.get(id) ?? id),
+    backgroundLayers: src.backgroundLayers.map((l) => ({ ...l, id: uid('bg') })),
+  };
+}
+
+export const computeFinalLock = (sceneIds: string[], scenes: Record<string, Scene>) =>
+  sceneIds.map((id) => scenes[id]?.exitNumber ?? 0).join('');
+
+// ============ Normalization (import + migration from the old format) ============
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const str = (v: unknown) => (typeof v === 'string' ? v : '');
+const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+const strList = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : [];
+
+function normalizeTransform(r: any): TransformRule {
+  return {
+    requiresItem: str(r?.requiresItem),
+    newImageUrl: str(r?.newImageUrl) || undefined,
+    newName: str(r?.newName) || undefined,
+    newMessage: str(r?.newMessage) || undefined,
+    grantsItem: str(r?.grantsItem) || undefined,
+    consumesItem: r?.consumesItem !== false,
+    triggersDiscovery: r?.triggersDiscovery === true,
+  };
+}
+
+function normalizeView(r: any): View {
+  const req = strList(r?.requiresItem);
+  return {
+    id: str(r?.id) || uid('view'),
+    title: str(r?.title) || 'View',
+    backgroundUrl: str(r?.backgroundUrl),
+    width: Math.max(1, num(r?.width, 400)),
+    height: Math.max(1, num(r?.height, 400)),
+    objects: Array.isArray(r?.objects) ? r.objects.map((o: any) => normalizeObject(o, 1)) : [],
+    requiresItem: req.length ? req : undefined,
+    closeMessage: str(r?.closeMessage) || undefined,
+  };
+}
+
+export function normalizeObject(raw: any, depth = 0): SceneObject {
+  const o = raw ?? {};
+  const type: ObjectType = OBJECT_TYPES.includes(o.type) ? o.type : 'decoration';
+  const req = strList(o.requiresItem);
+  const digit = Number.isInteger(o.digit) ? clamp(o.digit, 0, 9) : undefined;
+  return {
+    id: str(o.id) || uid('obj'),
+    name: str(o.name) || 'Object',
+    type,
+    imageUrl: str(o.imageUrl),
+    x: num(o.x, 0),
+    y: num(o.y, 0),
+    width: Math.max(1, num(o.width, 80)),
+    height: Math.max(1, num(o.height, 80)),
+    rotation: num(o.rotation, 0),
+    visible: o.visible !== false,
+    locked: o.locked === true,
+    oneTimeUse: o.oneTimeUse === true,
+    message: str(o.message) || undefined,
+    digit,
+    requiresItem: req.length ? req : undefined,
+    grantsItem: str(o.grantsItem) || undefined,
+    soundUrl: str(o.soundUrl) || undefined,
+    view: depth === 0 && o.view ? normalizeView(o.view) : undefined,
+    pickupable: o.pickupable === true ? true : undefined,
+    pickupItemId: str(o.pickupItemId) || undefined,
+    pickupMessage: str(o.pickupMessage) || undefined,
+    transforms:
+      Array.isArray(o.transforms) && o.transforms.length ? o.transforms.map(normalizeTransform) : undefined,
+  };
+}
+
+const byOldOrder = (a: any, b: any) =>
+  num(a?.layerIndex, 0) - num(b?.layerIndex, 0) || num(a?.zIndex, 0) - num(b?.zIndex, 0);
+
+export function normalizeScene(raw: any, projectId: string): Scene {
+  const rawObjs: any[] = Array.isArray(raw?.objects) ? [...raw.objects] : [];
+  // migrate old zIndex/layerIndex format to array order
+  if (rawObjs.some((o) => o && (o.layerIndex !== undefined || o.zIndex !== undefined))) rawObjs.sort(byOldOrder);
+  const rawLayers: any[] = Array.isArray(raw?.backgroundLayers) ? [...raw.backgroundLayers] : [];
+  if (rawLayers.some((l) => l && l.layerIndex !== undefined)) rawLayers.sort(byOldOrder);
+  return {
+    id: str(raw?.id) || uid('scene'),
+    projectId,
+    title: str(raw?.title) || 'Room',
+    width: Math.max(1, num(raw?.width, 800)),
+    height: Math.max(1, num(raw?.height, 600)),
+    backgroundUrl: str(raw?.backgroundUrl),
+    backgroundLayers: rawLayers.map((l, i) => ({
+      id: str(l?.id) || uid('bg'),
+      name: str(l?.name) || `Layer ${i + 1}`,
+      imageUrl: str(l?.imageUrl),
+      opacity: clamp(num(l?.opacity, 1), 0, 1),
+      visible: l?.visible !== false,
+      offsetX: num(l?.offsetX, 0),
+      offsetY: num(l?.offsetY, 0),
+    })),
+    objects: rawObjs.map((o) => normalizeObject(o)),
+    clueChain: strList(raw?.clueChain),
+    exitNumber: clamp(Math.round(num(raw?.exitNumber, 0)), 0, 9),
+  };
+}
+
+export function normalizeBundle(text: string): ProjectBundle {
+  let data: any;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error('File is not valid JSON');
   }
-  if (project.finalLockDigits.length !== project.scenes.length) {
-    errors.push('Final lock digits count must match number of rooms');
+  if (!data || typeof data !== 'object' || !data.project || !Array.isArray(data.scenes)) {
+    throw new Error('File is not a project export (missing "project" / "scenes")');
   }
-  for (const scene of scenes) {
-    const sceneErrors = validateScene(scene);
-    errors.push(...sceneErrors.map(e => `[${scene.title}]: ${e}`));
-  }
-  return errors;
+  const pid = str(data.project.id) || uid('proj');
+  const scenes: Scene[] = data.scenes.map((s: any) => normalizeScene(s, pid));
+  const order: string[] = strList(data.project.scenes);
+  const ordered = order.length
+    ? [
+        ...order.map((id) => scenes.find((s) => s.id === id)).filter((s): s is Scene => !!s),
+        ...scenes.filter((s) => !order.includes(s.id)),
+      ]
+    : scenes;
+  const assets: Asset[] = (Array.isArray(data.assets) ? data.assets : [])
+    .filter((a: any) => a && str(a.id) && str(a.url))
+    .map((a: any) => ({
+      id: str(a.id),
+      name: str(a.name) || 'asset',
+      url: str(a.url),
+      width: num(a.width, 100),
+      height: num(a.height, 100),
+      createdAt: str(a.createdAt) || nowIso(),
+    }));
+  const project: Project = {
+    id: pid,
+    name: str(data.project.name) || 'Imported project',
+    description: str(data.project.description),
+    scenes: ordered.map((s) => s.id),
+    finalLockDigits: ordered.map((s) => s.exitNumber).join(''),
+    assets: strList(data.project.assets),
+    createdAt: str(data.project.createdAt) || nowIso(),
+    updatedAt: nowIso(),
+  };
+  return { format: 'escape-studio', version: 2, project, scenes: ordered, assets };
 }
