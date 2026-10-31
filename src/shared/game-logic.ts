@@ -1,4 +1,4 @@
-import type { Scene, SceneObject, Session, SessionState, TransformRule } from './types';
+import type { Scene, SceneObject, SessionState } from './types';
 
 // ============ Pure Game Logic Functions ============
 
@@ -119,7 +119,6 @@ export function applyItemToObject(
   success: boolean; 
   message: string;
   transformed?: boolean;
-  newObjectState?: Partial<SceneObject>;
 } {
   const obj = objects.find(o => o.id === objectId);
   if (!obj) return { newState: state, success: false, message: 'مورد یافت نشد' };
@@ -128,9 +127,10 @@ export function applyItemToObject(
     return { newState: state, success: false, message: 'شما این آیتم را ندارید' };
   }
 
-  // Check if this object has transforms and this item matches one
+  // Check if this object has transforms and the *next* rule requires this item.
+  // Progress is tracked in session state (`transformsApplied`), never on the editable object.
   if (obj.transforms && obj.transforms.length > 0) {
-    const currentTransform = obj.currentTransform ?? -1;
+    const currentTransform = state.transformsApplied[objectId] ?? -1;
     const nextTransformIndex = currentTransform + 1;
     
     if (nextTransformIndex < obj.transforms.length) {
@@ -150,14 +150,6 @@ export function applyItemToObject(
           newInventory.push(rule.grantsItem);
         }
 
-        // Build new object state
-        const newObjectState: Partial<SceneObject> = {
-          currentTransform: nextTransformIndex,
-        };
-        
-        if (rule.newImageUrl) newObjectState.imageUrl = rule.newImageUrl;
-        if (rule.newName) newObjectState.name = rule.newName;
-
         // Mark as discovered if triggersDiscovery
         let newDiscoveredObjects = state.discoveredObjects;
         if (rule.triggersDiscovery) {
@@ -174,6 +166,7 @@ export function applyItemToObject(
           ...state,
           inventory: newInventory,
           discoveredObjects: newDiscoveredObjects,
+          transformsApplied: { ...state.transformsApplied, [objectId]: nextTransformIndex },
         };
 
         return {
@@ -181,7 +174,6 @@ export function applyItemToObject(
           success: true,
           message: rule.newMessage || 'با موفقیت استفاده شد',
           transformed: true,
-          newObjectState,
         };
       }
     }

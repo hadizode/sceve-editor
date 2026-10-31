@@ -46,6 +46,44 @@ export interface TransformRule {
   triggersDiscovery?: boolean;
 }
 
+/** Runtime state of a session (not part of the editable project data). */
+export interface Player {
+  telegramId: string;
+  name: string;
+  online: boolean;
+  ready: boolean;
+}
+
+export interface SessionState {
+  currentSceneId: string;
+  /** sceneId/viewId -> discovered object ids */
+  discoveredObjects: Record<string, string[]>;
+  inventory: string[];
+  completedScenes: string[];
+  /** objectId -> index of the last applied transform rule (-1 = none) */
+  transformsApplied: Record<string, number>;
+}
+
+export interface Session {
+  id: string;
+  projectId: string;
+  token: string;
+  players: Player[];
+  started: boolean;
+  complete: boolean;
+  state: SessionState;
+}
+
+export function createSessionState(firstSceneId: string): SessionState {
+  return {
+    currentSceneId: firstSceneId,
+    discoveredObjects: {},
+    inventory: [],
+    completedScenes: [],
+    transformsApplied: {},
+  };
+}
+
 export interface View {
   id: string;
   title: string;

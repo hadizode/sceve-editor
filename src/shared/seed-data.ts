@@ -96,7 +96,7 @@ export const SEED_PROJECT: Project = {
   updatedAt: new Date().toISOString(),
 };
 
-const SEED_SCENE: Scene = {
+export const SEED_SCENE: Scene = {
   id: 'scene-room-001',
   projectId: 'proj-seed-001',
   title: 'Old Library',
@@ -135,7 +135,7 @@ const SEED_SCENE: Scene = {
   ],
 };
 
-const SEED_SCENE_2: Scene = {
+export const SEED_SCENE_2: Scene = {
   id: 'scene-room-002',
   projectId: 'proj-seed-001',
   title: 'Basement Room',
