@@ -2,12 +2,18 @@ import { useMemo } from 'react';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import {
+  assetRef,
   cloneObject,
   cloneScene,
   computeFinalLock,
   createObject,
   createScene,
+  createSprite,
   normalizeBundle,
+  normalizeScene,
+  resolveSprite,
+  spriteRef,
+  SpriteRegistry,
   type Asset,
   type BackgroundLayer,
   type ObjectType,
@@ -15,11 +21,12 @@ import {
   type ProjectBundle,
   type Scene,
   type SceneObject,
+  type Sprite,
   type View,
 } from '../shared/types';
-import { SEED_PROJECT, SEED_SCENES } from '../shared/seed-data';
+import { SEED_ASSETS, SEED_PROJECT, SEED_SCENES, SEED_SPRITES } from '../shared/seed-data';
 import { idbStorage } from '../shared/idb';
-import { sceneUrls } from '../shared/validation';
+import { sceneRefs, sceneUrls } from '../shared/validation';
 import { nowIso, uid, type LoadedImage } from '../shared/utils';
 import {
   allRoomsComplete,
@@ -71,6 +78,7 @@ interface StudioState {
   projects: Project[];
   scenes: Record<string, Scene>;
   assets: Record<string, Asset>;
+  sprites: Record<string, Sprite>;
   screen: 'projects' | 'editor';
   currentProjectId: string | null;
   currentSceneId: string | null;
@@ -127,6 +135,10 @@ interface StudioState {
   // assets
   addAsset: (img: LoadedImage) => Asset;
   deleteAsset: (id: string) => boolean;
+  /** Returns the sprite ref (`sprite:<id>`) to assign to an object. Reuses a sprite that already points at this asset. */
+  useAssetSprite: (assetIdOrRef: string, name?: string) => string;
+  updateSprite: (id: string, patch: Partial<Sprite>) => void;
+  addSprite: (sp: Sprite) => Sprite;
   // ui
   toggleGrid: () => void;
   toggleSnap: () => void;
@@ -142,12 +154,75 @@ const recompute = (p: Project, scenes: Record<string, Scene>): Project => ({
   finalLockDigits: computeFinalLock(p.scenes, scenes),
 });
 
+/**
+ * Migrate data that was persisted BEFORE the sprite system existed
+ * (objects/layers used `imageUrl`, transforms used `newImageUrl`, projects had no `sprites`).
+ * Without this, old saved projects render as a blank editor because every ref is missing.
+ */
+function migratePersisted(raw: any): { projects: Project[]; scenes: Record<string, Scene>; assets: Record<string, Asset>; sprites: Record<string, Sprite> } {
+  const projects: Project[] = Array.isArray(raw?.projects) ? raw.projects : [];
+  const sceneList: Scene[] = Object.values((raw?.scenes ?? {}) as Record<string, Scene>);
+  const assets: Record<string, Asset> = { ...(raw?.assets ?? {}) };
+  let sprites: Record<string, Sprite> = { ...(raw?.sprites ?? {}) };
+
+  const looksLegacy =
+    sceneList.some(
+      (s) =>
+        s &&
+        (('imageUrl' in (s as any)) ||
+          'imageUrl' in (s as any).backgroundUrl ||
+          (s.objects ?? []).some((o: any) => o && ('imageUrl' in o || o.transforms?.some((t: any) => t && 'newImageUrl' in t))) ||
+          (s.backgroundLayers ?? []).some((l: any) => l && 'imageUrl' in l))
+    ) ||
+    projects.some((p) => !(p as any).sprites);
+
+  if (looksLegacy) {
+    const reg = new SpriteRegistry(assets);
+    const scenes2: Record<string, Scene> = {};
+    for (const sc of sceneList) {
+      if (!sc) continue;
+      const migrated = normalizeScene(sc, sc.projectId ?? '', reg);
+      scenes2[migrated.id] = migrated;
+    }
+    const byId: Record<string, Sprite> = { ...sprites };
+    reg.list().forEach((sp) => (byId[sp.id] = sp));
+    sprites = byId;
+    const projects2 = projects.map((p) => {
+      const ownSprites = Object.values(scenes2)
+        .filter((sc) => sc.projectId === p.id)
+        .flatMap(sceneRefs);
+      return { ...p, sprites: [...new Set([...((p as any).sprites ?? []), ...ownSprites])] };
+    });
+    return { projects: projects2, scenes: scenes2, assets, sprites };
+  }
+
+  // Already sprite-based — just make sure shapes are complete.
+  const scenes2: Record<string, Scene> = {};
+  for (const sc of sceneList) {
+    if (!sc) continue;
+    scenes2[sc.id] = normalizeScene(sc, sc.projectId ?? '', new SpriteRegistry(assets));
+  }
+  const projects2 = projects.map((p) => ({ ...p, sprites: (p as any).sprites ?? [] }));
+  return { projects: projects2, scenes: scenes2, assets, sprites };
+}
+
 let lastKey: string | undefined;
 let lastTime = 0;
 
 export const useStudioStore = create<StudioState>()(
   persist(
     (set, get) => {
+      /** Merge extra sprites into the registry + current project's sprite list. */
+      const addSprites = (list: Sprite[]) => {
+        if (!list.length) return;
+        set((s) => ({
+          sprites: { ...s.sprites, ...Object.fromEntries(list.map((sp) => [sp.id, sp])) },
+          projects: s.projects.map((p) =>
+            p.id === s.currentProjectId ? { ...p, sprites: [...new Set([...p.sprites, ...list.map((sp) => sp.id)])] } : p
+          ),
+        }));
+      };
+
       /** Saves the current scene to the undo stack. Same `key` within 800ms = one undo step. */
       const pushHistory = (sceneId: string, key?: string) => {
         const t = Date.now();
@@ -224,7 +299,8 @@ export const useStudioStore = create<StudioState>()(
         hydrated: false,
         projects: [SEED_PROJECT],
         scenes: Object.fromEntries(SEED_SCENES.map((s) => [s.id, s])),
-        assets: {},
+        assets: Object.fromEntries(SEED_ASSETS.map((a) => [a.id, a])),
+        sprites: Object.fromEntries(SEED_SPRITES.map((sp) => [sp.id, sp])),
         screen: 'projects',
         currentProjectId: null,
         currentSceneId: null,
@@ -251,6 +327,7 @@ export const useStudioStore = create<StudioState>()(
             scenes: [scene.id],
             finalLockDigits: '0',
             assets: [],
+            sprites: [],
             createdAt: nowIso(),
             updatedAt: nowIso(),
           };
@@ -313,18 +390,21 @@ export const useStudioStore = create<StudioState>()(
         closeProject: () => set({ screen: 'projects', currentProjectId: null, currentSceneId: null, editingViewOf: null, selectedObjectIds: [] }),
 
         exportBundle: () => {
-          const { currentProjectId, projects, scenes, assets } = get();
+          const { currentProjectId, projects, scenes, assets, sprites } = get();
           const project = projects.find((p) => p.id === currentProjectId);
           if (!project) return '';
           const sc = project.scenes.map((id) => scenes[id]).filter(Boolean);
           const used = new Set<string>(project.assets);
           sc.flatMap(sceneUrls).forEach((u) => u.startsWith('asset:') && used.add(u.slice(6)));
+          const spriteIds = new Set<string>(project.sprites);
+          sc.forEach((s) => sceneRefs(s).forEach((r) => r.startsWith('sprite:') && spriteIds.add(r.slice(7))));
           const bundle: ProjectBundle = {
             format: 'escape-studio',
-            version: 2,
+            version: 3,
             project: recompute(project, scenes),
             scenes: sc,
             assets: [...used].map((id) => assets[id]).filter(Boolean),
+            sprites: [...spriteIds].map((id) => sprites[id]).filter(Boolean),
           };
           return JSON.stringify(bundle, null, 2);
         },
@@ -338,8 +418,10 @@ export const useStudioStore = create<StudioState>()(
           }
           const st = get();
           let { project, scenes } = b;
+          const bundleSprites = Object.fromEntries(b.sprites.map((sp) => [sp.id, sp]));
           if (st.projects.some((p) => p.id === project.id) || scenes.some((sc) => st.scenes[sc.id])) {
             const pid = uid('proj');
+            // cloneScene only remaps object ids — sprite/asset refs stay shared, so the bundle sprites can be merged as-is.
             scenes = scenes.map((sc) => cloneScene(sc, pid, sc.title));
             project = { ...project, id: pid, name: `${project.name} (imported)`, scenes: scenes.map((sc) => sc.id) };
           }
@@ -347,6 +429,7 @@ export const useStudioStore = create<StudioState>()(
             projects: [...s.projects, project],
             scenes: { ...s.scenes, ...Object.fromEntries(scenes.map((sc) => [sc.id, sc])) },
             assets: { ...Object.fromEntries(b.assets.map((a) => [a.id, a])), ...s.assets },
+            sprites: { ...bundleSprites, ...s.sprites },
           }));
           return { ok: true };
         },
@@ -430,7 +513,16 @@ export const useStudioStore = create<StudioState>()(
           edit(key, (scene) => ({ ...scene, ...patch }));
         },
 
-        setBackground: (url, w, h) => {
+        setBackground: (assetIdOrRef, w, h) => {
+          // Accept a raw asset id or ref and turn it into a reusable sprite ref.
+          const ref = assetIdOrRef.startsWith('asset:') || assetIdOrRef.startsWith('sprite:') || assetIdOrRef.startsWith('data:') || assetIdOrRef.startsWith('http')
+            ? assetIdOrRef.startsWith('data:') || assetIdOrRef.startsWith('http')
+              ? get().useAssetSprite(assetIdOrRef)
+              : assetIdOrRef.startsWith('sprite:')
+                ? assetIdOrRef
+                : get().useAssetSprite(assetIdOrRef)
+            : get().useAssetSprite(assetRef(assetIdOrRef));
+          const url = ref;
           const viewOf = get().editingViewOf;
           edit(undefined, (scene) =>
             viewOf
@@ -467,7 +559,7 @@ export const useStudioStore = create<StudioState>()(
           const h = Math.max(10, Math.round(a.height * k));
           const x = Math.round((cx ?? ctx.width / 2) - w / 2);
           const y = Math.round((cy ?? ctx.height / 2) - h / 2);
-          const obj = createObject('decoration', { name: a.name, imageUrl: `asset:${a.id}`, x, y, width: w, height: h });
+          const obj = createObject('decoration', { name: a.name, spriteRef: s.useAssetSprite(assetRef(assetId), a.name), x, y, width: w, height: h });
           if (editObjects(undefined, (o) => [...o, obj])) set({ selectedObjectIds: [obj.id] });
         },
 
@@ -598,7 +690,7 @@ export const useStudioStore = create<StudioState>()(
               o.id === objectId && !o.view
                 ? {
                     ...o,
-                    view: { id: uid('view'), title: `${o.name} – Close-up`, backgroundUrl: o.imageUrl, width: 400, height: 400, objects: [] },
+                    view: { id: uid('view'), title: `${o.name} – Close-up`, backgroundUrl: o.spriteRef, width: 400, height: 400, objects: [] },
                   }
                 : o
             ),
@@ -641,6 +733,29 @@ export const useStudioStore = create<StudioState>()(
           return true;
         },
 
+        // ---------- sprites ----------
+        useAssetSprite: (ref, name) => {
+          const s = get();
+          // Direct URL (not an asset ref) → wrap in a sprite via the registry.
+          if (!ref.startsWith('asset:') && !ref.startsWith('sprite:')) {
+            const reg = new SpriteRegistry(s.assets, name ?? '');
+            const r = reg.register(ref);
+            addSprites(reg.list());
+            return r;
+          }
+          const existing = Object.values(s.sprites).find((sp) => sp.assetId === ref);
+          if (existing) return spriteRef(existing.id);
+          const sp = createSprite(name ?? 'sprite', ref);
+          addSprites([sp]);
+          return spriteRef(sp.id);
+        },
+        updateSprite: (id, patch) =>
+          set((s) => (s.sprites[id] ? { sprites: { ...s.sprites, [id]: { ...s.sprites[id], ...patch } } } : {})),
+        addSprite: (sp: Sprite) => {
+          addSprites([sp]);
+          return sp;
+        },
+
         // ---------- ui ----------
         toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),
         toggleSnap: () => set((s) => ({ snapToGrid: !s.snapToGrid })),
@@ -653,9 +768,10 @@ export const useStudioStore = create<StudioState>()(
     },
     {
       name: 'escape-studio-v2',
-      version: 1,
+      version: 2,
       storage: createJSONStorage(() => idbStorage),
-      partialize: (s) => ({ projects: s.projects, scenes: s.scenes, assets: s.assets }),
+      partialize: (s) => ({ projects: s.projects, scenes: s.scenes, assets: s.assets, sprites: s.sprites }),
+      migrate: (persistedState: any) => migratePersisted(persistedState ?? {}),
       onRehydrateStorage: () => (state) => state?.markHydrated(),
     }
   )
@@ -668,6 +784,7 @@ interface PlayerState {
   session: Session | null;
   scenes: Record<string, Scene>;
   assets: Record<string, Asset>;
+  sprites: Record<string, Sprite>;
   selectedItem: string | null;
   lockInput: string;
   toast: string | null;
@@ -754,6 +871,7 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     session: null,
     scenes: {},
     assets: {},
+    sprites: {},
     selectedItem: null,
     lockInput: '',
     toast: null,
@@ -785,7 +903,7 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
         complete: resume ? saved!.session!.complete : false,
         state: { ...base, discoveredObjects: pruneDiscovered(scenes, base.discoveredObjects) },
       };
-      set({ session, scenes, assets: st.assets, selectedItem: null, lockInput: '', toast: null });
+      set({ session, scenes, assets: st.assets, sprites: st.sprites, selectedItem: null, lockInput: '', toast: null });
     },
 
     startNewGame: (players) => {
@@ -933,4 +1051,22 @@ export function useProjectAssets(): Asset[] {
   const assets = useStudioStore((s) => s.assets);
   const ids = useStudioStore((s) => s.projects.find((p) => p.id === s.currentProjectId)?.assets);
   return useMemo(() => (ids ?? []).map((id) => assets[id]).filter(Boolean), [assets, ids]);
+}
+
+/** All sprites known to the studio store (global registry). */
+export function useSprites(): Record<string, Sprite> {
+  return useStudioStore((s) => s.sprites);
+}
+
+/** Resolve a sprite ref (`sprite:<id>`) or asset ref / direct URL to a concrete image URL ('' when none). */
+export function useSpriteSrc(ref: string | undefined): string {
+  const assets = useStudioStore((s) => s.assets);
+  const sprites = useStudioStore((s) => s.sprites);
+  return useMemo(() => (ref ? resolveSprite(ref, sprites, assets) : ''), [ref, sprites, assets]);
+}
+
+/** The Sprite object behind a ref (undefined for direct URLs / missing / blank). */
+export function useSpriteOf(ref: string | undefined): Sprite | undefined {
+  const sprites = useStudioStore((s) => s.sprites);
+  return useMemo(() => (ref ? sprites[ref.replace(/^sprite:/, '')] : undefined), [ref, sprites]);
 }

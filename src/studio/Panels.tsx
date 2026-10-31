@@ -156,10 +156,10 @@ function BackgroundLayers() {
     [n[i], n[j]] = [n[j], n[i]];
     save(n);
   };
-  const add = (url: string, name: string) =>
-    save([...layers, { id: uid('bg'), name, imageUrl: url, opacity: 1, visible: true, offsetX: 0, offsetY: 0 }]);
+  const add = (ref: string, name: string) =>
+    save([...layers, { id: uid('bg'), name, spriteRef: ref, opacity: 1, visible: true, offsetX: 0, offsetY: 0 }]);
   const upload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    for (const img of await pickImages(e)) add(assetRef(st().addAsset(img).id), img.name);
+    for (const img of await pickImages(e)) add(st().useAssetSprite(assetRef(st().addAsset(img).id), img.name), img.name);
   };
   return (
     <div className="mt-3 pt-3 border-t border-gray-700">
@@ -168,7 +168,7 @@ function BackgroundLayers() {
         {layers.map((l, i) => (
           <div key={l.id} className="bg-surface-light rounded p-2 space-y-1">
             <div className="flex items-center gap-1">
-              <Thumb url={l.imageUrl} className="w-8 h-8 rounded" />
+              <Thumb url={l.spriteRef} className="w-8 h-8 rounded" />
               <input className={`${inputCls} flex-1`} value={l.name} onChange={(e) => patch(l.id, { name: e.target.value }, `bg-${l.id}-n`)} />
               <button className="px-1" title="Toggle" onClick={() => patch(l.id, { visible: !l.visible })}>{l.visible ? '👁' : '🚫'}</button>
               <button className="px-1" onClick={() => move(i, -1)}>↑</button>
@@ -190,7 +190,7 @@ function BackgroundLayers() {
       <input ref={file} type="file" accept="image/*" multiple className="hidden" onChange={upload} />
       <div className="flex gap-1 mt-2">
         <button className={`${btnCls} flex-1`} onClick={() => file.current?.click()}>+ Upload layer</button>
-        <select className={`${inputCls} flex-1`} value="" onChange={(e) => { const a = assets.find((x) => x.id === e.target.value); if (a) add(assetRef(a.id), a.name); }}>
+        <select className={`${inputCls} flex-1`} value="" onChange={(e) => { const a = assets.find((x) => x.id === e.target.value); if (a) add(st().useAssetSprite(assetRef(a.id), a.name), a.name); }}>
           <option value="">From assets…</option>
           {assets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
@@ -254,7 +254,7 @@ export function AssetsPanel() {
             <div className="text-[11px] text-gray-300 truncate mt-1" title={a.name}>{a.name}</div>
             <div className="flex gap-0.5 mt-1">
               <button className={`${btnCls} flex-1 px-0`} title="Add to room" onClick={() => st().addObjectFromAsset(a.id)}>＋</button>
-              <button className={`${btnCls} flex-1 px-0`} title="Use on selected object" disabled={selected.length === 0} onClick={() => st().updateObjects(Object.fromEntries(selected.map((i) => [i, { imageUrl: assetRef(a.id) }])))}>🖼</button>
+              <button className={`${btnCls} flex-1 px-0`} title="Use on selected object" disabled={selected.length === 0} onClick={() => st().updateObjects(Object.fromEntries(selected.map((i) => [i, { spriteRef: st().useAssetSprite(assetRef(a.id), a.name) }])))}>🖼</button>
               <button className={`${btnCls} flex-1 px-0`} title="Use as background" onClick={() => st().setBackground(assetRef(a.id), a.width, a.height)}>BG</button>
               <button className={`${btnCls} flex-1 px-0 text-red-300`} title="Delete" onClick={() => { if (!st().deleteAsset(a.id)) alert('This asset is still used in the project.'); }}>🗑</button>
             </div>
