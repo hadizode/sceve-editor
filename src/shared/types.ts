@@ -63,7 +63,11 @@ export interface Sprite {
   assetId: string;
   /** Optional solid color fill (hex). Empty = transparent / no color. */
   color?: string;
-  /** When true the sprite may render outside its object bounds and outside the scene viewport. */
+  /**
+   * When true the visual is drawn at its natural image size, even if that goes
+   * beyond the object's box — while the clickable/hittable area stays exactly
+   * the object's width×height. Full-screen sprites set this to true.
+   */
   overflow?: boolean;
   /** How the image is fitted inside the box when it doesn't match its aspect ratio. */
   fit?: 'fill' | 'contain' | 'cover';
@@ -310,7 +314,7 @@ const strList = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : [];
 
 /** Collects every image URL found while normalizing and turns each one into a Sprite. */
-class SpriteRegistry {
+export class SpriteRegistry {
   private byKey = new Map<string, Sprite>();
   /** Stable key: `asset:<id>` refs collapse to the same sprite; other URLs hash their content. */
   private static key(url: string, assets: Record<string, Asset>): string {
