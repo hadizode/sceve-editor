@@ -1,517 +1,674 @@
+import { useMemo } from 'react';
 import { create } from 'zustand';
-import type { Project, Scene, SceneObject, Session, SessionState, Asset } from '../shared/types';
-import { SEED_PROJECT, SEED_SCENE, SEED_SCENE_2, SEED_SESSION, SEED_ASSETS } from '../shared/seed-data';
-import { discoverObject, isRoomComplete, applyItemToObject, pickupObject } from '../shared/game-logic';
+import { createJSONStorage, persist } from 'zustand/middleware';
+import {
+  cloneObject,
+  cloneScene,
+  computeFinalLock,
+  createObject,
+  createScene,
+  normalizeBundle,
+  type Asset,
+  type BackgroundLayer,
+  type ObjectType,
+  type Project,
+  type ProjectBundle,
+  type Scene,
+  type SceneObject,
+  type View,
+} from '../shared/types';
+import { SEED_PROJECT, SEED_SCENES } from '../shared/seed-data';
+import { idbStorage } from '../shared/idb';
+import { sceneUrls } from '../shared/validation';
+import { nowIso, uid, type LoadedImage } from '../shared/utils';
 
-// ============ Studio Store ============
+// ============ Context helpers (scene or the view being edited) ============
+export interface EditContext {
+  objects: SceneObject[];
+  width: number;
+  height: number;
+  backgroundUrl: string;
+  layers: BackgroundLayer[];
+  view?: View;
+}
+
+export function getContext(scene: Scene | undefined, viewOf: string | null): EditContext | null {
+  if (!scene) return null;
+  const view = viewOf ? scene.objects.find((o) => o.id === viewOf)?.view : undefined;
+  if (view) {
+    return { objects: view.objects, width: view.width, height: view.height, backgroundUrl: view.backgroundUrl, layers: [], view };
+  }
+  return { objects: scene.objects, width: scene.width, height: scene.height, backgroundUrl: scene.backgroundUrl, layers: scene.backgroundLayers };
+}
+
+const setObjectsIn = (scene: Scene, viewOf: string | null, objects: SceneObject[]): Scene => {
+  if (!viewOf) return { ...scene, objects };
+  return {
+    ...scene,
+    objects: scene.objects.map((o) => (o.id === viewOf && o.view ? { ...o, view: { ...o.view, objects } } : o)),
+  };
+};
+
+export type AlignMode = 'left' | 'hcenter' | 'right' | 'top' | 'vmiddle' | 'bottom' | 'hdist' | 'vdist';
+export type OrderMode = 'up' | 'down' | 'top' | 'bottom';
+
+interface Snap {
+  sceneId: string;
+  scene: Scene;
+}
+
 interface StudioState {
+  hydrated: boolean;
   projects: Project[];
   scenes: Record<string, Scene>;
-  assets: Record<string, Asset>; // assetId -> Asset
+  assets: Record<string, Asset>;
+  screen: 'projects' | 'editor';
   currentProjectId: string | null;
   currentSceneId: string | null;
+  editingViewOf: string | null;
   selectedObjectIds: string[];
-  view: 'projects' | 'editor';
-  zoom: number;
-  panX: number;
-  panY: number;
+  clipboard: SceneObject[];
   showGrid: boolean;
   gridSize: number;
   snapToGrid: boolean;
-  undoStack: Scene[];
-  redoStack: Scene[];
-  // Actions
-  createProject: (name: string, description: string) => void;
+  showLabels: boolean;
+  past: Snap[];
+  future: Snap[];
+
+  markHydrated: () => void;
+  // projects
+  createProject: (name: string, description: string) => string;
   deleteProject: (id: string) => void;
+  duplicateProject: (id: string) => void;
+  updateProject: (patch: Partial<Pick<Project, 'name' | 'description'>>) => void;
   selectProject: (id: string) => void;
+  closeProject: () => void;
+  exportBundle: () => string;
+  importBundle: (text: string) => { ok: true } | { ok: false; error: string };
+  // scenes
   selectScene: (id: string) => void;
-  setView: (view: 'projects' | 'editor') => void;
-  addScene: (title: string) => void;
-  updateScene: (scene: Scene) => void;
-  addObject: (obj: SceneObject) => void;
-  updateObject: (id: string, updates: Partial<SceneObject>) => void;
-  deleteObject: (id: string) => void;
+  addScene: (title?: string) => void;
+  deleteScene: (id: string) => void;
+  moveScene: (id: string, dir: -1 | 1) => void;
+  duplicateScene: (id: string) => void;
+  updateScene: (patch: Partial<Scene>, key?: string) => void;
+  setBackground: (url: string, w: number, h: number) => void;
+  // objects
+  addObject: (type: ObjectType, patch?: Partial<SceneObject>) => string;
+  addObjectFromAsset: (assetId: string, cx?: number, cy?: number) => void;
+  updateObject: (id: string, patch: Partial<SceneObject>, key?: string) => void;
+  updateObjects: (patches: Record<string, Partial<SceneObject>>, key?: string) => void;
+  deleteObjects: (ids: string[]) => void;
   selectObject: (id: string, multi?: boolean) => void;
+  selectObjects: (ids: string[]) => void;
+  selectAll: () => void;
   clearSelection: () => void;
-  setZoom: (z: number) => void;
-  setPan: (x: number, y: number) => void;
+  copySelected: () => void;
+  paste: () => void;
+  duplicateSelected: () => void;
+  nudge: (dx: number, dy: number) => void;
+  orderObjects: (ids: string[], mode: OrderMode) => void;
+  alignObjects: (mode: AlignMode) => void;
+  // views
+  enterView: (objectId: string) => void;
+  exitView: () => void;
+  addView: (objectId: string) => void;
+  removeView: (objectId: string) => void;
+  updateView: (objectId: string, patch: Partial<View>, key?: string) => void;
+  // assets
+  addAsset: (img: LoadedImage) => Asset;
+  deleteAsset: (id: string) => boolean;
+  // ui
   toggleGrid: () => void;
-  setGridSize: (s: number) => void;
   toggleSnap: () => void;
-  duplicateScene: (sceneId: string) => void;
-  reorderObjects: (objectIds: string[]) => void;
-  exportProject: () => string;
-  importProject: (json: string) => void;
-  pushUndo: () => void;
+  toggleLabels: () => void;
+  setGridSize: (n: number) => void;
+  // history
   undo: () => void;
   redo: () => void;
-  // Assets
-  addAsset: (asset: Asset) => void;
-  removeAsset: (id: string) => void;
-  uploadAssets: (files: FileList) => Promise<void>;
 }
 
-export const useStudioStore = create<StudioState>((set, get) => ({
-  projects: [SEED_PROJECT],
-  scenes: { [SEED_SCENE.id]: SEED_SCENE, [SEED_SCENE_2.id]: SEED_SCENE_2 },
-  assets: Object.fromEntries(SEED_ASSETS.map(a => [a.id, a])),
-  currentProjectId: null,
-  currentSceneId: null,
-  selectedObjectIds: [],
-  view: 'projects',
-  zoom: 1,
-  panX: 0,
-  panY: 0,
-  showGrid: true,
-  gridSize: 20,
-  snapToGrid: false,
-  undoStack: [],
-  redoStack: [],
+const recompute = (p: Project, scenes: Record<string, Scene>): Project => ({
+  ...p,
+  finalLockDigits: computeFinalLock(p.scenes, scenes),
+});
 
-  createProject: (name, description) => {
-    const id = `proj-${Date.now()}`;
-    const project: Project = {
-      id,
-      name,
-      description,
-      scenes: [],
-      finalLockDigits: '',
-      assets: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    set(state => ({ projects: [...state.projects, project] }));
-  },
+let lastKey: string | undefined;
+let lastTime = 0;
 
-  deleteProject: (id) => {
-    set(state => ({
-      projects: state.projects.filter(p => p.id !== id),
-      currentProjectId: state.currentProjectId === id ? null : state.currentProjectId,
-    }));
-  },
-
-  selectProject: (id) => {
-    const project = get().projects.find(p => p.id === id);
-    if (project) {
-      set({ 
-        currentProjectId: id, 
-        currentSceneId: project.scenes.length > 0 ? project.scenes[0] : null,
-        view: 'editor' 
-      });
-    }
-  },
-
-  selectScene: (id) => set({ currentSceneId: id, selectedObjectIds: [] }),
-
-  setView: (view) => set({ view }),
-
-  addScene: (title) => {
-    const { currentProjectId, scenes } = get();
-    if (!currentProjectId) return;
-    const sceneId = `scene-${Date.now()}`;
-    const scene: Scene = {
-      id: sceneId,
-      projectId: currentProjectId,
-      title,
-      width: 800,
-      height: 600,
-      backgroundUrl: '',
-      objects: [],
-      clueChain: [],
-      exitNumber: 0,
-    };
-    set(state => ({
-      scenes: { ...state.scenes, [sceneId]: scene },
-      currentSceneId: sceneId,
-      projects: state.projects.map(p =>
-        p.id === currentProjectId
-          ? { ...p, scenes: [...p.scenes, sceneId], updatedAt: new Date().toISOString() }
-          : p
-      ),
-    }));
-  },
-
-  updateScene: (scene) => {
-    set(state => ({
-      scenes: { ...state.scenes, [scene.id]: scene },
-      projects: state.projects.map(p =>
-        p.id === scene.projectId ? { ...p, updatedAt: new Date().toISOString() } : p
-      ),
-    }));
-  },
-
-  addObject: (obj) => {
-    const { currentSceneId, scenes } = get();
-    if (!currentSceneId) return;
-    const scene = scenes[currentSceneId];
-    const updatedScene = { ...scene, objects: [...scene.objects, obj] };
-    set(state => ({ scenes: { ...state.scenes, [currentSceneId]: updatedScene } }));
-  },
-
-  updateObject: (id, updates) => {
-    const { currentSceneId, scenes } = get();
-    if (!currentSceneId) return;
-    const scene = scenes[currentSceneId];
-    const updatedScene = {
-      ...scene,
-      objects: scene.objects.map(o => o.id === id ? { ...o, ...updates } : o),
-    };
-    set(state => ({ scenes: { ...state.scenes, [currentSceneId]: updatedScene } }));
-  },
-
-  deleteObject: (id) => {
-    const { currentSceneId, scenes } = get();
-    if (!currentSceneId) return;
-    const scene = scenes[currentSceneId];
-    const updatedScene = {
-      ...scene,
-      objects: scene.objects.filter(o => o.id !== id),
-      clueChain: scene.clueChain.filter(cid => cid !== id),
-    };
-    set(state => ({
-      scenes: { ...state.scenes, [currentSceneId]: updatedScene },
-      selectedObjectIds: state.selectedObjectIds.filter(sid => sid !== id),
-    }));
-  },
-
-  selectObject: (id, multi = false) => {
-    if (multi) {
-      set(state => ({
-        selectedObjectIds: state.selectedObjectIds.includes(id)
-          ? state.selectedObjectIds.filter(sid => sid !== id)
-          : [...state.selectedObjectIds, id],
-      }));
-    } else {
-      set({ selectedObjectIds: [id] });
-    }
-  },
-
-  clearSelection: () => set({ selectedObjectIds: [] }),
-
-  setZoom: (z) => set({ zoom: Math.max(0.25, Math.min(3, z)) }),
-  setPan: (x, y) => set({ panX: x, panY: y }),
-  toggleGrid: () => set(state => ({ showGrid: !state.showGrid })),
-  setGridSize: (s) => set({ gridSize: s }),
-  toggleSnap: () => set(state => ({ snapToGrid: !state.snapToGrid })),
-
-  duplicateScene: (sceneId) => {
-    const { scenes, currentProjectId } = get();
-    const source = scenes[sceneId];
-    if (!source || !currentProjectId) return;
-    const newId = `scene-${Date.now()}`;
-    const newScene: Scene = {
-      ...source,
-      id: newId,
-      title: `${source.title} (کپی)`,
-      objects: source.objects.map(o => ({ ...o, id: `obj-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` })),
-    };
-    set(state => ({
-      scenes: { ...state.scenes, [newId]: newScene },
-      currentSceneId: newId,
-      projects: state.projects.map(p =>
-        p.id === currentProjectId
-          ? { ...p, scenes: [...p.scenes, newId], updatedAt: new Date().toISOString() }
-          : p
-      ),
-    }));
-  },
-
-  reorderObjects: (objectIds) => {
-    const { currentSceneId, scenes } = get();
-    if (!currentSceneId) return;
-    const scene = scenes[currentSceneId];
-    const objMap = new Map(scene.objects.map(o => [o.id, o]));
-    const reordered = objectIds.map(id => objMap.get(id)).filter(Boolean) as SceneObject[];
-    const remaining = scene.objects.filter(o => !objectIds.includes(o.id));
-    set(state => ({
-      scenes: { ...state.scenes, [currentSceneId]: { ...scene, objects: [...remaining, ...reordered] } },
-    }));
-  },
-
-  exportProject: () => {
-    const { currentProjectId, projects, scenes } = get();
-    const project = projects.find(p => p.id === currentProjectId);
-    if (!project) return '{}';
-    const projectScenes = project.scenes.map(sid => scenes[sid]).filter(Boolean);
-    return JSON.stringify({ project, scenes: projectScenes }, null, 2);
-  },
-
-  importProject: (json) => {
-    try {
-      const data = JSON.parse(json);
-      if (data.project && data.scenes) {
-        const existingScenes = get().scenes;
-        const newScenes: Record<string, Scene> = { ...existingScenes };
-        (data.scenes as Scene[]).forEach((s: Scene) => { newScenes[s.id] = s; });
-        set(state => ({
-          projects: [...state.projects.filter(p => p.id !== data.project.id), data.project],
-          scenes: newScenes,
+export const useStudioStore = create<StudioState>()(
+  persist(
+    (set, get) => {
+      /** Saves the current scene to the undo stack. Same `key` within 800ms = one undo step. */
+      const pushHistory = (sceneId: string, key?: string) => {
+        const t = Date.now();
+        if (key && key === lastKey && t - lastTime < 800) {
+          lastTime = t;
+          return;
+        }
+        lastKey = key;
+        lastTime = t;
+        set((s) => ({
+          past: [...s.past.slice(-99), { sceneId, scene: s.scenes[sceneId] }],
+          future: [],
         }));
-      }
-    } catch (e) {
-      console.error('Import failed:', e);
-    }
-  },
-
-  pushUndo: () => {
-    const { currentSceneId, scenes, undoStack } = get();
-    if (!currentSceneId) return;
-    set({
-      undoStack: [...undoStack.slice(-20), JSON.parse(JSON.stringify(scenes[currentSceneId]))],
-      redoStack: [],
-    });
-  },
-
-  undo: () => {
-    const { undoStack, currentSceneId, scenes, redoStack } = get();
-    if (undoStack.length === 0 || !currentSceneId) return;
-    const prev = undoStack[undoStack.length - 1];
-    const saved = JSON.parse(JSON.stringify(scenes[currentSceneId]));
-    const newScenes = { ...scenes } as Record<string, Scene>;
-    newScenes[currentSceneId] = prev;
-    set({ undoStack: undoStack.slice(0, -1), redoStack: [...redoStack, saved], scenes: newScenes });
-  },
-
-  redo: () => {
-    const { redoStack, currentSceneId, scenes, undoStack } = get();
-    if (redoStack.length === 0 || !currentSceneId) return;
-    const next = redoStack[redoStack.length - 1];
-    const saved = JSON.parse(JSON.stringify(scenes[currentSceneId]));
-    const newScenes = { ...scenes } as Record<string, Scene>;
-    newScenes[currentSceneId] = next;
-    set({ redoStack: redoStack.slice(0, -1), undoStack: [...undoStack, saved], scenes: newScenes });
-  },
-
-  // Assets
-  addAsset: (asset) => {
-    set(state => ({ assets: { ...state.assets, [asset.id]: asset } }));
-  },
-
-  removeAsset: (id) => {
-    set(state => {
-      const newAssets = { ...state.assets };
-      delete newAssets[id];
-      return { assets: newAssets };
-    });
-  },
-
-  uploadAssets: async (files) => {
-    const fileArray = Array.from(files);
-    const imageFiles = fileArray.filter(f => f.type.startsWith('image/'));
-    
-    for (const file of imageFiles) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const asset: Asset = {
-          id: `asset-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          name: file.name,
-          url: reader.result as string,
-          tags: [],
-          createdAt: new Date().toISOString(),
-        };
-        get().addAsset(asset);
       };
-      reader.readAsDataURL(file);
-    }
-  },
-}));
 
-// ============ Player Store ============
-interface PlayerState {
-  session: Session | null;
-  scenes: Record<string, Scene>;
-  currentSceneId: string;
-  sessionState: SessionState;
-  toast: string | null;
-  selectedItem: string | null;
-  gameStarted: boolean;
-  gameComplete: boolean;
-  lockInput: string;
-  // Actions
-  initSession: (session: Session, scenes: Record<string, Scene>) => void;
-  clickObject: (objectId: string) => void;
-  useItemOnObject: (itemId: string, objectId: string) => void;
-  pickupObject: (objectId: string) => void;
-  selectItem: (itemId: string | null) => void;
-  setToast: (msg: string | null) => void;
-  startGame: () => void;
-  setPlayerReady: () => void;
-  enterLockDigit: (d: string) => void;
-  clearLockDigit: () => void;
-  submitLock: () => void;
-  switchScene: (sceneId: string) => void;
+      const commitScene = (sceneId: string, scene: Scene) =>
+        set((s) => {
+          const scenes = { ...s.scenes, [sceneId]: scene };
+          return {
+            scenes,
+            projects: s.projects.map((p) =>
+              p.id === scene.projectId ? { ...recompute(p, scenes), updatedAt: nowIso() } : p
+            ),
+          };
+        });
+
+      const edit = (key: string | undefined, fn: (scene: Scene) => Scene): boolean => {
+        const id = get().currentSceneId;
+        const scene = id ? get().scenes[id] : undefined;
+        if (!id || !scene) return false;
+        const next = fn(scene);
+        if (next === scene) return false;
+        pushHistory(id, key);
+        commitScene(id, next);
+        return true;
+      };
+
+      const editObjects = (key: string | undefined, fn: (o: SceneObject[]) => SceneObject[]) =>
+        edit(key, (scene) => {
+          const viewOf = get().editingViewOf;
+          const cur = getContext(scene, viewOf)?.objects ?? scene.objects;
+          const next = fn(cur);
+          return next === cur ? scene : setObjectsIn(scene, viewOf, next);
+        });
+
+      const restore = (from: 'past' | 'future') => {
+        const s = get();
+        const stack = s[from];
+        const snap = stack[stack.length - 1];
+        if (!snap) return;
+        const cur = s.scenes[snap.sceneId];
+        lastKey = undefined;
+        if (!cur) {
+          set({ [from]: stack.slice(0, -1) } as Partial<StudioState>);
+          return;
+        }
+        const other = from === 'past' ? 'future' : 'past';
+        const scenes = { ...s.scenes, [snap.sceneId]: snap.scene };
+        set({
+          [from]: stack.slice(0, -1),
+          [other]: [...s[other], { sceneId: snap.sceneId, scene: cur }],
+          scenes,
+          projects: s.projects.map((p) => (p.id === snap.scene.projectId ? recompute(p, scenes) : p)),
+          currentSceneId: snap.sceneId,
+          selectedObjectIds: [],
+          editingViewOf:
+            s.editingViewOf && s.currentSceneId === snap.sceneId && snap.scene.objects.some((o) => o.id === s.editingViewOf && o.view)
+              ? s.editingViewOf
+              : null,
+        } as Partial<StudioState>);
+      };
+
+      return {
+        hydrated: false,
+        projects: [SEED_PROJECT],
+        scenes: Object.fromEntries(SEED_SCENES.map((s) => [s.id, s])),
+        assets: {},
+        screen: 'projects',
+        currentProjectId: null,
+        currentSceneId: null,
+        editingViewOf: null,
+        selectedObjectIds: [],
+        clipboard: [],
+        showGrid: true,
+        gridSize: 20,
+        snapToGrid: false,
+        showLabels: true,
+        past: [],
+        future: [],
+
+        markHydrated: () => set({ hydrated: true }),
+
+        // ---------- projects ----------
+        createProject: (name, description) => {
+          const id = uid('proj');
+          const scene = createScene(id, 'Room 1');
+          const project: Project = {
+            id,
+            name,
+            description,
+            scenes: [scene.id],
+            finalLockDigits: '0',
+            assets: [],
+            createdAt: nowIso(),
+            updatedAt: nowIso(),
+          };
+          set((s) => ({ projects: [...s.projects, project], scenes: { ...s.scenes, [scene.id]: scene } }));
+          return id;
+        },
+
+        deleteProject: (id) =>
+          set((s) => {
+            const project = s.projects.find((p) => p.id === id);
+            if (!project) return {};
+            const scenes = { ...s.scenes };
+            project.scenes.forEach((sid) => delete scenes[sid]);
+            const projects = s.projects.filter((p) => p.id !== id);
+            const stillUsed = new Set(projects.flatMap((p) => p.assets));
+            const assets = { ...s.assets };
+            project.assets.forEach((aid) => !stillUsed.has(aid) && delete assets[aid]);
+            return { projects, scenes, assets, past: [], future: [] };
+          }),
+
+        duplicateProject: (id) =>
+          set((s) => {
+            const src = s.projects.find((p) => p.id === id);
+            if (!src) return {};
+            const pid = uid('proj');
+            const copies = src.scenes.map((sid) => s.scenes[sid]).filter(Boolean).map((sc) => cloneScene(sc, pid, sc.title));
+            const project: Project = {
+              ...src,
+              id: pid,
+              name: `${src.name} (copy)`,
+              scenes: copies.map((c) => c.id),
+              createdAt: nowIso(),
+              updatedAt: nowIso(),
+            };
+            return {
+              projects: [...s.projects, project],
+              scenes: { ...s.scenes, ...Object.fromEntries(copies.map((c) => [c.id, c])) },
+            };
+          }),
+
+        updateProject: (patch) =>
+          set((s) => ({
+            projects: s.projects.map((p) => (p.id === s.currentProjectId ? { ...p, ...patch, updatedAt: nowIso() } : p)),
+          })),
+
+        selectProject: (id) => {
+          const p = get().projects.find((x) => x.id === id);
+          if (!p) return;
+          set({
+            screen: 'editor',
+            currentProjectId: id,
+            currentSceneId: p.scenes.find((sid) => get().scenes[sid]) ?? null,
+            editingViewOf: null,
+            selectedObjectIds: [],
+            past: [],
+            future: [],
+          });
+        },
+
+        closeProject: () => set({ screen: 'projects', currentProjectId: null, currentSceneId: null, editingViewOf: null, selectedObjectIds: [] }),
+
+        exportBundle: () => {
+          const { currentProjectId, projects, scenes, assets } = get();
+          const project = projects.find((p) => p.id === currentProjectId);
+          if (!project) return '';
+          const sc = project.scenes.map((id) => scenes[id]).filter(Boolean);
+          const used = new Set<string>(project.assets);
+          sc.flatMap(sceneUrls).forEach((u) => u.startsWith('asset:') && used.add(u.slice(6)));
+          const bundle: ProjectBundle = {
+            format: 'escape-studio',
+            version: 2,
+            project: recompute(project, scenes),
+            scenes: sc,
+            assets: [...used].map((id) => assets[id]).filter(Boolean),
+          };
+          return JSON.stringify(bundle, null, 2);
+        },
+
+        importBundle: (text) => {
+          let b: ProjectBundle;
+          try {
+            b = normalizeBundle(text);
+          } catch (e) {
+            return { ok: false, error: (e as Error).message };
+          }
+          const st = get();
+          let { project, scenes } = b;
+          if (st.projects.some((p) => p.id === project.id) || scenes.some((sc) => st.scenes[sc.id])) {
+            const pid = uid('proj');
+            scenes = scenes.map((sc) => cloneScene(sc, pid, sc.title));
+            project = { ...project, id: pid, name: `${project.name} (imported)`, scenes: scenes.map((sc) => sc.id) };
+          }
+          set((s) => ({
+            projects: [...s.projects, project],
+            scenes: { ...s.scenes, ...Object.fromEntries(scenes.map((sc) => [sc.id, sc])) },
+            assets: { ...Object.fromEntries(b.assets.map((a) => [a.id, a])), ...s.assets },
+          }));
+          return { ok: true };
+        },
+
+        // ---------- scenes ----------
+        selectScene: (id) => set({ currentSceneId: id, editingViewOf: null, selectedObjectIds: [] }),
+
+        addScene: (title) => {
+          const pid = get().currentProjectId;
+          const project = get().projects.find((p) => p.id === pid);
+          if (!pid || !project) return;
+          const scene = createScene(pid, title || `Room ${project.scenes.length + 1}`);
+          set((s) => {
+            const scenes = { ...s.scenes, [scene.id]: scene };
+            return {
+              scenes,
+              projects: s.projects.map((p) =>
+                p.id === pid ? recompute({ ...p, scenes: [...p.scenes, scene.id], updatedAt: nowIso() }, scenes) : p
+              ),
+              currentSceneId: scene.id,
+              editingViewOf: null,
+              selectedObjectIds: [],
+            };
+          });
+        },
+
+        deleteScene: (id) =>
+          set((s) => {
+            const scene = s.scenes[id];
+            if (!scene) return {};
+            const project = s.projects.find((p) => p.id === scene.projectId);
+            if (!project) return {};
+            const idx = project.scenes.indexOf(id);
+            const remaining = project.scenes.filter((x) => x !== id);
+            const scenes = { ...s.scenes };
+            delete scenes[id];
+            return {
+              scenes,
+              projects: s.projects.map((p) => (p.id === project.id ? recompute({ ...p, scenes: remaining, updatedAt: nowIso() }, scenes) : p)),
+              currentSceneId: s.currentSceneId === id ? remaining[Math.min(idx, remaining.length - 1)] ?? null : s.currentSceneId,
+              editingViewOf: null,
+              selectedObjectIds: [],
+              past: s.past.filter((x) => x.sceneId !== id),
+              future: s.future.filter((x) => x.sceneId !== id),
+            };
+          }),
+
+        moveScene: (id, dir) =>
+          set((s) => ({
+            projects: s.projects.map((p) => {
+              const i = p.scenes.indexOf(id);
+              const j = i + dir;
+              if (i < 0 || j < 0 || j >= p.scenes.length) return p;
+              const list = [...p.scenes];
+              [list[i], list[j]] = [list[j], list[i]];
+              return recompute({ ...p, scenes: list, updatedAt: nowIso() }, s.scenes);
+            }),
+          })),
+
+        duplicateScene: (id) =>
+          set((s) => {
+            const src = s.scenes[id];
+            if (!src) return {};
+            const copy = cloneScene(src, src.projectId, `${src.title} (copy)`);
+            const scenes = { ...s.scenes, [copy.id]: copy };
+            return {
+              scenes,
+              projects: s.projects.map((p) => {
+                if (p.id !== src.projectId) return p;
+                const list = [...p.scenes];
+                list.splice(list.indexOf(id) + 1, 0, copy.id);
+                return recompute({ ...p, scenes: list, updatedAt: nowIso() }, scenes);
+              }),
+              currentSceneId: copy.id,
+              editingViewOf: null,
+              selectedObjectIds: [],
+            };
+          }),
+
+        updateScene: (patch, key) => {
+          edit(key, (scene) => ({ ...scene, ...patch }));
+        },
+
+        setBackground: (url, w, h) => {
+          const viewOf = get().editingViewOf;
+          edit(undefined, (scene) =>
+            viewOf
+              ? {
+                  ...scene,
+                  objects: scene.objects.map((o) =>
+                    o.id === viewOf && o.view ? { ...o, view: { ...o.view, backgroundUrl: url, width: w, height: h } } : o
+                  ),
+                }
+              : { ...scene, backgroundUrl: url, width: w, height: h }
+          );
+        },
+
+        // ---------- objects ----------
+        addObject: (type, patch) => {
+          const ctx = getContext(get().currentSceneId ? get().scenes[get().currentSceneId!] : undefined, get().editingViewOf);
+          const count = ctx?.objects.length ?? 0;
+          const obj = createObject(type, {
+            x: 60 + ((count * 24) % 300),
+            y: 60 + ((count * 24) % 300),
+            ...patch,
+          });
+          if (editObjects(undefined, (o) => [...o, obj])) set({ selectedObjectIds: [obj.id] });
+          return obj.id;
+        },
+
+        addObjectFromAsset: (assetId, cx, cy) => {
+          const s = get();
+          const a = s.assets[assetId];
+          const ctx = getContext(s.currentSceneId ? s.scenes[s.currentSceneId] : undefined, s.editingViewOf);
+          if (!a || !ctx) return;
+          const k = Math.min(1, 160 / Math.max(a.width, a.height, 1));
+          const w = Math.max(10, Math.round(a.width * k));
+          const h = Math.max(10, Math.round(a.height * k));
+          const x = Math.round((cx ?? ctx.width / 2) - w / 2);
+          const y = Math.round((cy ?? ctx.height / 2) - h / 2);
+          const obj = createObject('decoration', { name: a.name, imageUrl: `asset:${a.id}`, x, y, width: w, height: h });
+          if (editObjects(undefined, (o) => [...o, obj])) set({ selectedObjectIds: [obj.id] });
+        },
+
+        updateObjects: (patches, key) => {
+          editObjects(key, (objs) =>
+            objs.some((o) => patches[o.id]) ? objs.map((o) => (patches[o.id] ? { ...o, ...patches[o.id] } : o)) : objs
+          );
+        },
+        updateObject: (id, patch, key) => get().updateObjects({ [id]: patch }, key),
+
+        deleteObjects: (ids) => {
+          if (!ids.length) return;
+          const set_ = new Set(ids);
+          const viewOf = get().editingViewOf;
+          const ok = edit(undefined, (scene) => {
+            const cur = getContext(scene, viewOf)?.objects ?? scene.objects;
+            const next = cur.filter((o) => !set_.has(o.id));
+            if (next.length === cur.length) return scene;
+            const updated = setObjectsIn(scene, viewOf, next);
+            return viewOf ? updated : { ...updated, clueChain: updated.clueChain.filter((c) => !set_.has(c)) };
+          });
+          if (ok) set((s) => ({ selectedObjectIds: s.selectedObjectIds.filter((i) => !set_.has(i)) }));
+        },
+
+        selectObject: (id, multi = false) =>
+          set((s) => ({
+            selectedObjectIds: multi
+              ? s.selectedObjectIds.includes(id)
+                ? s.selectedObjectIds.filter((x) => x !== id)
+                : [...s.selectedObjectIds, id]
+              : [id],
+          })),
+        selectObjects: (ids) => set({ selectedObjectIds: ids }),
+        selectAll: () => {
+          const s = get();
+          const ctx = getContext(s.currentSceneId ? s.scenes[s.currentSceneId] : undefined, s.editingViewOf);
+          set({ selectedObjectIds: ctx?.objects.map((o) => o.id) ?? [] });
+        },
+        clearSelection: () => set({ selectedObjectIds: [] }),
+
+        copySelected: () => {
+          const s = get();
+          const ctx = getContext(s.currentSceneId ? s.scenes[s.currentSceneId] : undefined, s.editingViewOf);
+          const sel = ctx?.objects.filter((o) => s.selectedObjectIds.includes(o.id)) ?? [];
+          if (sel.length) set({ clipboard: sel });
+        },
+        paste: () => {
+          const clip = get().clipboard;
+          if (!clip.length) return;
+          const pasted = clip.map((o) => ({ ...cloneObject(o), x: o.x + 20, y: o.y + 20 }));
+          if (editObjects(undefined, (objs) => [...objs, ...pasted])) {
+            set({ selectedObjectIds: pasted.map((o) => o.id), clipboard: pasted });
+          }
+        },
+        duplicateSelected: () => {
+          get().copySelected();
+          get().paste();
+        },
+
+        nudge: (dx, dy) => {
+          const ids = new Set(get().selectedObjectIds);
+          editObjects('nudge', (objs) =>
+            objs.map((o) => (ids.has(o.id) && !o.locked ? { ...o, x: o.x + dx, y: o.y + dy } : o))
+          );
+        },
+
+        orderObjects: (ids, mode) => {
+          const sel = new Set(ids);
+          editObjects(undefined, (objs) => {
+            let arr = [...objs];
+            if (mode === 'top') arr = [...arr.filter((o) => !sel.has(o.id)), ...arr.filter((o) => sel.has(o.id))];
+            else if (mode === 'bottom') arr = [...arr.filter((o) => sel.has(o.id)), ...arr.filter((o) => !sel.has(o.id))];
+            else if (mode === 'up') {
+              for (let i = arr.length - 2; i >= 0; i--)
+                if (sel.has(arr[i].id) && !sel.has(arr[i + 1].id)) [arr[i], arr[i + 1]] = [arr[i + 1], arr[i]];
+            } else {
+              for (let i = 1; i < arr.length; i++)
+                if (sel.has(arr[i].id) && !sel.has(arr[i - 1].id)) [arr[i], arr[i - 1]] = [arr[i - 1], arr[i]];
+            }
+            return arr.every((o, i) => o === objs[i]) ? objs : arr;
+          });
+        },
+
+        alignObjects: (mode) => {
+          const ids = new Set(get().selectedObjectIds);
+          editObjects(undefined, (objs) => {
+            const sel = objs.filter((o) => ids.has(o.id) && !o.locked);
+            if (sel.length < 2) return objs;
+            const minX = Math.min(...sel.map((o) => o.x));
+            const maxX = Math.max(...sel.map((o) => o.x + o.width));
+            const minY = Math.min(...sel.map((o) => o.y));
+            const maxY = Math.max(...sel.map((o) => o.y + o.height));
+            const patch = new Map<string, Partial<SceneObject>>();
+            const r = Math.round;
+            if (mode === 'left') sel.forEach((o) => patch.set(o.id, { x: r(minX) }));
+            if (mode === 'right') sel.forEach((o) => patch.set(o.id, { x: r(maxX - o.width) }));
+            if (mode === 'hcenter') sel.forEach((o) => patch.set(o.id, { x: r((minX + maxX) / 2 - o.width / 2) }));
+            if (mode === 'top') sel.forEach((o) => patch.set(o.id, { y: r(minY) }));
+            if (mode === 'bottom') sel.forEach((o) => patch.set(o.id, { y: r(maxY - o.height) }));
+            if (mode === 'vmiddle') sel.forEach((o) => patch.set(o.id, { y: r((minY + maxY) / 2 - o.height / 2) }));
+            if (mode === 'hdist' || mode === 'vdist') {
+              if (sel.length < 3) return objs;
+              const h = mode === 'hdist';
+              const sorted = [...sel].sort((a, b) => (h ? a.x - b.x : a.y - b.y));
+              const total = sorted.reduce((acc, o) => acc + (h ? o.width : o.height), 0);
+              const gap = ((h ? maxX - minX : maxY - minY) - total) / (sorted.length - 1);
+              let pos = h ? minX : minY;
+              sorted.forEach((o) => {
+                patch.set(o.id, h ? { x: r(pos) } : { y: r(pos) });
+                pos += (h ? o.width : o.height) + gap;
+              });
+            }
+            return objs.map((o) => (patch.has(o.id) ? { ...o, ...patch.get(o.id) } : o));
+          });
+        },
+
+        // ---------- views ----------
+        enterView: (objectId) => {
+          const s = get();
+          const scene = s.currentSceneId ? s.scenes[s.currentSceneId] : undefined;
+          if (scene?.objects.some((o) => o.id === objectId && o.view)) set({ editingViewOf: objectId, selectedObjectIds: [] });
+        },
+        exitView: () => set((s) => ({ editingViewOf: null, selectedObjectIds: s.editingViewOf ? [s.editingViewOf] : [] })),
+        addView: (objectId) => {
+          edit(undefined, (scene) => ({
+            ...scene,
+            objects: scene.objects.map((o) =>
+              o.id === objectId && !o.view
+                ? {
+                    ...o,
+                    view: { id: uid('view'), title: `${o.name} – Close-up`, backgroundUrl: o.imageUrl, width: 400, height: 400, objects: [] },
+                  }
+                : o
+            ),
+          }));
+        },
+        removeView: (objectId) => {
+          if (get().editingViewOf === objectId) set({ editingViewOf: null });
+          edit(undefined, (scene) => ({
+            ...scene,
+            objects: scene.objects.map((o) => (o.id === objectId ? { ...o, view: undefined } : o)),
+          }));
+        },
+        updateView: (objectId, patch, key) => {
+          edit(key, (scene) => ({
+            ...scene,
+            objects: scene.objects.map((o) => (o.id === objectId && o.view ? { ...o, view: { ...o.view, ...patch } } : o)),
+          }));
+        },
+
+        // ---------- assets ----------
+        addAsset: (img) => {
+          const asset: Asset = { id: uid('asset'), name: img.name, url: img.url, width: img.width, height: img.height, createdAt: nowIso() };
+          set((s) => ({
+            assets: { ...s.assets, [asset.id]: asset },
+            projects: s.projects.map((p) => (p.id === s.currentProjectId ? { ...p, assets: [...p.assets, asset.id] } : p)),
+          }));
+          return asset;
+        },
+        deleteAsset: (id) => {
+          const s = get();
+          const project = s.projects.find((p) => p.id === s.currentProjectId);
+          if (!project) return false;
+          const used = project.scenes.some((sid) => s.scenes[sid] && sceneUrls(s.scenes[sid]).includes(`asset:${id}`));
+          if (used) return false;
+          set((st) => {
+            const assets = { ...st.assets };
+            delete assets[id];
+            return { assets, projects: st.projects.map((p) => ({ ...p, assets: p.assets.filter((a) => a !== id) })) };
+          });
+          return true;
+        },
+
+        // ---------- ui ----------
+        toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),
+        toggleSnap: () => set((s) => ({ snapToGrid: !s.snapToGrid })),
+        toggleLabels: () => set((s) => ({ showLabels: !s.showLabels })),
+        setGridSize: (n) => set({ gridSize: Math.max(5, Math.round(n)) }),
+
+        undo: () => restore('past'),
+        redo: () => restore('future'),
+      };
+    },
+    {
+      name: 'escape-studio-v2',
+      version: 1,
+      storage: createJSONStorage(() => idbStorage),
+      partialize: (s) => ({ projects: s.projects, scenes: s.scenes, assets: s.assets }),
+      onRehydrateStorage: () => (state) => state?.markHydrated(),
+    }
+  )
+);
+
+// ============ Hooks ============
+export function useScene(): Scene | undefined {
+  return useStudioStore((s) => (s.currentSceneId ? s.scenes[s.currentSceneId] : undefined));
 }
 
-export const usePlayerStore = create<PlayerState>((set, get) => ({
-  session: null,
-  scenes: {},
-  currentSceneId: '',
-  sessionState: {
-    currentSceneId: '',
-    discoveredObjects: {},
-    inventory: [],
-    completedScenes: [],
-  },
-  toast: null,
-  selectedItem: null,
-  gameStarted: false,
-  gameComplete: false,
-  lockInput: '',
+export function useCtx(): EditContext | null {
+  const scene = useScene();
+  const viewOf = useStudioStore((s) => s.editingViewOf);
+  return useMemo(() => getContext(scene, viewOf), [scene, viewOf]);
+}
 
-  initSession: (session, scenes) => {
-    set({
-      session,
-      scenes,
-      currentSceneId: session.state.currentSceneId,
-      sessionState: session.state,
-    });
-  },
+export function useCurrentProject(): Project | undefined {
+  return useStudioStore((s) => s.projects.find((p) => p.id === s.currentProjectId));
+}
 
-  clickObject: (objectId) => {
-    const { sessionState, currentSceneId, scenes, session } = get();
-    const scene = scenes[currentSceneId];
-    if (!scene || !session) return;
-
-    const result = discoverObject(sessionState, currentSceneId, objectId, scene.objects);
-    
-    if (result.alreadyDiscovered) {
-      set({ toast: 'Already discovered' });
-      setTimeout(() => set({ toast: null }), 4000);
-      return;
-    }
-
-    if (result.message) {
-      set({ toast: result.message });
-      setTimeout(() => set({ toast: null }), 7000);
-    }
-
-    let newState = result.newState;
-
-    // Check room completion
-    const updatedScene = { ...scene };
-    if (isRoomComplete(newState, updatedScene)) {
-      if (!newState.completedScenes.includes(currentSceneId)) {
-        newState = {
-          ...newState,
-          completedScenes: [...newState.completedScenes, currentSceneId],
-        };
-        set({ toast: `🎉 Room "${scene.title}" complete! Digit: ${scene.exitNumber}` });
-        setTimeout(() => set({ toast: null }), 6000);
-      }
-    }
-
-    set(state => ({
-      sessionState: newState,
-      session: state.session ? { ...state.session, state: newState } : null,
-    }));
-
-    // Save to localStorage
-    try {
-      localStorage.setItem('escape-room-state', JSON.stringify(newState));
-    } catch {}
-  },
-
-  useItemOnObject: (itemId, objectId) => {
-    const { sessionState, currentSceneId, scenes, session } = get();
-    const scene = scenes[currentSceneId];
-    if (!scene || !session) return;
-
-    const result = applyItemToObject(sessionState, currentSceneId, objectId, itemId, scene.objects);
-    
-    if (result.success) {
-      // If transformed, update the object in the scene
-      if (result.transformed && result.newObjectState) {
-        const updatedScene = {
-          ...scene,
-          objects: scene.objects.map(o => 
-            o.id === objectId ? { ...o, ...result.newObjectState } : o
-          ),
-        };
-        set(state => ({
-          sessionState: result.newState,
-          selectedItem: null,
-          toast: result.message,
-          session: state.session ? { ...state.session, state: result.newState } : null,
-          scenes: { ...state.scenes, [currentSceneId]: updatedScene },
-        }));
-      } else {
-        set(state => ({
-          sessionState: result.newState,
-          selectedItem: null,
-          toast: result.message,
-          session: state.session ? { ...state.session, state: result.newState } : null,
-        }));
-      }
-      setTimeout(() => set({ toast: null }), 6000);
-    } else {
-      set({ toast: result.message });
-      setTimeout(() => set({ toast: null }), 4000);
-    }
-  },
-
-  pickupObject: (objectId) => {
-    const { sessionState, currentSceneId, scenes, session } = get();
-    const scene = scenes[currentSceneId];
-    if (!scene || !session) return;
-
-    const result = pickupObject(sessionState, currentSceneId, objectId, scene.objects);
-    
-    if (result.success) {
-      set(state => ({
-        sessionState: result.newState,
-        toast: result.message,
-        session: state.session ? { ...state.session, state: result.newState } : null,
-      }));
-      setTimeout(() => set({ toast: null }), 5000);
-    } else {
-      set({ toast: result.message });
-      setTimeout(() => set({ toast: null }), 3000);
-    }
-  },
-
-  selectItem: (itemId) => set({ selectedItem: itemId }),
-
-  setToast: (msg) => set({ toast: msg }),
-
-  startGame: () => set({ gameStarted: true }),
-
-  setPlayerReady: () => {
-    const { session } = get();
-    if (!session) return;
-    const updatedPlayers = session.players.map(p =>
-      p.telegramId === 'user-1' ? { ...p, ready: true } : p
-    );
-    set(state => ({
-      session: state.session ? { ...state.session, players: updatedPlayers } : null,
-    }));
-  },
-
-  enterLockDigit: (d) => {
-    const { lockInput } = get();
-    if (lockInput.length < 10) {
-      set({ lockInput: lockInput + d });
-    }
-  },
-
-  clearLockDigit: () => {
-    const { lockInput } = get();
-    set({ lockInput: lockInput.slice(0, -1) });
-  },
-
-  submitLock: () => {
-    const { sessionState, scenes, session, lockInput } = get();
-    const allScenes = Object.values(scenes);
-    const expected = allScenes.map(s => s.exitNumber.toString()).join('');
-    
-    if (lockInput === expected) {
-      set({ gameComplete: true, toast: '🎊 Congratulations! You won!' });
-    } else {
-      set({ lockInput: '', toast: '❌ Wrong code. Try again.' });
-      setTimeout(() => set({ toast: null }), 5000);
-    }
-  },
-
-  switchScene: (sceneId) => {
-    set({ currentSceneId: sceneId, selectedItem: null });
-  },
-}));
+export function useProjectAssets(): Asset[] {
+  const assets = useStudioStore((s) => s.assets);
+  const ids = useStudioStore((s) => s.projects.find((p) => p.id === s.currentProjectId)?.assets);
+  return useMemo(() => (ids ?? []).map((id) => assets[id]).filter(Boolean), [assets, ids]);
+}
