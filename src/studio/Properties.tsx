@@ -2,6 +2,7 @@ import React, { useMemo, useRef } from 'react';
 import { useCtx, useCurrentProject, useProjectAssets, useSprites, useStudioStore } from '../stores/store';
 import { assetRef, spriteRef, blankSprite, type SceneObject, type TransformRule } from '../shared/types';
 import { obtainableItems } from '../shared/validation';
+import { fitScale } from '../shared/geometry';
 import { fileToImage } from '../shared/utils';
 import { btnCls, Field, inputCls, ListInput, NumInput, Section } from './ui';
 import { useResolved } from './konva-bits';
@@ -77,15 +78,7 @@ function SpritePicker({ value, onPick }: { value: string; onPick: (ref: string) 
       </div>
       {current && (
         <div className="flex items-center gap-1 text-[11px] text-gray-400">
-          <label className="flex items-center gap-1">
-            <input
-              type="checkbox"
-              checked={!!current.overflow}
-              onChange={(e) => st().updateSprite(current.id, { overflow: e.target.checked })}
-              title="Draw at natural size beyond the box (click area stays the box)"
-            />
-            overflow
-          </label>
+          <span>Color fill</span>
           <input
             type="color"
             className="w-6 h-6 bg-transparent border-0 p-0 cursor-pointer mr-auto"
@@ -93,17 +86,60 @@ function SpritePicker({ value, onPick }: { value: string; onPick: (ref: string) 
             onChange={(e) => st().updateSprite(current.id, { color: e.target.value })}
             title="Solid color fill (works without any image)"
           />
-          {(current.color || current.overflow) && (
+          {current.color && (
             <button
               className="text-red-400"
-              title="Clear color/overflow"
-              onClick={() => st().updateSprite(current.id, { color: undefined, overflow: false })}
+              title="Clear color"
+              onClick={() => st().updateSprite(current.id, { color: undefined })}
             >✕</button>
           )}
         </div>
       )}
       <Preview url={value} />
     </div>
+  );
+}
+
+/**
+ * Image transform: the image is drawn at its NATURAL size x these values, independent of the frame
+ * (it may extend past the frame and is never clipped). Also the hit-area mode for the Player.
+ */
+function ImageSection({ obj, set }: { obj: SceneObject; set: (p: Partial<SceneObject>, key?: string) => void }) {
+  const src = useResolved(obj.spriteRef);
+  const fit = () => {
+    const i = new Image();
+    i.onload = () => i.naturalWidth && set(fitScale(obj, { width: i.naturalWidth, height: i.naturalHeight }));
+    i.src = src;
+  };
+  const num = (k: 'scaleX' | 'scaleY' | 'imageOffsetX' | 'imageOffsetY', d: number) => (
+    <NumInput
+      value={r1(obj[k] ?? d)}
+      step={k.startsWith('scale') ? 0.05 : 1}
+      onChange={(n) => set({ [k]: k.startsWith('scale') && n === 0 ? d : n } as Partial<SceneObject>)}
+    />
+  );
+  return (
+    <Section title="🖼 Image (true size)" color="text-cyan-300">
+      <p className="text-xs text-gray-500">Drawn at natural size × scale. It may extend past the frame and is never clipped.</p>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Scale X">{num('scaleX', 1)}</Field>
+        <Field label="Scale Y">{num('scaleY', 1)}</Field>
+        <Field label="Offset X">{num('imageOffsetX', 0)}</Field>
+        <Field label="Offset Y">{num('imageOffsetY', 0)}</Field>
+      </div>
+      <div className="flex flex-wrap gap-1">
+        <button className={btnCls} onClick={() => set({ scaleX: -(obj.scaleX ?? 1) })}>⇋ Flip H</button>
+        <button className={btnCls} onClick={() => set({ scaleY: -(obj.scaleY ?? 1) })}>⇅ Flip V</button>
+        <button className={btnCls} onClick={() => set({ scaleX: undefined, scaleY: undefined, imageOffsetX: undefined, imageOffsetY: undefined })}>Natural size</button>
+        <button className={btnCls} disabled={!src} onClick={fit}>Fit to frame</button>
+      </div>
+      <Field label="Hit area">
+        <select className={inputCls} value={obj.hitArea ?? 'frame'} onChange={(e) => set({ hitArea: e.target.value === 'image' ? 'image' : undefined })}>
+          <option value="frame">Frame (default)</option>
+          <option value="image">Image shape</option>
+        </select>
+      </Field>
+    </Section>
   );
 }
 
@@ -212,11 +248,13 @@ export function PropertiesPanel() {
         <SpritePicker value={obj.spriteRef} onPick={(ref) => set({ spriteRef: ref }, `${obj.id}:sprite`)} />
       </Field>
 
+      <ImageSection obj={obj} set={set} />
+
       <div className="grid grid-cols-2 gap-2">
         <Field label="X"><NumInput value={r1(obj.x)} onChange={(n) => set({ x: n })} /></Field>
         <Field label="Y"><NumInput value={r1(obj.y)} onChange={(n) => set({ y: n })} /></Field>
-        <Field label="Width"><NumInput value={r1(obj.width)} min={1} onChange={(n) => set({ width: Math.max(1, n) })} /></Field>
-        <Field label="Height"><NumInput value={r1(obj.height)} min={1} onChange={(n) => set({ height: Math.max(1, n) })} /></Field>
+        <Field label="Frame width"><NumInput value={r1(obj.width)} min={1} onChange={(n) => set({ width: Math.max(1, n) })} /></Field>
+        <Field label="Frame height"><NumInput value={r1(obj.height)} min={1} onChange={(n) => set({ height: Math.max(1, n) })} /></Field>
       </div>
       <Field label="Rotation (deg)"><NumInput value={r1(obj.rotation)} onChange={(n) => set({ rotation: n })} /></Field>
 
