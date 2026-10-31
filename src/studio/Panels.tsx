@@ -214,7 +214,7 @@ export function LayersPanel() {
             className={`flex items-center gap-1 px-2 py-1 rounded cursor-pointer text-xs ${selected.includes(o.id) ? 'bg-indigo-600/30 border border-indigo-500' : 'hover:bg-gray-700 border border-transparent'}`}
             onClick={(e) => st().selectObject(o.id, e.shiftKey || e.ctrlKey || e.metaKey)}
           >
-            <div className="w-2.5 h-2.5 rounded" style={{ background: TYPE_COLORS[o.type] }} />
+            <div className="w-2.5 h-2.5 rounded" style={{ background: TYPE_COLORS[o.type ?? 'sprite'] ?? TYPE_COLORS.sprite }} />
             <span className={`truncate flex-1 ${o.visible ? '' : 'opacity-40'}`}>{o.name}</span>
             {o.digit !== undefined && <span className="text-amber-400">{o.digit}</span>}
             {o.view && <span title="Has view">🔍</span>}
@@ -302,7 +302,7 @@ export function ChainPanel() {
       </div>
       <select className={inputCls} value="" onChange={(e) => e.target.value && save([...chain, e.target.value])}>
         <option value="">+ Add to chain…</option>
-        {scene.objects.filter((o) => !chain.includes(o.id)).map((o) => <option key={o.id} value={o.id}>{o.name} ({o.type})</option>)}
+        {scene.objects.filter((o) => !chain.includes(o.id)).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
       </select>
       {selected.length > 0 && (
         <button className={`${btnCls} w-full mt-2`} onClick={() => save([...chain, ...selected.filter((i) => !chain.includes(i) && scene.objects.some((o) => o.id === i))])}>
@@ -318,7 +318,9 @@ export function useIssues(): Issue[] {
   const project = useCurrentProject();
   const scenes = useStudioStore((s) => s.scenes);
   const assets = useStudioStore((s) => s.assets);
-  return useMemo(() => (project ? validateProject(project, scenes, assets) : []), [project, scenes, assets]);
+  const sprites = useStudioStore((s) => s.sprites);
+  // sprites MUST be passed, otherwise every `sprite:` ref is reported as missing
+  return useMemo(() => (project ? validateProject(project, scenes, assets, sprites) : []), [project, scenes, assets, sprites]);
 }
 
 export function ChecksPanel() {
