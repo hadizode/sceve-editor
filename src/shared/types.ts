@@ -61,8 +61,9 @@ export interface TransformRule {
  * - no `color` and no `assetId` → fully invisible until a transform gives it an image
  * - only `color` → a solid colored rectangle of any size
  * - `assetId` → any uploaded image
- * Sprites may also be marked `overflow`, meaning they are allowed to draw
- * beyond their own bounding box / the scene bounds (e.g. full-screen overlays).
+ *
+ * Images are ALWAYS rendered at their natural size × the object's transform
+ * (see shared/geometry.ts) and are never fitted to or clipped by the object frame.
  */
 export interface Sprite {
   id: string;
@@ -71,13 +72,9 @@ export interface Sprite {
   assetId: string;
   /** Optional solid color fill (hex). Empty = transparent / no color. */
   color?: string;
-  /**
-   * When true the visual is drawn at its natural image size, even if that goes
-   * beyond the object's box — while the clickable/hittable area stays exactly
-   * the object's width×height. Full-screen sprites set this to true.
-   */
+  /** @deprecated ignored — images always render at natural size and may overflow the frame. */
   overflow?: boolean;
-  /** How the image is fitted inside the box when it doesn't match its aspect ratio. */
+  /** @deprecated ignored — images are never fitted into the frame. */
   fit?: 'fill' | 'contain' | 'cover';
   createdAt: string;
 }
@@ -163,6 +160,9 @@ export interface View {
   closeMessage?: string;
 }
 
+/** What counts as a click on a sprite: its logical frame (default) or its rendered image's bounds. */
+export type HitArea = 'frame' | 'image';
+
 /** Draw order = position in the `objects` array (last = on top). */
 export interface SceneObject {
   id: string;
@@ -171,11 +171,20 @@ export interface SceneObject {
   type?: ObjectType;
   /** The object's sprite — a `sprite:<id>` reference to any image asset. */
   spriteRef: string;
+  /** Logical frame: selection box, data model and default hit area. NOT the image bounds. */
   x: number;
   y: number;
   width: number;
   height: number;
   rotation: number;
+  /** Image scale applied on top of its NATURAL size. Negative = flipped. Default 1. */
+  scaleX?: number;
+  scaleY?: number;
+  /** Image centre offset from the frame centre, in the sprite's rotated space. Default 0. */
+  imageOffsetX?: number;
+  imageOffsetY?: number;
+  /** Hit area for clicks in the Player. Default 'frame'. */
+  hitArea?: HitArea;
   visible: boolean;
   locked: boolean;
   oneTimeUse: boolean;
@@ -427,6 +436,11 @@ export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): Scene
     width: Math.max(1, num(o.width, 80)),
     height: Math.max(1, num(o.height, 80)),
     rotation: num(o.rotation, 0),
+    scaleX: Number.isFinite(o.scaleX) && o.scaleX !== 0 && o.scaleX !== 1 ? o.scaleX : undefined,
+    scaleY: Number.isFinite(o.scaleY) && o.scaleY !== 0 && o.scaleY !== 1 ? o.scaleY : undefined,
+    imageOffsetX: Number.isFinite(o.imageOffsetX) && o.imageOffsetX !== 0 ? o.imageOffsetX : undefined,
+    imageOffsetY: Number.isFinite(o.imageOffsetY) && o.imageOffsetY !== 0 ? o.imageOffsetY : undefined,
+    hitArea: o.hitArea === 'image' ? 'image' : undefined,
     visible: o.visible !== false,
     locked: o.locked === true,
     oneTimeUse: o.oneTimeUse === true,

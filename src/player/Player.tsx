@@ -4,6 +4,7 @@ import useImage from 'use-image';
 import { itemName, usePlayerStore } from '../stores/store';
 import type { Asset, Scene, SceneObject, SessionState, Sprite, View } from '../shared/types';
 import { getSprite, resolveSprite } from '../shared/types';
+import { cssMatrix, frameMatrix, imageMatrix } from '../shared/geometry';
 
 /** Resolve a sprite/image ref to the concrete image URL ('' when the sprite has no image). */
 const spriteSrc = (ref: string | undefined, sprites: Record<string, Sprite>, assets: Record<string, Asset>) =>
@@ -68,6 +69,12 @@ function Lobby({ projectName }: { projectName: string }) {
 }
 
 // ---------- Game object sprite ----------
+/**
+ * Rendering rule: the image is drawn at its NATURAL size x the sprite's transform
+ * (scale / rotation / flip / offset) — never fitted to the frame and never clipped.
+ * The frame is only the logical box + default hit area. Matrices come from shared/geometry
+ * so Studio and Player produce identical results. Z-order = DOM order = scene array order.
+ */
 function ObjSprite({
   obj,
   state,
@@ -129,65 +136,56 @@ function ObjSprite({
   // A sprite with neither image nor color is fully invisible — but still clickable
   // when it has game rules (invisible hotspot), and never shows a placeholder.
   const hasVisual = !!url || !!sp?.color;
-
-  // Overflow: draw the image at its NATURAL size, centered on the object box,
-  // even beyond the scene — while the clickable area stays exactly width×height.
-  const overflowing = !!img && sp?.overflow === true;
-  const fit = sp?.fit ?? 'contain';
+  const nw = img?.naturalWidth ?? 0;
+  const nh = img?.naturalHeight ?? 0;
+  const nat = img && nw > 0 && nh > 0 ? { width: nw, height: nh } : null;
+  // hit area: 'frame' (default) or the rendered image's rotated bounds
+  const imageHit = obj.hitArea === 'image' && !!nat;
+  const pointerCls = clickable ? 'cursor-pointer' : 'pointer-events-none';
+  const fm = cssMatrix(frameMatrix(obj));
 
   return (
-    <div
-      className={`absolute ${clickable ? 'cursor-pointer' : 'pointer-events-none'}`}
-      style={{
-        left: obj.x,
-        top: obj.y,
-        width: obj.width,
-        height: obj.height,
-        transform: `rotate(${obj.rotation}deg)`,
-        transformOrigin: 'center',
-        overflow: 'visible',
-      }}
-      onClick={handleClick}
-      title={name}
-    >
-      {hasVisual && (
+    <>
+      {sp?.color && (
         <div
-          className="w-full h-full relative group"
-          style={{ pointerEvents: 'none' }}
-        >
-          {img ? (
-            overflowing ? (
-              <img
-                src={url}
-                alt={name}
-                draggable={false}
-                className="absolute select-none"
-                style={{
-                  width: img.naturalWidth,
-                  height: img.naturalHeight,
-                  left: '50%',
-                  top: '50%',
-                  transform: 'translate(-50%, -50%)',
-                }}
-              />
-            ) : (
-              <img src={url} alt={name} draggable={false} className="w-full h-full select-none" style={{ objectFit: fit }} />
-            )
-          ) : (
-            <div className="w-full h-full rounded" style={{ background: sp?.color }} />
-          )}
-          {clickable && (
-            <div className="absolute inset-0 ring-2 ring-amber-400/0 group-hover:ring-amber-400/70 rounded transition-all" />
-          )}
-        </div>
+          className="absolute pointer-events-none"
+          style={{ left: 0, top: 0, width: obj.width, height: obj.height, transform: fm, transformOrigin: '0 0', background: sp.color }}
+        />
       )}
-      {/* digit badge once discovered */}
-      {obj.digit !== undefined && discovered && (
-        <div className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-amber-500 text-black text-xs font-bold flex items-center justify-center shadow pointer-events-none">
-          {faDigits(String(obj.digit))}
-        </div>
+      {nat && (
+        <img
+          src={url}
+          alt={name}
+          title={name}
+          draggable={false}
+          onClick={imageHit ? handleClick : undefined}
+          className={`select-none ${imageHit ? `${pointerCls} hover:brightness-110` : 'pointer-events-none'}`}
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            width: nw,
+            height: nh,
+            maxWidth: 'none', // Tailwind preflight sets img { max-width: 100% }, which would shrink overflowing images
+            transform: cssMatrix(imageMatrix(obj, nat)),
+            transformOrigin: '0 0',
+          }}
+        />
       )}
-    </div>
+      {/* frame: default hit area + digit badge */}
+      <div
+        className={`absolute rounded ${imageHit ? 'pointer-events-none' : `${pointerCls} ${hasVisual && clickable ? 'hover:ring-2 hover:ring-amber-400/70' : ''}`}`}
+        style={{ left: 0, top: 0, width: obj.width, height: obj.height, transform: fm, transformOrigin: '0 0' }}
+        onClick={imageHit ? undefined : handleClick}
+        title={name}
+      >
+        {obj.digit !== undefined && discovered && (
+          <div className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-amber-500 text-black text-xs font-bold flex items-center justify-center shadow pointer-events-none">
+            {faDigits(String(obj.digit))}
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -238,6 +236,7 @@ function SceneStage({
   }, []);
 
   return (
+    // wrapRef is the game VIEWPORT — the only element allowed to crop sprites.
     <div
       ref={wrapRef}
       className="relative w-full h-full overflow-hidden bg-black/40 touch-none"
@@ -307,8 +306,9 @@ function SceneContent({
   const bgSp = getSprite(bgRef, sprites);
   const [bg] = useImage(bgUrl || '', 'anonymous');
 
+  // NOTE: no overflow-hidden here — sprite images may extend past the scene bounds; only the viewport crops.
   return (
-    <div className="absolute inset-0 overflow-hidden bg-surface-light" style={{ width: W, height: H }}>
+    <div className="absolute inset-0 bg-surface-light" style={{ width: W, height: H }}>
       {/* background: image (cover) or solid color sprite */}
       {bg ? (
         <img src={bgUrl} alt="" className="absolute inset-0 w-full h-full object-cover select-none pointer-events-none" />
@@ -372,8 +372,9 @@ function ViewOverlay({
 
   const parentObj = scene.objects.find((o) => o.view?.id === view.id);
 
+  // No overflow-hidden: sprites in a view may overflow it too; the game viewport (SceneStage) crops.
   return (
-    <div className="w-full h-full relative bg-surface border border-gray-700 rounded-xl overflow-hidden">
+    <div className="w-full h-full relative bg-surface border border-gray-700 rounded-xl">
       <div className="absolute inset-0">
         <SceneContent scene={scene} state={state} assets={assets} sprites={sprites} viewId={parentObj?.id} onOpenView={() => {}} />
       </div>
