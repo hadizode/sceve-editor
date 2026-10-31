@@ -9,11 +9,21 @@ export function useResolved(url: string): string {
   return resolveUrl(url, assets);
 }
 
-export function useSrc(url: string) {
-  const [img] = useImage(useResolved(url));
+export function useSrc(ref: string) {
+  const [img] = useImage(useResolved(ref));
   return img;
 }
 
+/** Resolve a sprite/image reference to the Sprite record (undefined for direct URLs / missing). */
+export function useSpriteOf(ref: string) {
+  const sprites = useStudioStore((s) => s.sprites);
+  return ref.startsWith('sprite:') ? sprites[ref.slice(7)] : undefined;
+}
+
+/**
+ * Renders a sprite/image reference as a full-bleed background.
+ * Supports solid-color-only sprites (no image needed).
+ */
 export function Bg({
   url,
   width,
@@ -32,6 +42,10 @@ export function Bg({
   fallback?: boolean;
 }) {
   const img = useSrc(url);
-  if (!img) return fallback ? <Rect x={x} y={y} width={width} height={height} fill="#1a1a2e" listening={false} /> : null;
+  const sp = useSpriteOf(url);
+  if (!img) {
+    if (sp?.color) return <Rect x={x} y={y} width={width} height={height} fill={sp.color} opacity={opacity} listening={false} />;
+    return fallback ? <Rect x={x} y={y} width={width} height={height} fill="#1a1a2e" listening={false} /> : null;
+  }
   return <KImage image={img} x={x} y={y} width={width} height={height} opacity={opacity} listening={false} />;
 }

@@ -138,6 +138,7 @@ interface StudioState {
   /** Returns the sprite ref (`sprite:<id>`) to assign to an object. Reuses a sprite that already points at this asset. */
   useAssetSprite: (assetIdOrRef: string, name?: string) => string;
   updateSprite: (id: string, patch: Partial<Sprite>) => void;
+  addSprite: (sp: Sprite) => Sprite;
   // ui
   toggleGrid: () => void;
   toggleSnap: () => void;
@@ -512,7 +513,16 @@ export const useStudioStore = create<StudioState>()(
           edit(key, (scene) => ({ ...scene, ...patch }));
         },
 
-        setBackground: (url, w, h) => {
+        setBackground: (assetIdOrRef, w, h) => {
+          // Accept a raw asset id or ref and turn it into a reusable sprite ref.
+          const ref = assetIdOrRef.startsWith('asset:') || assetIdOrRef.startsWith('sprite:') || assetIdOrRef.startsWith('data:') || assetIdOrRef.startsWith('http')
+            ? assetIdOrRef.startsWith('data:') || assetIdOrRef.startsWith('http')
+              ? get().useAssetSprite(assetIdOrRef)
+              : assetIdOrRef.startsWith('sprite:')
+                ? assetIdOrRef
+                : get().useAssetSprite(assetIdOrRef)
+            : get().useAssetSprite(assetRef(assetIdOrRef));
+          const url = ref;
           const viewOf = get().editingViewOf;
           edit(undefined, (scene) =>
             viewOf
@@ -741,6 +751,10 @@ export const useStudioStore = create<StudioState>()(
         },
         updateSprite: (id, patch) =>
           set((s) => (s.sprites[id] ? { sprites: { ...s.sprites, [id]: { ...s.sprites[id], ...patch } } } : {})),
+        addSprite: (sp: Sprite) => {
+          addSprites([sp]);
+          return sp;
+        },
 
         // ---------- ui ----------
         toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),

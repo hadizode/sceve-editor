@@ -4,7 +4,7 @@ import { Stage, Layer, Image as KImage, Rect, Text, Transformer, Shape } from 'r
 import { useCtx, useScene, useStudioStore } from '../stores/store';
 import { TYPE_COLORS, type SceneObject } from '../shared/types';
 import { clamp, fileToImage } from '../shared/utils';
-import { Bg, useSrc } from './konva-bits';
+import { Bg, useSrc, useSpriteOf } from './konva-bits';
 import { isTyping, useElementSize } from './ui';
 
 const st = () => useStudioStore.getState();
@@ -14,50 +14,52 @@ interface NodeProps {
   zoom: number;
   showLabel: boolean;
   dragging: boolean;
-  register: (id: string, node: Konva.Image | null) => void;
+  register: (id: string, node: Konva.Rect | null) => void;
   onSelect: (id: string, multi: boolean) => void;
   onDragStart: (id: string) => void;
   onDragMove: (id: string) => void;
   onDragEnd: () => void;
 }
 
+/**
+ * A scene object rendered as a hit-box Rect + inner visual.
+ * - The Rect is always the object's exact width×height → draggable/transformable/clickable area.
+ * - The visual (image or solid color sprite) is drawn inside it; when the sprite has
+ *   `overflow`, the image is drawn at its natural size centered on the box and may extend
+ *   beyond it — but the clickable area stays the box.
+ */
 function ObjNode({ obj, zoom, showLabel, dragging, register, onSelect, onDragStart, onDragMove, onDragEnd }: NodeProps) {
-  const img = useSrc(obj.imageUrl);
-  const ref = useRef<Konva.Image>(null);
+  const img = useSrc(obj.spriteRef);
+  const sp = useSpriteOf(obj.spriteRef);
+  const ref = useRef<Konva.Rect>(null);
   useEffect(() => {
     register(obj.id, ref.current);
     return () => register(obj.id, null);
   }, [obj.id, register]);
 
+  const overflow = !!sp?.overflow && !!img;
+  const iw = overflow ? img.naturalWidth : obj.width;
+  const ih = overflow ? img.naturalHeight : obj.height;
+  const ix = overflow ? obj.width / 2 - iw / 2 : 0;
+  const iy = overflow ? obj.height / 2 - ih / 2 : 0;
+  const hasVisual = !!img || !!sp?.color;
+
   return (
     <>
-      {!img && (
-        <Rect
-          x={obj.x}
-          y={obj.y}
-          width={obj.width}
-          height={obj.height}
-          rotation={obj.rotation}
-          fill="rgba(99,102,241,0.08)"
-          stroke="#64748b"
-          dash={[4, 3]}
-          strokeWidth={1 / zoom}
-          listening={false}
-        />
-      )}
-      <KImage
+      <Rect
         ref={ref}
         id={obj.id}
-        image={img}
         x={obj.x}
         y={obj.y}
         width={obj.width}
         height={obj.height}
         rotation={obj.rotation}
-        opacity={obj.visible ? 1 : 0.3}
+        fill={hasVisual ? 'rgba(0,0,0,0)' : 'rgba(99,102,241,0.08)'}
+        stroke={hasVisual ? undefined : '#64748b'}
+        dash={hasVisual ? undefined : [4, 3]}
+        strokeWidth={(hasVisual ? 0 : 1) / zoom}
+        opacity={obj.visible ? 1 : 0.35}
         draggable={!obj.locked}
-        stroke={TYPE_COLORS[obj.type]}
-        strokeWidth={showLabel ? 1 / zoom : 0}
         onMouseDown={(e) => onSelect(obj.id, e.evt.shiftKey || e.evt.ctrlKey || e.evt.metaKey)}
         onTouchStart={() => onSelect(obj.id, false)}
         onDragStart={() => onDragStart(obj.id)}
@@ -72,6 +74,31 @@ function ObjNode({ obj, zoom, showLabel, dragging, register, onSelect, onDragSta
           if (c) c.style.cursor = 'default';
         }}
       />
+      {/* visual layers — never listen for events so the hit-box owns interaction */}
+      {!dragging && sp?.color ? (
+        <Rect
+          x={obj.x}
+          y={obj.y}
+          width={obj.width}
+          height={obj.height}
+          rotation={obj.rotation}
+          fill={sp.color}
+          opacity={obj.visible ? 1 : 0.3}
+          listening={false}
+        />
+      ) : null}
+      {!dragging && img ? (
+        <KImage
+          image={img}
+          x={obj.x + ix}
+          y={obj.y + iy}
+          width={iw}
+          height={ih}
+          rotation={obj.rotation}
+          opacity={obj.visible ? 1 : 0.3}
+          listening={false}
+        />
+      ) : null}
       {showLabel && !dragging && (
         <Text
           x={obj.x}
@@ -101,7 +128,7 @@ export default function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const trRef = useRef<Konva.Transformer>(null);
-  const nodes = useRef(new Map<string, Konva.Image>());
+  const nodes = useRef(new Map<string, Konva.Rect>());
   const dragRef = useRef<{ pos: Map<string, { x: number; y: number }> } | null>(null);
   const panRef = useRef<{ x: number; y: number } | null>(null);
   const marqueeAdditive = useRef(false);
@@ -167,7 +194,7 @@ export default function Canvas() {
     };
   }, []);
 
-  const register = useCallback((id: string, node: Konva.Image | null) => {
+  const register = useCallback((id: string, node: Konva.Rect | null) => {
     if (node) nodes.current.set(id, node);
     else nodes.current.delete(id);
   }, []);
@@ -179,7 +206,7 @@ export default function Canvas() {
     const list = ctx.objects
       .filter((o) => selected.includes(o.id) && !o.locked)
       .map((o) => nodes.current.get(o.id))
-      .filter((n): n is Konva.Image => !!n);
+      .filter((n): n is Konva.Rect => !!n);
     tr.nodes(list);
     tr.getLayer()?.batchDraw();
   }, [selected, ctx, measured]);
@@ -257,6 +284,15 @@ export default function Canvas() {
     });
     st().updateObjects(patches);
   };
+
+  // single selection → resize width or height independently with the side anchors
+  const anchorList = useMemo(() => {
+    const unlocked = ctx?.objects.filter((o) => selected.includes(o.id) && !o.locked) ?? [];
+    if (unlocked.length === 1) {
+      return ['top', 'bottom', 'left', 'right', 'top-left', 'top-right', 'bottom-left', 'bottom-right'];
+    }
+    return ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+  }, [selected, ctx]);
 
   // ---- pan + marquee (container level) ----
   const rel = (e: React.MouseEvent) => {
@@ -401,7 +437,7 @@ export default function Canvas() {
             {ctx.layers
               .filter((l) => l.visible)
               .map((l) => (
-                <Bg key={l.id} url={l.imageUrl} width={ctx.width} height={ctx.height} opacity={l.opacity} x={l.offsetX} y={l.offsetY} />
+                <Bg key={l.id} url={l.spriteRef} width={ctx.width} height={ctx.height} opacity={l.opacity} x={l.offsetX} y={l.offsetY} />
               ))}
             {gridShape}
             <Rect
@@ -430,7 +466,21 @@ export default function Canvas() {
             <Transformer
               ref={trRef}
               rotateEnabled
-              enabledAnchors={['top-left', 'top-right', 'bottom-left', 'bottom-right']}
+              enabledAnchors={anchorList}
+              anchorStyleFunc={(anchor) => {
+                // side anchors (width/height only) get a square style, corners stay round
+                const name = anchor.getAttr('name') as string;
+                if (['top', 'bottom', 'left', 'right'].includes(name)) {
+                  anchor.setAttrs({ width: 10, height: 6, cornerRadius: 2 });
+                  if (name === 'top' || name === 'bottom') {
+                    anchor.width(14);
+                    anchor.height(6);
+                  } else {
+                    anchor.width(6);
+                    anchor.height(14);
+                  }
+                }
+              }}
               borderStroke="#6366f1"
               anchorStroke="#6366f1"
               anchorFill="#6366f1"

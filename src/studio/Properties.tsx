@@ -1,6 +1,6 @@
 import React, { useMemo, useRef } from 'react';
-import { useCtx, useCurrentProject, useProjectAssets, useStudioStore } from '../stores/store';
-import { assetRef, OBJECT_TYPES, type ObjectType, type SceneObject, type TransformRule } from '../shared/types';
+import { useCtx, useCurrentProject, useProjectAssets, useSprites, useStudioStore } from '../stores/store';
+import { assetRef, spriteRef, blankSprite, createSprite, OBJECT_TYPES, type ObjectType, type SceneObject, type TransformRule } from '../shared/types';
 import { obtainableItems } from '../shared/validation';
 import { fileToImage } from '../shared/utils';
 import { btnCls, Field, inputCls, ListInput, NumInput, Section } from './ui';
@@ -27,34 +27,87 @@ function Preview({ url }: { url: string }) {
   );
 }
 
-/** Upload or pick-from-assets control that yields an `asset:<id>` reference. */
-function ImagePicker({ value, onPick, allowEmpty = false }: { value: string; onPick: (url: string) => void; allowEmpty?: boolean }) {
+/**
+ * Sprite picker — an object's visual can be ANY sprite: an uploaded image, an existing
+ * asset, a solid color with no image at all, or fully invisible (image arrives later via
+ * a transform rule). Sprites are shared/reusable across objects.
+ */
+function SpritePicker({ value, onPick }: { value: string; onPick: (ref: string) => void }) {
   const assets = useProjectAssets();
+  const sprites = useSprites();
   const file = useRef<HTMLInputElement>(null);
+  const current = value.startsWith('sprite:') ? sprites[value.slice(7)] : undefined;
+
   const upload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     e.target.value = '';
     if (!f) return;
     try {
       const a = st().addAsset(await fileToImage(f));
-      onPick(assetRef(a.id));
+      onPick(st().useAssetSprite(assetRef(a.id), a.name));
     } catch (err) {
       alert((err as Error).message);
     }
   };
+
   return (
     <div className="space-y-1">
       <input ref={file} type="file" accept="image/*" className="hidden" onChange={upload} />
       <div className="flex gap-1">
         <button className={`${btnCls} flex-1`} onClick={() => file.current?.click()}>📁 Upload</button>
-        <select className={`${inputCls} flex-1`} value="" onChange={(e) => e.target.value && onPick(e.target.value)}>
-          <option value="">Pick asset…</option>
-          {allowEmpty && <option value=" ">(none)</option>}
-          {assets.map((a) => (
-            <option key={a.id} value={assetRef(a.id)}>{a.name}</option>
-          ))}
+        <select
+          className={`${inputCls} flex-1`}
+          value={value}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === '__blank__') onPick(spriteRef(st().addSprite(blankSprite('Blank')) .id));
+            else if (v === '__none__') onPick('');
+            else if (v.startsWith('asset:')) onPick(st().useAssetSprite(v));
+            else onPick(v);
+          }}
+        >
+          <option value="">— no sprite (invisible) —</option>
+          <option value="__blank__">＋ Blank sprite (color only)</option>
+          <optgroup label="Sprites">
+            {Object.values(sprites).map((sp) => (
+              <option key={sp.id} value={spriteRef(sp.id)}>🧩 {sp.name}{sp.color && !sp.assetId ? ' (color)' : ''}</option>
+            ))}
+          </optgroup>
+          <optgroup label="Assets (creates/uses a sprite)">
+            {assets.map((a) => (
+              <option key={a.id} value={assetRef(a.id)}>🖼 {a.name}</option>
+            ))}
+          </optgroup>
         </select>
       </div>
+      {current && (
+        <div className="flex items-center gap-1 text-[11px] text-gray-400">
+          <span className="truncate">sprite: {current.name}</span>
+          <label className="flex items-center gap-1 mr-auto">
+            <input
+              type="checkbox"
+              checked={!!current.overflow}
+              onChange={(e) => st().updateSprite(current.id, { overflow: e.target.checked })}
+              title="Draw at natural size beyond the box (click area stays the box)"
+            />
+            overflow
+          </label>
+          <input
+            type="color"
+            className="w-6 h-6 bg-transparent border-0 p-0 cursor-pointer"
+            value={current.color ?? '#888888'}
+            onChange={(e) => st().updateSprite(current.id, { color: e.target.value })}
+            title="Solid color fill (works without any image)"
+          />
+          {(current.color || current.overflow) && (
+            <button
+              className="text-red-400"
+              title="Clear color/overflow"
+              onClick={() => st().updateSprite(current.id, { color: undefined, overflow: false })}
+            >✕</button>
+          )}
+        </div>
+      )}
       <Preview url={value} />
     </div>
   );
@@ -136,6 +189,7 @@ export function PropertiesPanel() {
   const project = useCurrentProject();
   const scenes = useStudioStore((s) => s.scenes);
   const assets = useProjectAssets();
+  const sprites = useSprites();
 
   const selected = useMemo(() => (ctx ? ctx.objects.filter((o) => ids.includes(o.id)) : []), [ctx, ids]);
   const items = useMemo(
@@ -165,8 +219,8 @@ export function PropertiesPanel() {
           {OBJECT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
       </Field>
-      <Field label="Image">
-        <ImagePicker value={obj.imageUrl} onPick={(url) => set({ imageUrl: url })} />
+      <Field label="Sprite (visual)">
+        <SpritePicker value={obj.spriteRef} onPick={(ref) => set({ spriteRef: ref }, `${obj.id}:sprite`)} />
       </Field>
 
       <div className="grid grid-cols-2 gap-2">
@@ -235,13 +289,25 @@ export function PropertiesPanel() {
             <Field label="Requires item">
               <input className={inputCls} list="item-ids" value={t.requiresItem} onChange={(e) => setT(i, { requiresItem: e.target.value })} />
             </Field>
-            <Field label="New image">
+            <Field label="New sprite (any image / color)">
               <div className="flex gap-1">
-                <select className={inputCls} value={t.newImageUrl ?? ''} onChange={(e) => setT(i, { newImageUrl: e.target.value || undefined })}>
+                <select className={inputCls} value={t.newSpriteId ? spriteRef(t.newSpriteId) : ''} onChange={(e) => setT(i, { newSpriteId: e.target.value ? e.target.value.slice(7) : undefined })}>
                   <option value="">(unchanged)</option>
-                  {assets.map((a) => <option key={a.id} value={assetRef(a.id)}>{a.name}</option>)}
-                  {t.newImageUrl && !t.newImageUrl.startsWith('asset:') && <option value={t.newImageUrl}>(custom)</option>}
+                  {Object.values(sprites).map((sp) => <option key={sp.id} value={spriteRef(sp.id)}>🧩 {sp.name}</option>)}
                 </select>
+                <button className={btnCls} title="Upload a new image as the post-transform sprite" onClick={async () => {
+                  const inp = document.createElement('input');
+                  inp.type = 'file'; inp.accept = 'image/*';
+                  inp.onchange = async () => {
+                    const f = inp.files?.[0];
+                    if (!f) return;
+                    try {
+                      const a = st().addAsset(await fileToImage(f));
+                      setT(i, { newSpriteId: st().useAssetSprite(assetRef(a.id), a.name).slice(7) });
+                    } catch (err) { alert((err as Error).message); }
+                  };
+                  inp.click();
+                }}>📁</button>
               </div>
             </Field>
             <Field label="New name">
