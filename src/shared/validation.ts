@@ -1,4 +1,5 @@
-import type { Asset, Project, Scene, SceneObject } from './types';
+import type { Asset, Project, Scene, SceneObject, Sprite } from './types';
+import { getSprite } from './types';
 
 export interface Issue {
   level: 'error' | 'warning';
@@ -25,26 +26,36 @@ export function obtainableItems(scenes: Scene[]): Set<string> {
   return s;
 }
 
-export function sceneUrls(scene: Scene): string[] {
-  const urls: string[] = [scene.backgroundUrl, ...scene.backgroundLayers.map((l) => l.imageUrl)];
+/** Every sprite/image reference used by a scene (objects, views, layers, backgrounds, transforms). */
+export function sceneRefs(scene: Scene): string[] {
+  const refs: string[] = [scene.backgroundUrl, ...scene.backgroundLayers.map((l) => l.spriteRef)];
   for (const o of scene.objects) {
-    urls.push(o.imageUrl);
-    o.transforms?.forEach((t) => t.newImageUrl && urls.push(t.newImageUrl));
+    refs.push(o.spriteRef);
+    o.transforms?.forEach((t) => t.newSpriteId && refs.push(t.newSpriteId));
     if (o.view) {
-      urls.push(o.view.backgroundUrl);
+      refs.push(o.view.backgroundUrl);
       o.view.objects.forEach((v) => {
-        urls.push(v.imageUrl);
-        v.transforms?.forEach((t) => t.newImageUrl && urls.push(t.newImageUrl));
+        refs.push(v.spriteRef);
+        v.transforms?.forEach((t) => t.newSpriteId && refs.push(t.newSpriteId));
       });
     }
   }
-  return urls.filter(Boolean);
+  return refs.filter(Boolean);
+}
+
+/** @deprecated kept as an alias — returns sprite refs now. */
+export const sceneUrls = sceneRefs;
+
+/** True when the sprite has no visual at all (no image and no color) — valid only before a transform gives it one. */
+export function spriteHasVisual(spr: Sprite | undefined): boolean {
+  return !!spr && (!!spr.assetId || !!spr.color);
 }
 
 export function validateProject(
   project: Project,
   scenes: Record<string, Scene>,
-  assets: Record<string, Asset>
+  assets: Record<string, Asset>,
+  sprites: Record<string, Sprite> = {}
 ): Issue[] {
   const issues: Issue[] = [];
   const list = project.scenes.map((id) => scenes[id]).filter((s): s is Scene => !!s);
@@ -94,17 +105,30 @@ export function validateProject(
       });
       if (o.type === 'container' && !o.requiresItem?.length && !o.transforms?.length)
         at(`Container "${o.name}" has no requirement`, 'warning', top);
-      if (!o.imageUrl) at(`"${o.name}" has no image`, 'warning', top);
+      // Sprites are allowed to have no image and no color — but only when a transform will give them one.
+      const spr = getSprite(o.spriteRef, sprites);
+      if (!o.spriteRef) at(`"${o.name}" has no sprite`, 'warning', top);
+      else if (!spriteHasVisual(spr) && !o.transforms?.length)
+        at(`"${o.name}" sprite is empty (no image/color) and nothing transforms it`, 'warning', top);
     }
 
     for (const o of scene.objects) {
+      // overflow sprites intentionally draw outside the room — don't warn about them
+      if (getSprite(o.spriteRef, sprites)?.overflow) continue;
       if (o.x + o.width < 0 || o.y + o.height < 0 || o.x > scene.width || o.y > scene.height)
         at(`"${o.name}" is outside the room`, 'warning', o.id);
     }
 
-    for (const url of sceneUrls(scene)) {
-      if (url.startsWith('asset:') && !assets[url.slice(6)]) {
-        at(`Missing asset ${url}`, 'error');
+    for (const ref of sceneRefs(scene)) {
+      if (ref.startsWith('sprite:')) {
+        const s = sprites[ref.slice(7)];
+        if (!s) at(`Missing sprite ${ref}`, 'error');
+        else if (s.assetId.startsWith('asset:') && !assets[s.assetId.slice(6)]) {
+          at(`Missing asset ${s.assetId}`, 'error');
+          break;
+        }
+      } else if (ref.startsWith('asset:') && !assets[ref.slice(6)]) {
+        at(`Missing asset ${ref}`, 'error');
         break;
       }
     }

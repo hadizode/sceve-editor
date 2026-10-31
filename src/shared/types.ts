@@ -48,12 +48,25 @@ export interface TransformRule {
   triggersDiscovery?: boolean;
 }
 
-/** A sprite is a reusable visual — it can be any uploaded image. */
+/**
+ * A sprite is a reusable visual. It does NOT have to have an image:
+ * - no `color` and no `assetId` → fully invisible until a transform gives it an image
+ * - only `color` → a solid colored rectangle of any size
+ * - `assetId` → any uploaded image
+ * Sprites may also be marked `overflow`, meaning they are allowed to draw
+ * beyond their own bounding box / the scene bounds (e.g. full-screen overlays).
+ */
 export interface Sprite {
   id: string;
   name: string;
-  /** Reference into the project's assets (`asset:<id>`); resolve with resolveUrl(). */
+  /** Optional reference into the project's assets (`asset:<id>` or direct URL); empty = no image. */
   assetId: string;
+  /** Optional solid color fill (hex). Empty = transparent / no color. */
+  color?: string;
+  /** When true the sprite may render outside its object bounds and outside the scene viewport. */
+  overflow?: boolean;
+  /** How the image is fitted inside the box when it doesn't match its aspect ratio. */
+  fit?: 'fill' | 'contain' | 'cover';
   createdAt: string;
 }
 
@@ -64,6 +77,11 @@ export const spriteRef = (id: string) => `sprite:${id}`;
 export function resolveSprite(ref: string, sprites: Record<string, Sprite>, assets: Record<string, Asset>): string {
   if (ref.startsWith('sprite:')) return resolveUrl(sprites[ref.slice(7)]?.assetId ?? '', assets);
   return resolveUrl(ref, assets);
+}
+
+/** Look up the sprite object for a reference (undefined for direct URLs / missing refs). */
+export function getSprite(ref: string, sprites: Record<string, Sprite>): Sprite | undefined {
+  return ref.startsWith('sprite:') ? sprites[ref.slice(7)] : undefined;
 }
 
 const EMOJI_FONT = "'Segoe UI Emoji','Noto Color Emoji','Apple Color Emoji',sans-serif";
@@ -208,8 +226,13 @@ export function placeholderSprite(label: string, color: string): string {
   );
 }
 
-export function createSprite(name: string, assetId: string): Sprite {
-  return { id: uid('spr'), name: name || 'sprite', assetId, createdAt: nowIso() };
+export function createSprite(name: string, assetId: string, extra: Partial<Pick<Sprite, 'color' | 'overflow' | 'fit'>> = {}): Sprite {
+  return { id: uid('spr'), name: name || 'sprite', assetId, createdAt: nowIso(), ...extra };
+}
+
+/** A sprite with no image at all — invisible, or a solid color if given. Great for "reveal on transform" tricks. */
+export function blankSprite(name: string, color = ''): Sprite {
+  return { id: uid('spr'), name: name || 'Blank sprite', assetId: '', color: color || undefined, createdAt: nowIso() };
 }
 
 export function createObject(type: ObjectType, p: Partial<SceneObject> = {}): SceneObject {
@@ -297,11 +320,40 @@ class SpriteRegistry {
     return 'u|' + h.toString(36) + '|' + url.length;
   }
   constructor(private assets: Record<string, Asset>, private nameHint = '') {}
-  /** Accepts an existing `sprite:` ref (kept as-is) or any image URL/asset-ref (wrapped in a new sprite). */
+  /** Accepts an existing `sprite:` ref (kept as-is), a color value, or any image URL/asset-ref (wrapped in a new sprite). */
   register(raw: unknown): string {
+    // Newer sprite payloads may carry extra props (color/overflow/fit) alongside a ref/url/color.
+    if (raw && typeof raw === 'object') {
+      const o = raw as Record<string, unknown>;
+      const base = o.ref ?? o.spriteRef ?? o.url ?? o.assetId ?? o.color;
+      const hasBase = typeof base === 'string' && base.length > 0;
+      const color = typeof o.color === 'string' ? o.color : '';
+      // A sprite with no image at all — only a color (or even fully empty) is valid.
+      if (!hasBase && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(color)) return this.register(color);
+      if (!hasBase) return '';
+      const ref = this.register(base);
+      if (!ref) return '';
+      const s = this.byKey.get(ref);
+      if (s) {
+        if (color) s.color = color;
+        if (o.overflow === true) s.overflow = true;
+        if (o.fit === 'fill' || o.fit === 'contain' || o.fit === 'cover') s.fit = o.fit;
+      }
+      return ref;
+    }
     const v = str(raw);
     if (!v) return '';
     if (v.startsWith('sprite:')) return v; // already migrated / authored with sprites
+    // Legacy solid-color "images" become color-only sprites (no asset needed).
+    if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v)) {
+      const k = 'c|' + v.toLowerCase();
+      let s = this.byKey.get(k);
+      if (!s) {
+        s = createSprite('Color', '', { color: v });
+        this.byKey.set(k, s);
+      }
+      return spriteRef(s.id);
+    }
     const k = SpriteRegistry.key(v, this.assets);
     let s = this.byKey.get(k);
     if (!s) {
@@ -339,7 +391,7 @@ function normalizeView(r: any, reg: SpriteRegistry): View {
   return {
     id: str(r?.id) || uid('view'),
     title: str(r?.title) || 'View',
-    backgroundUrl: reg.register(r?.backgroundUrl),
+    backgroundUrl: reg.register(r?.backgroundUrl ?? r?.backgroundSprite),
     width: Math.max(1, num(r?.width, 400)),
     height: Math.max(1, num(r?.height, 400)),
     objects: Array.isArray(r?.objects) ? r.objects.map((o: any) => normalizeObject(o, reg, 1)) : [],
@@ -395,11 +447,11 @@ export function normalizeScene(raw: any, projectId: string, reg: SpriteRegistry)
     title: str(raw?.title) || 'Room',
     width: Math.max(1, num(raw?.width, 800)),
     height: Math.max(1, num(raw?.height, 600)),
-    backgroundUrl: reg.register(raw?.backgroundUrl),
+    backgroundUrl: reg.register(raw?.backgroundUrl ?? raw?.backgroundSprite),
     backgroundLayers: rawLayers.map((l, i) => ({
       id: str(l?.id) || uid('bg'),
       name: str(l?.name) || `Layer ${i + 1}`,
-      imageUrl: reg.register(l?.imageUrl),
+      spriteRef: reg.register(l?.spriteRef ?? l?.imageUrl),
       opacity: clamp(num(l?.opacity, 1), 0, 1),
       visible: l?.visible !== false,
       offsetX: num(l?.offsetX, 0),
