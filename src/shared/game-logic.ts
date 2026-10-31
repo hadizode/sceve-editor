@@ -66,20 +66,21 @@ export function pickupObject(
   objectId: string,
   objects: SceneObject[]
 ): { newState: SessionState; message?: string; success: boolean; itemId?: string } {
-  // Pick up by NAME, not by id — ids can collide across objects/scenes, which used to
-  // make picking up one item remove a different object whose id merely looked similar.
+  // Find the clicked object by id (as before).
   const target = objects.find(o => o.id === objectId);
   if (!target) {
     return { newState: state, success: false, message: 'مورد یافت نشد' };
   }
 
-  const obj = objects.find(o => o.name === target.name) ?? target;
+  const obj = target;
 
   if (!obj.pickupable) {
     return { newState: state, success: false, message: 'این مورد قابل برداشتن نیست' };
   }
 
-  // The inventory entry is keyed by the item's name so it stays unique per item.
+  // Only the inventory key changes: store the item under its NAME instead of its id,
+  // so an object whose id merely looks similar to another item's id can never be
+  // treated as already collected (and thus removed) when a different item is picked up.
   const itemId = obj.name;
   let newInventory = [...state.inventory];
 
