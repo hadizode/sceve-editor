@@ -33,6 +33,7 @@ import {
   discoverObject,
   isRoomComplete,
   pickupObject as pickupObj,
+  roomDigitTargets,
   validateFinalLock,
 } from '../shared/game-logic';
 import { createSessionState, type Player, type Session, type SessionState } from '../shared/types';
@@ -164,16 +165,16 @@ function migratePersisted(raw: any): { projects: Project[]; scenes: Record<strin
   const assets: Record<string, Asset> = { ...(raw?.assets ?? {}) };
   let sprites: Record<string, Sprite> = { ...(raw?.sprites ?? {}) };
 
-  const looksLegacy =
-    sceneList.some(
-      (s) =>
-        s &&
-        (('imageUrl' in (s as any)) ||
-          'imageUrl' in (s as any).backgroundUrl ||
-          (s.objects ?? []).some((o: any) => o && ('imageUrl' in o || o.transforms?.some((t: any) => t && 'newImageUrl' in t))) ||
-          (s.backgroundLayers ?? []).some((l: any) => l && 'imageUrl' in l))
-    ) ||
-    projects.some((p) => !(p as any).sprites);
+  // NOTE: never use the `in` operator on a possibly-string value (it throws a TypeError).
+  const sceneIsLegacy = (s: any): boolean =>
+    !!s &&
+    ((typeof s.backgroundUrl === 'string' && s.backgroundUrl !== '' && !s.backgroundUrl.startsWith('sprite:')) ||
+      (s.objects ?? []).some(
+        (o: any) => o && typeof o === 'object' && ('imageUrl' in o || (o.transforms ?? []).some((t: any) => t && typeof t === 'object' && 'newImageUrl' in t))
+      ) ||
+      (s.backgroundLayers ?? []).some((l: any) => l && typeof l === 'object' && 'imageUrl' in l));
+
+  const looksLegacy = sceneList.some(sceneIsLegacy) || projects.some((p) => !(p as any).sprites);
 
   if (looksLegacy) {
     const reg = new SpriteRegistry(assets);
@@ -397,6 +398,11 @@ export const useStudioStore = create<StudioState>()(
           sc.flatMap(sceneUrls).forEach((u) => u.startsWith('asset:') && used.add(u.slice(6)));
           const spriteIds = new Set<string>(project.sprites);
           sc.forEach((s) => sceneRefs(s).forEach((r) => r.startsWith('sprite:') && spriteIds.add(r.slice(7))));
+          // assets referenced by exported sprites must travel with the bundle too
+          spriteIds.forEach((sid) => {
+            const a = sprites[sid]?.assetId;
+            if (a && a.startsWith('asset:')) used.add(a.slice(6));
+          });
           const bundle: ProjectBundle = {
             format: 'escape-studio',
             version: 3,
@@ -520,7 +526,9 @@ export const useStudioStore = create<StudioState>()(
               : assetIdOrRef.startsWith('sprite:')
                 ? assetIdOrRef
                 : get().useAssetSprite(assetIdOrRef)
-            : get().useAssetSprite(assetRef(assetIdOrRef));
+            : assetIdOrRef === ''
+              ? ''
+              : get().useAssetSprite(assetRef(assetIdOrRef));
           const url = ref;
           const viewOf = get().editingViewOf;
           edit(undefined, (scene) =>
@@ -722,7 +730,11 @@ export const useStudioStore = create<StudioState>()(
           const s = get();
           const project = s.projects.find((p) => p.id === s.currentProjectId);
           if (!project) return false;
-          const used = project.scenes.some((sid) => s.scenes[sid] && sceneUrls(s.scenes[sid]).includes(`asset:${id}`));
+          // Scenes reference `sprite:<id>`, not `asset:<id>` — so also look through the sprites that point at this asset.
+          const refs = new Set(project.scenes.flatMap((sid) => (s.scenes[sid] ? sceneRefs(s.scenes[sid]) : [])));
+          const aref = `asset:${id}`;
+          const used =
+            refs.has(aref) || Object.values(s.sprites).some((sp) => sp.assetId === aref && refs.has(spriteRef(sp.id)));
           if (used) return false;
           set((st) => {
             const assets = { ...st.assets };
@@ -771,7 +783,15 @@ export const useStudioStore = create<StudioState>()(
       storage: createJSONStorage(() => idbStorage),
       partialize: (s) => ({ projects: s.projects, scenes: s.scenes, assets: s.assets, sprites: s.sprites }),
       migrate: (persistedState: any) => migratePersisted(persistedState ?? {}),
-      onRehydrateStorage: () => (state) => state?.markHydrated(),
+      // If rehydration throws (corrupt/incompatible saved data) `state` is undefined — never leave the app stuck on "Loading…".
+      onRehydrateStorage: () => (state, error) => {
+        if (error || !state) {
+          console.warn('Studio rehydrate failed, starting from defaults', error);
+          setTimeout(() => useStudioStore.setState({ hydrated: true }), 0);
+          return;
+        }
+        state.markHydrated();
+      },
     }
   )
 );
@@ -819,15 +839,23 @@ export function scopeIds(scene: Scene, viewId?: string): Set<string> {
   return s;
 }
 
-/** Strip discovered ids that no longer exist in the (edited) project. */
+/**
+ * Strip discovered ids that no longer exist in the (edited) project.
+ * Discoveries are keyed by scene id (room objects) OR by the parent object id (objects inside a close-up view);
+ * the latter used to be dropped on every resume because only scene ids were recognised.
+ */
 function pruneDiscovered(scenes: Record<string, Scene>, discovered: Record<string, string[]>): Record<string, string[]> {
+  const viewScopes = new Map<string, Set<string>>();
+  for (const sc of Object.values(scenes)) {
+    for (const o of sc.objects) if (o.view) viewScopes.set(o.id, new Set(o.view.objects.map((v) => v.id)));
+  }
   const out: Record<string, string[]> = {};
-  for (const [sid, ids] of Object.entries(discovered)) {
-    const scene = scenes[sid];
-    if (!scene) continue;
-    const valid = scopeIds(scene);
+  for (const [key, ids] of Object.entries(discovered)) {
+    const scene = scenes[key];
+    const valid = scene ? scopeIds(scene) : viewScopes.get(key);
+    if (!valid) continue;
     const kept = ids.filter((id) => valid.has(id));
-    if (kept.length) out[sid] = kept;
+    if (kept.length) out[key] = kept;
   }
   return out;
 }
@@ -851,9 +879,9 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     const session = g.session;
     if (!session) return;
     const list = Object.values(g.scenes).filter((sc) => sc.projectId === session.projectId);
-    const completed = new Set(session.state.completedScenes);
+    const completed = new Set(state.completedScenes ?? session.state.completedScenes);
     for (const sc of list) {
-      if (sc.objects.some((o) => o.digit !== undefined) && isRoomComplete(state, sc)) completed.add(sc.id);
+      if (roomDigitTargets(sc).length > 0 && isRoomComplete(state, sc)) completed.add(sc.id);
     }
     const next: SessionState = { ...state, completedScenes: [...completed] };
     set({ session: { ...session, state: next } });
@@ -887,18 +915,23 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
       } catch {}
       const resume = !!saved?.session && saved.session.projectId === project.id && saved.session.started;
       const first = project.scenes[0];
+      // Merge over fresh defaults so older saves missing newer fields (e.g. transformsApplied) don't crash.
       const base: SessionState = resume && saved?.session
-        ? { ...saved.session.state, currentSceneId: scenes[saved.session.state.currentSceneId] ? saved.session.state.currentSceneId : first }
+        ? {
+            ...createSessionState(first),
+            ...saved.session.state,
+            currentSceneId: scenes[saved.session.state.currentSceneId] ? saved.session.state.currentSceneId : first,
+          }
         : createSessionState(first);
       const session: Session = {
         id: uid('sess'),
         projectId: project.id,
         token: `local-${project.id}`,
         players: [
-          { telegramId: 'you', name: 'شما', online: true, ready: true },
-          { telegramId: 'bot-demo', name: 'هم‌تیمی (دمو)', online: false, ready: !resume ? false : true },
+          { telegramId: 'you', name: 'شما', online: true, ready: resume },
+          { telegramId: 'bot-demo', name: 'هم‌تیمی (دمو)', online: false, ready: resume },
         ],
-        started: resume ? saved!.session!.started : true,
+        started: resume ? saved!.session!.started : false,
         complete: resume ? saved!.session!.complete : false,
         state: { ...base, discoveredObjects: pruneDiscovered(scenes, base.discoveredObjects) },
       };
@@ -929,7 +962,13 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
       if (!g.session) return;
       const first = Object.keys(g.scenes)[0];
       set({
-        session: { ...g.session, started: false, complete: false, state: createSessionState(first) },
+        session: {
+          ...g.session,
+          started: false,
+          complete: false,
+          players: g.session.players.map((p) => ({ ...p, ready: false })),
+          state: createSessionState(first),
+        },
         selectedItem: null,
         lockInput: '',
       });

@@ -8,7 +8,7 @@ import { getSprite, resolveSprite } from '../shared/types';
 /** Resolve a sprite/image ref to the concrete image URL ('' when the sprite has no image). */
 const spriteSrc = (ref: string | undefined, sprites: Record<string, Sprite>, assets: Record<string, Asset>) =>
   ref ? resolveSprite(ref, sprites, assets) : '';
-import { allRoomsComplete, getRoomDigits } from '../shared/game-logic';
+import { allRoomsComplete } from '../shared/game-logic';
 
 const faDigits = (s: string) => s.replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[+d]);
 
@@ -87,8 +87,12 @@ function ObjSprite({
 }) {
   const discovered = state.discoveredObjects[viewId || sceneId]?.includes(obj.id);
   const pickupGone = obj.pickupable && state.inventory.includes(obj.pickupItemId || obj.id);
-  const hidden = !obj.visible || (!!discovered && !obj.view) || (!!pickupGone && !obj.view);
-  const tIndex = state.transformsApplied[obj.id] ?? -1;
+  // Objects that carry a digit (shows its badge once found) or still have transform rules
+  // (an item must be usable on them after the first click) must stay on screen after discovery.
+  const keepVisible = obj.digit !== undefined || !!obj.transforms?.length;
+  const hidden =
+    !obj.visible || (!keepVisible && ((!!discovered && !obj.view) || (!!pickupGone && !obj.view)));
+  const tIndex = (state.transformsApplied ?? {})[obj.id] ?? -1;
   const applied = obj.transforms?.[tIndex];
   // After a transform fires, the object takes on the rule's new sprite ("بعد از ترنسفورم عکس بگیرن").
   const ref = applied?.newSpriteId ? `sprite:${applied.newSpriteId}` : obj.spriteRef;
@@ -434,7 +438,7 @@ function InventoryPanel() {
             className={`shrink-0 w-12 h-12 rounded-xl border flex items-center justify-center overflow-hidden transition-all ${
               selectedItem === id ? 'border-amber-400 ring-2 ring-amber-400/50 scale-110' : 'border-gray-600 hover:border-gray-400'
             }`}
-            title={meta ? itemName([], id) + ` (${id})` : id}
+            title={meta?.name ?? itemName([], id)}
           >
             {meta?.url ? (
               <img src={meta.url} alt="" className="w-full h-full object-contain p-0.5" />
@@ -493,10 +497,10 @@ function FinalLock() {
         <div className="flex gap-2 justify-center" dir="ltr">
           {list.map((sc) => {
             const done = session.state.completedScenes.includes(sc.id);
-            const got = getRoomDigits(session.state, sc)[0]?.digit;
             return (
               <div key={sc.id} className={`w-10 h-12 rounded-lg border flex items-center justify-center text-lg font-bold ${done ? 'border-emerald-500 text-emerald-400 bg-emerald-500/10' : 'border-gray-600 text-gray-600'}`}>
-                {done ? faDigits(String(got ?? sc.exitNumber)) : '?'}
+                {/* the lock code is each room's exit digit — not whichever digit object the player found */}
+                {done ? faDigits(String(sc.exitNumber)) : '?'}
               </div>
             );
           })}
