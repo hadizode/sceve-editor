@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { useCtx, useCurrentProject, useStudioStore } from '../stores/store';
-import type { ObjectType } from '../shared/types';
 import Canvas from './Canvas';
 import Preview from './Preview';
 import ProjectsView from './ProjectsView';
@@ -116,18 +115,17 @@ function Editor() {
           {/* Left: tools */}
           <aside className="w-52 bg-surface border-r border-gray-700 overflow-y-auto flex-shrink-0">
             <div className="p-3 border-b border-gray-700">
-              <h3 className="text-xs font-bold text-gray-400 mb-2">{ctx?.view ? 'Add to view' : 'Add object'}</h3>
-              <div className="grid grid-cols-1 gap-1">
-                {([
-                  ['decoration', '🖼️ Decoration'],
-                  ['inventory', '🎒 Item'],
-                  ['container', '📦 Container'],
-                ] as [ObjectType, string][]).map(([type, label]) => (
-                  <button key={type} className="bg-gray-700 hover:bg-gray-600 text-white px-2 py-1.5 rounded text-xs text-left" onClick={() => st().addObject(type)}>
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <h3 className="text-xs font-bold text-gray-400 mb-2">{ctx?.view ? 'Add to view' : 'Add sprite'}</h3>
+              {/* One unified sprite — it can be anything (image, color, invisible hotspot, pickup, transform…) */}
+              <button
+                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white px-2 py-1.5 rounded text-xs"
+                onClick={() => st().addObject()}
+              >
+                🧩 ＋ Add sprite
+              </button>
+              <p className="text-[10px] text-gray-500 mt-1.5 leading-relaxed">
+                هر اسپرایت می‌تواند هر چیزی باشد: تصویر، رنگ خالص، نامرئی تا پس از ترنسفورم، قابل برداشتن، قفل‌دار و…
+              </p>
             </div>
             {!ctx?.view && <RoomsPanel />}
             {!ctx?.view && <RoomProps />}

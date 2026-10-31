@@ -16,7 +16,6 @@ import {
   SpriteRegistry,
   type Asset,
   type BackgroundLayer,
-  type ObjectType,
   type Project,
   type ProjectBundle,
   type Scene,
@@ -110,8 +109,8 @@ interface StudioState {
   duplicateScene: (id: string) => void;
   updateScene: (patch: Partial<Scene>, key?: string) => void;
   setBackground: (url: string, w: number, h: number) => void;
-  // objects
-  addObject: (type: ObjectType, patch?: Partial<SceneObject>) => string;
+  // objects — every object is one unified sprite; behavior comes from its properties/rules
+  addObject: (patch?: Partial<SceneObject>) => string;
   addObjectFromAsset: (assetId: string, cx?: number, cy?: number) => void;
   updateObject: (id: string, patch: Partial<SceneObject>, key?: string) => void;
   updateObjects: (patches: Record<string, Partial<SceneObject>>, key?: string) => void;
@@ -537,10 +536,10 @@ export const useStudioStore = create<StudioState>()(
         },
 
         // ---------- objects ----------
-        addObject: (type, patch) => {
+        addObject: (patch) => {
           const ctx = getContext(get().currentSceneId ? get().scenes[get().currentSceneId!] : undefined, get().editingViewOf);
           const count = ctx?.objects.length ?? 0;
-          const obj = createObject(type, {
+          const obj = createObject({
             x: 60 + ((count * 24) % 300),
             y: 60 + ((count * 24) % 300),
             ...patch,
@@ -559,7 +558,7 @@ export const useStudioStore = create<StudioState>()(
           const h = Math.max(10, Math.round(a.height * k));
           const x = Math.round((cx ?? ctx.width / 2) - w / 2);
           const y = Math.round((cy ?? ctx.height / 2) - h / 2);
-          const obj = createObject('decoration', { name: a.name, spriteRef: s.useAssetSprite(assetRef(assetId), a.name), x, y, width: w, height: h });
+          const obj = createObject({ name: a.name, spriteRef: s.useAssetSprite(assetRef(assetId), a.name), x, y, width: w, height: h });
           if (editObjects(undefined, (o) => [...o, obj])) set({ selectedObjectIds: [obj.id] });
         },
 
