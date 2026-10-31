@@ -66,18 +66,23 @@ export function pickupObject(
   objectId: string,
   objects: SceneObject[]
 ): { newState: SessionState; message?: string; success: boolean; itemId?: string } {
-  const obj = objects.find(o => o.id === objectId);
-  if (!obj) {
+  // Pick up by NAME, not by id — ids can collide across objects/scenes, which used to
+  // make picking up one item remove a different object whose id merely looked similar.
+  const target = objects.find(o => o.id === objectId);
+  if (!target) {
     return { newState: state, success: false, message: 'مورد یافت نشد' };
   }
+
+  const obj = objects.find(o => o.name === target.name) ?? target;
 
   if (!obj.pickupable) {
     return { newState: state, success: false, message: 'این مورد قابل برداشتن نیست' };
   }
 
-  const itemId = obj.pickupItemId || obj.id;
+  // The inventory entry is keyed by the item's name so it stays unique per item.
+  const itemId = obj.name;
   let newInventory = [...state.inventory];
-  
+
   if (newInventory.includes(itemId)) {
     return { newState: state, success: false, message: 'این مورد قبلاً برداشته شده' };
   }

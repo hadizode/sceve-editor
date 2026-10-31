@@ -1065,6 +1065,9 @@ const ITEM_NAMES: Record<string, string> = {
   'wire-cutter': '🔧 سیم‌چین',
 };
 export function itemName(objects: SceneObject[], id: string): string {
+  // Pickup items live in the inventory keyed by the object's NAME (see game-logic.pickupObject).
+  const byName = objects.find((o) => o.pickupable && o.name === id);
+  if (byName) return `🎒 ${byName.name}`;
   const granter = objects.find((o) => o.grantsItem === id || o.pickupItemId === id);
   if (granter) return `🎒 ${granter.name}`;
   return ITEM_NAMES[id] || `🎒 ${id}`;
