@@ -103,8 +103,9 @@ export function validateProject(
         else if (!obtainable.has(t.requiresItem))
           at(`"${o.name}" transform ${i + 1} requires "${t.requiresItem}" but nothing grants it`, 'error', top);
       });
-      if (o.type === 'container' && !o.requiresItem?.length && !o.transforms?.length)
-        at(`Container "${o.name}" has no requirement`, 'warning', top);
+      // A sprite that requires an item / transforms should actually do something when interacted with.
+      if ((o.requiresItem?.length || o.transforms?.length) && !o.grantsItem && o.digit === undefined && !o.view && !o.message && !o.pickupable)
+        at(`"${o.name}" has requirements/rules but no visible result (message/item/digit/view)`, 'warning', top);
       // Sprites are allowed to have no image and no color — but only when a transform will give them one.
       const spr = getSprite(o.spriteRef, sprites);
       if (!o.spriteRef) at(`"${o.name}" has no sprite`, 'warning', top);

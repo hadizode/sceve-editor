@@ -1,14 +1,22 @@
 import { clamp, nowIso, svgDataUrl, uid } from './utils';
 
 // ============ Basic types ============
-export const OBJECT_TYPES = ['decoration', 'inventory', 'container'] as const;
-export type ObjectType = (typeof OBJECT_TYPES)[number];
+/**
+ * There are NO object-type categories anymore (no decoration / item / container).
+ * Every place in a room is a single unified "sprite": one reusable visual that can
+ * be ANYTHING — an image, a solid color, fully invisible until transformed,
+ * clickable, pickupable, item-granting, transform target, background layer, etc.
+ * Behavior comes from the sprite's properties and rules, never from a type enum.
+ */
+export const OBJECT_TYPE = 'sprite' as const;
+export type ObjectType = typeof OBJECT_TYPE;
+/** @deprecated kept only so old imports keep compiling; there is exactly one kind now. */
+export const OBJECT_TYPES = [OBJECT_TYPE] as const;
 
-export const TYPE_COLORS: Record<ObjectType, string> = {
-  decoration: '#6b7280',
-  inventory: '#10b981',
-  container: '#8b5cf6',
-};
+/** Single accent used for every sprite placeholder/indicator (there are no per-type colors). */
+export const SPRITE_COLOR = '#38bdf8';
+/** @deprecated use SPRITE_COLOR */
+export const TYPE_COLORS: Record<string, string> = { sprite: SPRITE_COLOR };
 
 export interface Asset {
   id: string;
@@ -159,7 +167,8 @@ export interface View {
 export interface SceneObject {
   id: string;
   name: string;
-  type: ObjectType;
+  /** Always 'sprite' now — kept for backward compatibility with old bundles. */
+  type?: ObjectType;
   /** The object's sprite — a `sprite:<id>` reference to any image asset. */
   spriteRef: string;
   x: number;
@@ -239,12 +248,11 @@ export function blankSprite(name: string, color = ''): Sprite {
   return { id: uid('spr'), name: name || 'Blank sprite', assetId: '', color: color || undefined, createdAt: nowIso() };
 }
 
-export function createObject(type: ObjectType, p: Partial<SceneObject> = {}): SceneObject {
-  const label = { decoration: 'Decoration', inventory: 'Item', container: 'Container' }[type];
+export function createObject(p: Partial<SceneObject> = {}): SceneObject {
   return {
     id: uid('obj'),
-    name: label,
-    type,
+    name: 'Sprite',
+    type: OBJECT_TYPE,
     spriteRef: '',
     x: 100,
     y: 100,
@@ -254,7 +262,6 @@ export function createObject(type: ObjectType, p: Partial<SceneObject> = {}): Sc
     visible: true,
     locked: false,
     oneTimeUse: false,
-    ...(type === 'inventory' ? { pickupable: true } : {}),
     ...p,
   };
 }
@@ -406,13 +413,14 @@ function normalizeView(r: any, reg: SpriteRegistry): View {
 
 export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): SceneObject {
   const o = raw ?? {};
-  const type: ObjectType = OBJECT_TYPES.includes(o.type) ? o.type : 'decoration';
+  // Old bundles had decoration/inventory/container types — everything is one unified sprite now.
+  const legacyType = typeof o.type === 'string' ? o.type : '';
   const req = strList(o.requiresItem);
   const digit = Number.isInteger(o.digit) ? clamp(o.digit, 0, 9) : undefined;
   return {
     id: str(o.id) || uid('obj'),
     name: str(o.name) || 'Object',
-    type,
+    type: OBJECT_TYPE,
     spriteRef: reg.register(o.spriteRef ?? o.imageUrl),
     x: num(o.x, 0),
     y: num(o.y, 0),
@@ -428,7 +436,8 @@ export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): Scene
     grantsItem: str(o.grantsItem) || undefined,
     soundUrl: str(o.soundUrl) || undefined,
     view: depth === 0 && o.view ? normalizeView(o.view, reg) : undefined,
-    pickupable: o.pickupable === true ? true : undefined,
+    // Legacy 'inventory' objects were auto-pickupable — keep that behavior when importing old bundles.
+    pickupable: o.pickupable === true || legacyType === 'inventory' ? true : undefined,
     pickupItemId: str(o.pickupItemId) || undefined,
     pickupMessage: str(o.pickupMessage) || undefined,
     transforms:

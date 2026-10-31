@@ -214,11 +214,6 @@ export function PropertiesPanel() {
       <Field label="Name">
         <input className={inputCls} value={obj.name} onChange={(e) => set({ name: e.target.value })} />
       </Field>
-      <Field label="Type">
-        <select className={inputCls} value={obj.type} onChange={(e) => set({ type: e.target.value as ObjectType })}>
-          {OBJECT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-        </select>
-      </Field>
       <Field label="Sprite (visual)">
         <SpritePicker value={obj.spriteRef} onPick={(ref) => set({ spriteRef: ref }, `${obj.id}:sprite`)} />
       </Field>
