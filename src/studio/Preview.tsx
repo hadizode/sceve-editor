@@ -1,13 +1,21 @@
 import React, { useRef, useState } from 'react';
-import { Stage, Layer, Image as KImage } from 'react-konva';
-import { useScene } from '../stores/store';
-import type { BackgroundLayer, SceneObject, View } from '../shared/types';
+import { Stage, Layer, Image as KImage, Rect } from 'react-konva';
+import { useScene, useStudioStore } from '../stores/store';
+import type { Asset, BackgroundLayer, SceneObject, Sprite, View } from '../shared/types';
+import { getSprite, resolveSprite } from '../shared/types';
 import { Bg, useSrc } from './konva-bits';
 import { useElementSize } from './ui';
 
-function PObj({ obj, found, onClick }: { obj: SceneObject; found: boolean; onClick: () => void }) {
-  const img = useSrc(obj.imageUrl);
+function PObj({ obj, found, onClick, sprites, assets }: { obj: SceneObject; found: boolean; onClick: () => void; sprites: Record<string, Sprite>; assets: Record<string, Asset> }) {
+  const url = resolveSprite(obj.spriteRef, sprites, assets);
+  const sp = getSprite(obj.spriteRef, sprites);
+  const img = useSrc(url);
   if (!obj.visible || (found && obj.oneTimeUse)) return null;
+  // color-only sprite fallback
+  if (!img) {
+    if (!sp?.color) return null;
+    return <Rect x={obj.x} y={obj.y} width={obj.width} height={obj.height} rotation={obj.rotation} fill={sp.color} onClick={onClick} onTap={onClick} />;
+  }
   return (
     <KImage
       image={img}
@@ -39,6 +47,8 @@ function StaticScene(props: {
   found: Set<string>;
   scale: number;
   onObjectClick: (o: SceneObject) => void;
+  sprites: Record<string, Sprite>;
+  assets: Record<string, Asset>;
 }) {
   const { width, height, scale } = props;
   return (
@@ -48,10 +58,10 @@ function StaticScene(props: {
         {props.layers
           .filter((l) => l.visible)
           .map((l) => (
-            <Bg key={l.id} url={l.imageUrl} width={width} height={height} opacity={l.opacity} x={l.offsetX} y={l.offsetY} />
+            <Bg key={l.id} url={l.spriteRef} width={width} height={height} opacity={l.opacity} x={l.offsetX} y={l.offsetY} />
           ))}
         {props.objects.map((o) => (
-          <PObj key={o.id} obj={o} found={props.found.has(o.id)} onClick={() => props.onObjectClick(o)} />
+          <PObj key={o.id} obj={o} found={props.found.has(o.id)} onClick={() => props.onObjectClick(o)} sprites={props.sprites} assets={props.assets} />
         ))}
       </Layer>
     </Stage>
@@ -60,6 +70,8 @@ function StaticScene(props: {
 
 export default function Preview() {
   const scene = useScene();
+  const sprites = useStudioStore((s) => s.sprites);
+  const assets = useStudioStore((s) => s.assets);
   const ref = useRef<HTMLDivElement>(null);
   const size = useElementSize(ref);
   const [found, setFound] = useState<Set<string>>(new Set());
@@ -100,6 +112,8 @@ export default function Preview() {
             found={found}
             scale={scale}
             onObjectClick={click}
+            sprites={sprites}
+            assets={assets}
           />
         </div>
       )}
@@ -135,6 +149,8 @@ export default function Preview() {
                 setFound((f) => new Set(f).add(o.id));
                 say(o.message || o.name);
               }}
+              sprites={sprites}
+              assets={assets}
             />
           </div>
         </div>
