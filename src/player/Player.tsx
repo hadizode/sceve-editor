@@ -93,7 +93,9 @@ function ObjSprite({
   onOpenView: (objectId: string) => void;
 }) {
   const discovered = state.discoveredObjects[viewId || sceneId]?.includes(obj.id);
-  const pickupGone = obj.pickupable && state.inventory.includes(obj.pickupItemId || obj.id);
+  // Pickup items are keyed by NAME in the inventory (see game-logic.pickupObject), so an
+  // id collision can never hide a different object. Fall back to legacy id-keyed entries.
+  const pickupGone = obj.pickupable && (state.inventory.includes(obj.name) || state.inventory.includes(obj.pickupItemId || obj.id));
   // Objects that carry a digit (shows its badge once found) or still have transform rules
   // (an item must be usable on them after the first click) must stay on screen after discovery.
   const keepVisible = obj.digit !== undefined || !!obj.transforms?.length;
@@ -412,7 +414,7 @@ function InventoryPanel() {
         const sp = getSprite(o.spriteRef, sprites);
         const u = spriteSrc(o.spriteRef, sprites, assets);
         if (o.grantsItem && !m[o.grantsItem]) m[o.grantsItem] = { name: o.name, url: u, color: sp?.color };
-        if (o.pickupable && !m[o.pickupItemId || o.id]) m[o.pickupItemId || o.id] = { name: o.name, url: u, color: sp?.color };
+        if (o.pickupable && !m[o.name]) m[o.name] = { name: o.name, url: u, color: sp?.color };
         o.transforms?.forEach((t) => {
           if (t.grantsItem && !m[t.grantsItem]) {
             const tref = t.newSpriteId ? `sprite:${t.newSpriteId}` : o.spriteRef;
