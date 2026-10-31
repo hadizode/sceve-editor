@@ -21,6 +21,15 @@ import { SEED_PROJECT, SEED_SCENES } from '../shared/seed-data';
 import { idbStorage } from '../shared/idb';
 import { sceneUrls } from '../shared/validation';
 import { nowIso, uid, type LoadedImage } from '../shared/utils';
+import {
+  allRoomsComplete,
+  applyItemToObject,
+  discoverObject,
+  isRoomComplete,
+  pickupObject as pickupObj,
+  validateFinalLock,
+} from '../shared/game-logic';
+import { createSessionState, type Player, type Session, type SessionState } from '../shared/types';
 
 // ============ Context helpers (scene or the view being edited) ============
 export interface EditContext {
@@ -651,6 +660,259 @@ export const useStudioStore = create<StudioState>()(
     }
   )
 );
+
+// ============ Player store (game session — plays the CURRENT studio project) ============
+const PLAYER_KEY = 'escape-player-v2';
+
+interface PlayerState {
+  session: Session | null;
+  scenes: Record<string, Scene>;
+  assets: Record<string, Asset>;
+  selectedItem: string | null;
+  lockInput: string;
+  toast: string | null;
+
+  loadFromStudio: () => void;
+  startNewGame: (players?: Player[]) => void;
+  resetGame: () => void;
+  setPlayerReady: (telegramId?: string) => void;
+  selectItem: (id: string | null) => void;
+  setToast: (t: string | null) => void;
+  switchScene: (id: string) => void;
+  clickObject: (objectId: string, viewId?: string) => void;
+  pickup: (objectId: string, viewId?: string) => void;
+  useItemOnObject: (itemId: string, objectId: string, viewId?: string) => void;
+  enterLockDigit: (d: string) => void;
+  clearLockDigit: () => void;
+  submitLock: () => void;
+}
+
+let toastTimer: number | undefined;
+
+/** All object ids in a scene/view *including* nested close-up view objects. */
+export function scopeIds(scene: Scene, viewId?: string): Set<string> {
+  if (viewId) {
+    const v = scene.objects.find((o) => o.id === viewId)?.view;
+    return new Set(v ? v.objects.map((o) => o.id) : []);
+  }
+  const s = new Set<string>();
+  for (const o of scene.objects) {
+    s.add(o.id);
+    o.view?.objects.forEach((v) => s.add(v.id));
+  }
+  return s;
+}
+
+/** Strip discovered ids that no longer exist in the (edited) project. */
+function pruneDiscovered(scenes: Record<string, Scene>, discovered: Record<string, string[]>): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const [sid, ids] of Object.entries(discovered)) {
+    const scene = scenes[sid];
+    if (!scene) continue;
+    const valid = scopeIds(scene);
+    const kept = ids.filter((id) => valid.has(id));
+    if (kept.length) out[sid] = kept;
+  }
+  return out;
+}
+
+const persistPlayer = (s: PlayerState) => {
+  try {
+    localStorage.setItem(PLAYER_KEY, JSON.stringify({ session: s.session }));
+  } catch {}
+};
+
+export const usePlayerStore = create<PlayerState>()((set, get) => {
+  const say = (message: string | null | undefined, ms = 4000) => {
+    window.clearTimeout(toastTimer);
+    set({ toast: message ?? null });
+    if (message) toastTimer = window.setTimeout(() => set({ toast: null }), ms);
+  };
+
+  /** Persist + re-evaluate room completion after every state change. */
+  const commit = (state: SessionState) => {
+    const g = get();
+    const session = g.session;
+    if (!session) return;
+    const list = Object.values(g.scenes).filter((sc) => sc.projectId === session.projectId);
+    const completed = new Set(session.state.completedScenes);
+    for (const sc of list) {
+      if (sc.objects.some((o) => o.digit !== undefined) && isRoomComplete(state, sc)) completed.add(sc.id);
+    }
+    const next: SessionState = { ...state, completedScenes: [...completed] };
+    set({ session: { ...session, state: next } });
+    persistPlayer(get());
+  };
+
+  const sceneOfCurrent = () => {
+    const g = get();
+    const sid = g.session?.state.currentSceneId;
+    return sid ? g.scenes[sid] : undefined;
+  };
+
+  return {
+    session: null,
+    scenes: {},
+    assets: {},
+    selectedItem: null,
+    lockInput: '',
+    toast: null,
+
+    /** Load the current project from the studio store (live, unsaved edits included). */
+    loadFromStudio: () => {
+      const st = useStudioStore.getState();
+      const project = st.projects.find((p) => p.id === st.currentProjectId);
+      if (!project) return;
+      const scenes = Object.fromEntries(project.scenes.map((id) => [id, st.scenes[id]]).filter(([, s]) => !!s));
+      let saved: { session: Session | null } | null = null;
+      try {
+        saved = JSON.parse(localStorage.getItem(PLAYER_KEY) || 'null');
+      } catch {}
+      const resume = !!saved?.session && saved.session.projectId === project.id && saved.session.started;
+      const first = project.scenes[0];
+      const base: SessionState = resume && saved?.session
+        ? { ...saved.session.state, currentSceneId: scenes[saved.session.state.currentSceneId] ? saved.session.state.currentSceneId : first }
+        : createSessionState(first);
+      const session: Session = {
+        id: uid('sess'),
+        projectId: project.id,
+        token: `local-${project.id}`,
+        players: [
+          { telegramId: 'you', name: 'شما', online: true, ready: true },
+          { telegramId: 'bot-demo', name: 'هم‌تیمی (دمو)', online: false, ready: !resume ? false : true },
+        ],
+        started: resume ? saved!.session!.started : true,
+        complete: resume ? saved!.session!.complete : false,
+        state: { ...base, discoveredObjects: pruneDiscovered(scenes, base.discoveredObjects) },
+      };
+      set({ session, scenes, assets: st.assets, selectedItem: null, lockInput: '', toast: null });
+    },
+
+    startNewGame: (players) => {
+      const g = get();
+      const first = Object.keys(g.scenes)[0];
+      if (!g.session || !first) return;
+      set({
+        session: {
+          ...g.session,
+          started: true,
+          complete: false,
+          players: players ?? g.session.players.map((p) => ({ ...p, ready: true })),
+          state: createSessionState(first),
+        },
+        selectedItem: null,
+        lockInput: '',
+      });
+      persistPlayer(get());
+      say('بازی شروع شد! موفق باشید 🎮');
+    },
+
+    resetGame: () => {
+      const g = get();
+      if (!g.session) return;
+      const first = Object.keys(g.scenes)[0];
+      set({
+        session: { ...g.session, started: false, complete: false, state: createSessionState(first) },
+        selectedItem: null,
+        lockInput: '',
+      });
+      persistPlayer(get());
+    },
+
+    setPlayerReady: (telegramId = 'you') => {
+      const g = get();
+      if (!g.session) return;
+      const players = g.session.players.map((p) => (p.telegramId === telegramId ? { ...p, ready: true } : p));
+      set({ session: { ...g.session, players } });
+      if (players.every((p) => p.ready)) {
+        get().startNewGame(players);
+      } else {
+        say('آماده شدید! منتظر هم‌تیمی‌ها بمانید…');
+      }
+    },
+
+    selectItem: (id) => set({ selectedItem: id }),
+    setToast: say,
+
+    switchScene: (id) => {
+      const g = get();
+      if (!g.session || !g.scenes[id]) return;
+      commit({ ...g.session.state, currentSceneId: id });
+    },
+
+    clickObject: (objectId, viewId) => {
+      const g = get();
+      const scene = sceneOfCurrent();
+      if (!g.session || !scene) return;
+      const objs = viewId ? scene.objects.find((o) => o.id === viewId)?.view?.objects ?? [] : scene.objects;
+      const res = discoverObject(g.session.state, viewId || scene.id, objectId, objs);
+      if (res.grantsItem) say(`🎒 آیتم به دست آمد: ${itemName(objs, res.grantsItem)}`, 5000);
+      else if (res.message) say(res.message);
+      if (res.newState !== g.session.state) commit(res.newState);
+    },
+
+    pickup: (objectId, viewId) => {
+      const g = get();
+      const scene = sceneOfCurrent();
+      if (!g.session || !scene) return;
+      const objs = viewId ? scene.objects.find((o) => o.id === viewId)?.view?.objects ?? [] : scene.objects;
+      const res = pickupObj(g.session.state, viewId || scene.id, objectId, objs);
+      if (res.message) say(res.message);
+      if (res.success) commit(res.newState);
+    },
+
+    useItemOnObject: (itemId, objectId, viewId) => {
+      const g = get();
+      const scene = sceneOfCurrent();
+      if (!g.session || !scene) return;
+      const objs = viewId ? scene.objects.find((o) => o.id === viewId)?.view?.objects ?? [] : scene.objects;
+      const res = applyItemToObject(g.session.state, viewId || scene.id, objectId, itemId, objs);
+      if (res.message) say(res.message, res.success ? 5000 : 3000);
+      if (res.success) {
+        commit(res.newState);
+        set({ selectedItem: null });
+      }
+    },
+
+    enterLockDigit: (d) => {
+      const g = get();
+      const maxLen = Math.max(1, Object.keys(g.scenes).length);
+      if (g.lockInput.length >= maxLen) return;
+      set({ lockInput: g.lockInput + d });
+    },
+    clearLockDigit: () => set((s) => ({ lockInput: s.lockInput.slice(0, -1) })),
+
+    submitLock: () => {
+      const g = get();
+      if (!g.session) return;
+      const list = Object.values(g.scenes).filter((sc) => sc.projectId === g.session!.projectId);
+      if (!allRoomsComplete(g.session.state, list)) {
+        say('هنوز همه اتاق‌ها کامل نشده‌اند!');
+        return;
+      }
+      const res = validateFinalLock(g.session.state, list, g.lockInput);
+      say(res.message, 6000);
+      if (res.valid) {
+        set({ session: { ...g.session, complete: true } });
+        persistPlayer(get());
+      }
+    },
+  };
+});
+
+/** Human-readable item name: prefer the object that grants it, else fallback table. */
+const ITEM_NAMES: Record<string, string> = {
+  'key-gold': '🔑 کلید طلایی',
+  'key-small': '🔑 کلید کوچک',
+  'digit-7': '🔢 عدد ۷',
+  'digit-3': '🔢 عدد ۳',
+  'wire-cutter': '🔧 سیم‌چین',
+};
+export function itemName(objects: SceneObject[], id: string): string {
+  const granter = objects.find((o) => o.grantsItem === id || o.pickupItemId === id);
+  if (granter) return `🎒 ${granter.name}`;
+  return ITEM_NAMES[id] || `🎒 ${id}`;
+}
 
 // ============ Hooks ============
 export function useScene(): Scene | undefined {
