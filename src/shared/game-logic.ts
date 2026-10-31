@@ -130,7 +130,7 @@ export function applyItemToObject(
   // Check if this object has transforms and the *next* rule requires this item.
   // Progress is tracked in session state (`transformsApplied`), never on the editable object.
   if (obj.transforms && obj.transforms.length > 0) {
-    const currentTransform = state.transformsApplied[objectId] ?? -1;
+    const currentTransform = (state.transformsApplied ?? {})[objectId] ?? -1;
     const nextTransformIndex = currentTransform + 1;
     
     if (nextTransformIndex < obj.transforms.length) {
@@ -166,7 +166,7 @@ export function applyItemToObject(
           ...state,
           inventory: newInventory,
           discoveredObjects: newDiscoveredObjects,
-          transformsApplied: { ...state.transformsApplied, [objectId]: nextTransformIndex },
+          transformsApplied: { ...(state.transformsApplied ?? {}), [objectId]: nextTransformIndex },
         };
 
         return {
@@ -200,10 +200,8 @@ export function applyItemToObject(
     [sceneId]: [...sceneDiscovered, objectId],
   };
 
-  let grantsItem: string | undefined;
   if (obj.grantsItem && !newInventory.includes(obj.grantsItem)) {
     newInventory.push(obj.grantsItem);
-    grantsItem = obj.grantsItem;
   }
 
   const newState: SessionState = {
@@ -216,22 +214,35 @@ export function applyItemToObject(
 }
 
 /**
+ * Every object in a room that carries a digit, together with the discovery scope it is tracked under:
+ * top-level objects are tracked under the scene id, objects inside a close-up view under the parent object's id.
+ * (Digits inside views used to be ignored, so a room whose digit lived in a view could never be completed.)
+ */
+export function roomDigitTargets(scene: Scene): { scopeId: string; obj: SceneObject }[] {
+  const out: { scopeId: string; obj: SceneObject }[] = [];
+  for (const o of scene.objects) {
+    if (o.digit !== undefined) out.push({ scopeId: scene.id, obj: o });
+    for (const v of o.view?.objects ?? []) {
+      if (v.digit !== undefined) out.push({ scopeId: o.id, obj: v });
+    }
+  }
+  return out;
+}
+
+/**
  * Check if a room/scene is complete (all objects with digits discovered).
  */
 export function isRoomComplete(state: SessionState, scene: Scene): boolean {
-  const discovered = state.discoveredObjects[scene.id] || [];
-  const digitObjects = scene.objects.filter(o => o.digit !== undefined);
-  return digitObjects.every(obj => discovered.includes(obj.id));
+  return roomDigitTargets(scene).every(({ scopeId, obj }) => (state.discoveredObjects[scopeId] || []).includes(obj.id));
 }
 
 /**
  * Get discovered digits for a room.
  */
 export function getRoomDigits(state: SessionState, scene: Scene): { digit: number; objectId: string }[] {
-  const discovered = state.discoveredObjects[scene.id] || [];
-  return scene.objects
-    .filter(o => o.digit !== undefined && discovered.includes(o.id))
-    .map(o => ({ digit: o.digit!, objectId: o.id }));
+  return roomDigitTargets(scene)
+    .filter(({ scopeId, obj }) => (state.discoveredObjects[scopeId] || []).includes(obj.id))
+    .map(({ obj }) => ({ digit: obj.digit!, objectId: obj.id }));
 }
 
 /**

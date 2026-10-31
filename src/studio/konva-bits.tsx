@@ -2,11 +2,17 @@ import React from 'react';
 import { Image as KImage, Rect } from 'react-konva';
 import useImage from 'use-image';
 import { useStudioStore } from '../stores/store';
-import { resolveUrl } from '../shared/types';
+import { resolveSprite } from '../shared/types';
 
+/**
+ * Resolve ANY reference (`sprite:<id>`, `asset:<id>` or a direct URL) to a concrete image URL.
+ * (Previously only `asset:` refs were resolved, so every `sprite:` ref was loaded as a literal URL
+ * and no image ever rendered in the studio.)
+ */
 export function useResolved(url: string): string {
   const assets = useStudioStore((s) => s.assets);
-  return resolveUrl(url, assets);
+  const sprites = useStudioStore((s) => s.sprites);
+  return resolveSprite(url, sprites, assets);
 }
 
 export function useSrc(ref: string) {
