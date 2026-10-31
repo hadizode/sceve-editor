@@ -2,8 +2,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useImage from 'use-image';
 import { itemName, usePlayerStore } from '../stores/store';
-import type { Asset, Scene, SceneObject, SessionState, View } from '../shared/types';
-import { resolveUrl } from '../shared/types';
+import type { Asset, Scene, SceneObject, SessionState, Sprite, View } from '../shared/types';
+import { getSprite, resolveSprite } from '../shared/types';
+
+/** Resolve a sprite/image ref to the concrete image URL ('' when the sprite has no image). */
+const spriteSrc = (ref: string | undefined, sprites: Record<string, Sprite>, assets: Record<string, Asset>) =>
+  ref ? resolveSprite(ref, sprites, assets) : '';
 import { allRoomsComplete, getRoomDigits } from '../shared/game-logic';
 
 const faDigits = (s: string) => s.replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[+d]);
@@ -70,6 +74,7 @@ function ObjSprite({
   sceneId,
   viewId,
   assets,
+  sprites,
   onOpenView,
 }: {
   obj: SceneObject;
@@ -77,6 +82,7 @@ function ObjSprite({
   sceneId: string;
   viewId?: string; // id of parent object whose view we are in
   assets: Record<string, Asset>;
+  sprites: Record<string, Sprite>;
   onOpenView: (objectId: string) => void;
 }) {
   const discovered = state.discoveredObjects[viewId || sceneId]?.includes(obj.id);
@@ -84,7 +90,10 @@ function ObjSprite({
   const hidden = !obj.visible || (!!discovered && !obj.view) || (!!pickupGone && !obj.view);
   const tIndex = state.transformsApplied[obj.id] ?? -1;
   const applied = obj.transforms?.[tIndex];
-  const url = resolveUrl(applied?.newImageUrl || obj.imageUrl, assets);
+  // After a transform fires, the object takes on the rule's new sprite ("بعد از ترنسفورم عکس بگیرن").
+  const ref = applied?.newSpriteId ? `sprite:${applied.newSpriteId}` : obj.spriteRef;
+  const sp = getSprite(ref, sprites);
+  const url = spriteSrc(ref, sprites, assets);
   const name = applied?.newName || obj.name;
   const [img] = useImage(url || '', 'anonymous');
   const selectedItem = usePlayerStore((s) => s.selectedItem);
@@ -92,11 +101,12 @@ function ObjSprite({
   const pickup = usePlayerStore((s) => s.pickup);
   const useItemOnObject = usePlayerStore((s) => s.useItemOnObject);
 
-  if (hidden || !url) return null;
+  if (hidden) return null;
 
   const clickable = obj.digit !== undefined || !!obj.requiresItem?.length || !!obj.grantsItem || !!obj.message || !!obj.view || obj.pickupable === true || !!obj.transforms?.length;
 
   const handleClick = () => {
+    if (!clickable) return;
     if (selectedItem) {
       useItemOnObject(selectedItem, obj.id, viewId);
       return;
@@ -112,9 +122,18 @@ function ObjSprite({
     clickObject(obj.id, viewId);
   };
 
+  // A sprite with neither image nor color is fully invisible — but still clickable
+  // when it has game rules (invisible hotspot), and never shows a placeholder.
+  const hasVisual = !!url || !!sp?.color;
+
+  // Overflow: draw the image at its NATURAL size, centered on the object box,
+  // even beyond the scene — while the clickable area stays exactly width×height.
+  const overflowing = !!img && sp?.overflow === true;
+  const fit = sp?.fit ?? 'contain';
+
   return (
     <div
-      className={`absolute group ${clickable ? 'cursor-pointer' : 'pointer-events-none'}`}
+      className={`absolute ${clickable ? 'cursor-pointer' : 'pointer-events-none'}`}
       style={{
         left: obj.x,
         top: obj.y,
@@ -122,25 +141,47 @@ function ObjSprite({
         height: obj.height,
         transform: `rotate(${obj.rotation}deg)`,
         transformOrigin: 'center',
+        overflow: 'visible',
       }}
       onClick={handleClick}
       title={name}
     >
-      {img ? (
-        <img src={url} alt={name} draggable={false} className="w-full h-full select-none" style={{ objectFit: 'contain' }} />
-      ) : (
-        <div className="w-full h-full bg-gray-700/60 border border-dashed border-gray-500 rounded flex items-center justify-center text-[10px] text-gray-400">
-          {name}
+      {hasVisual && (
+        <div
+          className="w-full h-full relative group"
+          style={{ pointerEvents: 'none' }}
+        >
+          {img ? (
+            overflowing ? (
+              <img
+                src={url}
+                alt={name}
+                draggable={false}
+                className="absolute select-none"
+                style={{
+                  width: img.naturalWidth,
+                  height: img.naturalHeight,
+                  left: '50%',
+                  top: '50%',
+                  transform: 'translate(-50%, -50%)',
+                }}
+              />
+            ) : (
+              <img src={url} alt={name} draggable={false} className="w-full h-full select-none" style={{ objectFit: fit }} />
+            )
+          ) : (
+            <div className="w-full h-full rounded" style={{ background: sp?.color }} />
+          )}
+          {clickable && (
+            <div className="absolute inset-0 ring-2 ring-amber-400/0 group-hover:ring-amber-400/70 rounded transition-all" />
+          )}
         </div>
       )}
       {/* digit badge once discovered */}
       {obj.digit !== undefined && discovered && (
-        <div className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-amber-500 text-black text-xs font-bold flex items-center justify-center shadow">
+        <div className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-amber-500 text-black text-xs font-bold flex items-center justify-center shadow pointer-events-none">
           {faDigits(String(obj.digit))}
         </div>
-      )}
-      {clickable && (
-        <div className="absolute inset-0 ring-2 ring-amber-400/0 group-hover:ring-amber-400/70 rounded transition-all pointer-events-none" />
       )}
     </div>
   );
@@ -151,10 +192,12 @@ function SceneStage({
   scene,
   state,
   assets,
+  sprites,
 }: {
   scene: Scene;
   state: SessionState;
   assets: Record<string, Asset>;
+  sprites: Record<string, Sprite>;
 }) {
   const [openViewOf, setOpenViewOf] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -217,10 +260,10 @@ function SceneStage({
         }}
       >
         {view ? (
-          <ViewOverlay scene={scene} state={state} assets={assets} view={view} onClose={() => setOpenViewOf(null)} />
+          <ViewOverlay scene={scene} state={state} assets={assets} sprites={sprites} view={view} onClose={() => setOpenViewOf(null)} />
         ) : (
           <div className="relative w-full h-full" style={{ transform: `scale(${fit * scale})`, transformOrigin: 'top left' }}>
-            <SceneContent scene={scene} state={state} assets={assets} onOpenView={setOpenViewOf} />
+            <SceneContent scene={scene} state={state} assets={assets} sprites={sprites} onOpenView={setOpenViewOf} />
           </div>
         )}
       </div>
@@ -240,27 +283,39 @@ function SceneContent({
   scene,
   state,
   assets,
+  sprites,
   viewId,
   onOpenView,
 }: {
   scene: Scene;
   state: SessionState;
   assets: Record<string, Asset>;
+  sprites: Record<string, Sprite>;
   viewId?: string;
   onOpenView: (objectId: string) => void;
 }) {
-  const W = viewId ? scene.objects.find((o) => o.id === viewId)?.view?.width ?? scene.width : scene.width;
-  const H = viewId ? scene.objects.find((o) => o.id === viewId)?.view?.height ?? scene.height : scene.height;
-  const objects = viewId ? scene.objects.find((o) => o.id === viewId)?.view?.objects ?? [] : scene.objects;
-  const bgUrl = viewId ? scene.objects.find((o) => o.id === viewId)?.view?.backgroundUrl ?? '' : scene.backgroundUrl;
-  const bg = useImage(resolveUrl(bgUrl, assets) || '', 'anonymous')[0];
+  const parent = viewId ? scene.objects.find((o) => o.id === viewId) : undefined;
+  const W = viewId ? parent?.view?.width ?? scene.width : scene.width;
+  const H = viewId ? parent?.view?.height ?? scene.height : scene.height;
+  const objects = viewId ? parent?.view?.objects ?? [] : scene.objects;
+  const bgRef = viewId ? parent?.view?.backgroundUrl ?? '' : scene.backgroundUrl;
+  const bgUrl = spriteSrc(bgRef, sprites, assets);
+  const bgSp = getSprite(bgRef, sprites);
+  const [bg] = useImage(bgUrl || '', 'anonymous');
 
   return (
     <div className="absolute inset-0 overflow-hidden bg-surface-light" style={{ width: W, height: H }}>
-      {bg && <img src={resolveUrl(bgUrl, assets)} alt="" className="absolute inset-0 w-full h-full select-none" />}
+      {/* background: image (cover) or solid color sprite */}
+      {bg ? (
+        <img src={bgUrl} alt="" className="absolute inset-0 w-full h-full object-cover select-none pointer-events-none" />
+      ) : bgSp?.color ? (
+        <div className="absolute inset-0" style={{ background: bgSp.color }} />
+      ) : null}
       {!viewId &&
         scene.backgroundLayers.filter((l) => l.visible).map((l) => {
-          const u = resolveUrl(l.imageUrl, assets);
+          const u = spriteSrc(l.spriteRef, sprites, assets);
+          const lsp = getSprite(l.spriteRef, sprites);
+          if (!u && !lsp?.color) return null;
           return u ? (
             <img
               key={l.id}
@@ -269,10 +324,12 @@ function SceneContent({
               className="absolute select-none pointer-events-none"
               style={{ left: l.offsetX, top: l.offsetY, width: '100%', opacity: l.opacity }}
             />
-          ) : null;
+          ) : (
+            <div key={l.id} className="absolute inset-0 pointer-events-none" style={{ transform: `translate(${l.offsetX}px, ${l.offsetY}px)`, background: lsp?.color, opacity: l.opacity }} />
+          );
         })}
       {objects.map((o) => (
-        <ObjSprite key={o.id} obj={o} state={state} sceneId={scene.id} viewId={viewId} assets={assets} onOpenView={onOpenView} />
+        <ObjSprite key={o.id} obj={o} state={state} sceneId={scene.id} viewId={viewId} assets={assets} sprites={sprites} onOpenView={onOpenView} />
       ))}
     </div>
   );
@@ -283,12 +340,14 @@ function ViewOverlay({
   scene,
   state,
   assets,
+  sprites,
   view,
   onClose,
 }: {
   scene: Scene;
   state: SessionState;
   assets: Record<string, Asset>;
+  sprites: Record<string, Sprite>;
   view: View;
   onClose: () => void;
 }) {
@@ -312,7 +371,7 @@ function ViewOverlay({
   return (
     <div className="w-full h-full relative bg-surface border border-gray-700 rounded-xl overflow-hidden">
       <div className="absolute inset-0">
-        <SceneContent scene={scene} state={state} assets={assets} viewId={parentObj?.id} onOpenView={() => {}} />
+        <SceneContent scene={scene} state={state} assets={assets} sprites={sprites} viewId={parentObj?.id} onOpenView={() => {}} />
       </div>
       <div className="absolute top-2 right-2 left-2 flex items-center justify-between z-10" dir="rtl">
         <span className="bg-black/60 text-xs px-2 py-1 rounded-lg">{view.title}</span>
@@ -338,21 +397,29 @@ function InventoryPanel() {
   const scenes = usePlayerStore((s) => s.scenes);
   const projectId = usePlayerStore((s) => s.session?.projectId);
   const assets = usePlayerStore((s) => s.assets);
+  const sprites = usePlayerStore((s) => s.sprites);
 
   const itemMeta = useMemo(() => {
-    const m: Record<string, { name: string; url: string }> = {};
+    const m: Record<string, { name: string; url: string; color?: string }> = {};
     if (!projectId) return m;
     const walk = (objs: SceneObject[]) => {
       for (const o of objs) {
-        if (o.grantsItem && !m[o.grantsItem]) m[o.grantsItem] = { name: o.name, url: resolveUrl(o.imageUrl, assets) };
-        if (o.pickupable && !m[o.pickupItemId || o.id]) m[o.pickupItemId || o.id] = { name: o.name, url: resolveUrl(o.imageUrl, assets) };
-        o.transforms?.forEach((t) => { if (t.grantsItem && !m[t.grantsItem]) m[t.grantsItem] = { name: `${o.name} ✨`, url: resolveUrl(t.newImageUrl || o.imageUrl, assets) }; });
+        const sp = getSprite(o.spriteRef, sprites);
+        const u = spriteSrc(o.spriteRef, sprites, assets);
+        if (o.grantsItem && !m[o.grantsItem]) m[o.grantsItem] = { name: o.name, url: u, color: sp?.color };
+        if (o.pickupable && !m[o.pickupItemId || o.id]) m[o.pickupItemId || o.id] = { name: o.name, url: u, color: sp?.color };
+        o.transforms?.forEach((t) => {
+          if (t.grantsItem && !m[t.grantsItem]) {
+            const tref = t.newSpriteId ? `sprite:${t.newSpriteId}` : o.spriteRef;
+            m[t.grantsItem] = { name: `${o.name} ✨`, url: spriteSrc(tref, sprites, assets), color: getSprite(tref, sprites)?.color };
+          }
+        });
         if (o.view) walk(o.view.objects);
       }
     };
     Object.values(scenes).filter((sc) => sc.projectId === projectId).forEach((sc) => walk(sc.objects));
     return m;
-  }, [scenes, projectId, assets]);
+  }, [scenes, projectId, assets, sprites]);
 
   return (
     <div className="bg-surface border-t border-gray-700 px-3 py-2 flex items-center gap-2 min-h-[64px] overflow-x-auto" dir="rtl">
@@ -371,6 +438,8 @@ function InventoryPanel() {
           >
             {meta?.url ? (
               <img src={meta.url} alt="" className="w-full h-full object-contain p-0.5" />
+            ) : meta?.color ? (
+              <div className="w-full h-full rounded-md" style={{ background: meta.color }} title={meta.name} />
             ) : (
               <span className="text-[9px] text-gray-300 px-0.5 truncate">{meta?.name ?? itemName([], id)}</span>
             )}
@@ -456,6 +525,7 @@ export default function Player({ projectName }: { projectName: string }) {
   const session = usePlayerStore((s) => s.session);
   const scenes = usePlayerStore((s) => s.scenes);
   const assets = usePlayerStore((s) => s.assets);
+  const sprites = usePlayerStore((s) => s.sprites);
   const switchScene = usePlayerStore((s) => s.switchScene);
   const [tab, setTab] = useState<'rooms' | 'exit'>('rooms');
 
@@ -516,7 +586,7 @@ export default function Player({ projectName }: { projectName: string }) {
         {tab === 'exit' ? (
           <FinalLock />
         ) : currentScene ? (
-          <SceneStage key={currentScene.id} scene={currentScene} state={session.state} assets={assets} />
+          <SceneStage key={currentScene.id} scene={currentScene} state={session.state} assets={assets} sprites={sprites} />
         ) : (
           <div className="h-full flex items-center justify-center text-gray-500 text-sm" dir="rtl">اتاقی وجود ندارد — در استودیو بسازید.</div>
         )}
