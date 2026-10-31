@@ -3,6 +3,7 @@ import { Stage, Layer, Image as KImage, Rect } from 'react-konva';
 import { useScene, useStudioStore } from '../stores/store';
 import type { Asset, BackgroundLayer, SceneObject, Sprite, View } from '../shared/types';
 import { getSprite, resolveSprite } from '../shared/types';
+import { frameNodeAttrs, imageNodeAttrs } from '../shared/geometry';
 import { Bg, useSrc } from './konva-bits';
 import { useElementSize } from './ui';
 
@@ -11,30 +12,47 @@ function PObj({ obj, found, onClick, sprites, assets }: { obj: SceneObject; foun
   const sp = getSprite(obj.spriteRef, sprites);
   const img = useSrc(url);
   if (!obj.visible || (found && obj.oneTimeUse)) return null;
+  const click = { onClick, onTap: onClick };
+  const nat = img && img.naturalWidth > 0 ? { width: img.naturalWidth, height: img.naturalHeight } : null;
   // color-only sprite fallback
-  if (!img) {
+  if (!img || !nat) {
     if (!sp?.color) return null;
-    return <Rect x={obj.x} y={obj.y} width={obj.width} height={obj.height} rotation={obj.rotation} fill={sp.color} onClick={onClick} onTap={onClick} />;
+    return <Rect {...frameNodeAttrs(obj)} fill={sp.color} {...click} />;
   }
+  // image drawn at natural size x transform (same math as Studio/Player); hit area = frame (default) or image
+  const imageHit = obj.hitArea === 'image';
   return (
-    <KImage
-      image={img}
-      x={obj.x}
-      y={obj.y}
-      width={obj.width}
-      height={obj.height}
-      rotation={obj.rotation}
-      onClick={onClick}
-      onTap={onClick}
-      onMouseEnter={(e) => {
-        const c = e.target.getStage()?.container();
-        if (c) c.style.cursor = 'pointer';
-      }}
-      onMouseLeave={(e) => {
-        const c = e.target.getStage()?.container();
-        if (c) c.style.cursor = 'default';
-      }}
-    />
+    <>
+      <KImage
+        image={img}
+        {...imageNodeAttrs(obj, nat)}
+        listening={imageHit}
+        {...(imageHit ? click : {})}
+        onMouseEnter={(e) => {
+          const c = e.target.getStage()?.container();
+          if (c) c.style.cursor = 'pointer';
+        }}
+        onMouseLeave={(e) => {
+          const c = e.target.getStage()?.container();
+          if (c) c.style.cursor = 'default';
+        }}
+      />
+      {!imageHit && (
+        <Rect
+          {...frameNodeAttrs(obj)}
+          fill="rgba(0,0,0,0)"
+          {...click}
+          onMouseEnter={(e) => {
+            const c = e.target.getStage()?.container();
+            if (c) c.style.cursor = 'pointer';
+          }}
+          onMouseLeave={(e) => {
+            const c = e.target.getStage()?.container();
+            if (c) c.style.cursor = 'default';
+          }}
+        />
+      )}
+    </>
   );
 }
 

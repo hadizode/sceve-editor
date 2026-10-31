@@ -2,107 +2,101 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Konva from 'konva';
 import { Stage, Layer, Image as KImage, Rect, Text, Transformer, Shape } from 'react-konva';
 import { useCtx, useScene, useStudioStore } from '../stores/store';
-import { TYPE_COLORS, type SceneObject } from '../shared/types';
+import { type SceneObject } from '../shared/types';
 import { clamp, fileToImage } from '../shared/utils';
+import { frameNodeAttrs, imageNodeAttrs, patchFromFrameNode, patchFromImageNode, visualBounds } from '../shared/geometry';
 import { Bg, useSrc, useSpriteOf } from './konva-bits';
 import { isTyping, useElementSize } from './ui';
 
 const st = () => useStudioStore.getState();
 
+type Kind = 'image' | 'frame';
+
 interface NodeProps {
   obj: SceneObject;
   zoom: number;
-  showLabel: boolean;
-  dragging: boolean;
-  register: (id: string, node: Konva.Rect | null) => void;
+  register: (id: string, node: Konva.Node | null, kind: Kind) => void;
   onSelect: (id: string, multi: boolean) => void;
   onDragStart: (id: string) => void;
   onDragMove: (id: string) => void;
   onDragEnd: () => void;
 }
 
+function useNat(ref: string) {
+  const img = useSrc(ref);
+  const nat = img && img.naturalWidth > 0 ? { width: img.naturalWidth, height: img.naturalHeight } : null;
+  return { img, nat };
+}
+
 /**
- * A scene object rendered as a hit-box Rect + inner visual.
- * - The Rect is always the object's exact width×height → draggable/transformable/clickable area.
- * - The visual (image or solid color sprite) is drawn inside it; when the sprite has
- *   `overflow`, the image is drawn at its natural size centered on the box and may extend
- *   beyond it — but the clickable area stays the box.
+ * Image sprites: the interactive node IS the image, drawn at natural size x transform
+ * (never fitted to the frame, never clipped). Image-less sprites (colour / invisible hotspot):
+ * the interactive node is the frame itself.
  */
-function ObjNode({ obj, zoom, showLabel, dragging, register, onSelect, onDragStart, onDragMove, onDragEnd }: NodeProps) {
-  const img = useSrc(obj.spriteRef);
+function ObjNode({ obj, zoom, register, onSelect, onDragStart, onDragMove, onDragEnd }: NodeProps) {
+  const { img, nat } = useNat(obj.spriteRef);
   const sp = useSpriteOf(obj.spriteRef);
-  const ref = useRef<Konva.Rect>(null);
+  const imgRef = useRef<Konva.Image>(null);
+  const frameRef = useRef<Konva.Rect>(null);
+  const hasImage = !!img && !!nat;
   useEffect(() => {
-    register(obj.id, ref.current);
-    return () => register(obj.id, null);
-  }, [obj.id, register]);
+    register(obj.id, hasImage ? imgRef.current : frameRef.current, hasImage ? 'image' : 'frame');
+    return () => register(obj.id, null, 'frame');
+  }, [obj.id, hasImage, register]);
 
-  const overflow = !!sp?.overflow && !!img;
-  const iw = overflow ? img.naturalWidth : obj.width;
-  const ih = overflow ? img.naturalHeight : obj.height;
-  const ix = overflow ? obj.width / 2 - iw / 2 : 0;
-  const iy = overflow ? obj.height / 2 - ih / 2 : 0;
-  const hasVisual = !!img || !!sp?.color;
+  const common = {
+    id: obj.id,
+    opacity: obj.visible ? 1 : 0.4,
+    draggable: !obj.locked,
+    onMouseDown: (e: Konva.KonvaEventObject<MouseEvent>) => onSelect(obj.id, e.evt.shiftKey || e.evt.ctrlKey || e.evt.metaKey),
+    onTouchStart: () => onSelect(obj.id, false),
+    onDragStart: () => onDragStart(obj.id),
+    onDragMove: () => onDragMove(obj.id),
+    onDragEnd,
+    onMouseEnter: (e: Konva.KonvaEventObject<MouseEvent>) => {
+      const c = e.target.getStage()?.container();
+      if (c) c.style.cursor = obj.locked ? 'not-allowed' : 'move';
+    },
+    onMouseLeave: (e: Konva.KonvaEventObject<MouseEvent>) => {
+      const c = e.target.getStage()?.container();
+      if (c) c.style.cursor = 'default';
+    },
+  };
 
+  if (hasImage) {
+    return (
+      <>
+        {sp?.color && <Rect {...frameNodeAttrs(obj)} fill={sp.color} opacity={obj.visible ? 1 : 0.4} listening={false} />}
+        <KImage ref={imgRef} image={img} {...imageNodeAttrs(obj, nat!)} {...common} />
+      </>
+    );
+  }
+  return (
+    <Rect
+      ref={frameRef}
+      {...frameNodeAttrs(obj)}
+      {...common}
+      fill={sp?.color ?? 'rgba(99,102,241,0.08)'}
+      stroke={sp?.color ? undefined : '#64748b'}
+      dash={sp?.color ? undefined : [4, 3]}
+      strokeWidth={(sp?.color ? 0 : 1) / zoom}
+    />
+  );
+}
+
+/** Non-interactive extras (frame outline + label) live in their own layer above the sprites. */
+function ObjOverlay({ obj, zoom, selected, showLabel }: { obj: SceneObject; zoom: number; selected: boolean; showLabel: boolean }) {
+  const { nat } = useNat(obj.spriteRef);
+  const vb = visualBounds(obj, nat);
   return (
     <>
-      <Rect
-        ref={ref}
-        id={obj.id}
-        x={obj.x}
-        y={obj.y}
-        width={obj.width}
-        height={obj.height}
-        rotation={obj.rotation}
-        fill={hasVisual ? 'rgba(0,0,0,0)' : 'rgba(99,102,241,0.08)'}
-        stroke={hasVisual ? undefined : '#64748b'}
-        dash={hasVisual ? undefined : [4, 3]}
-        strokeWidth={(hasVisual ? 0 : 1) / zoom}
-        opacity={obj.visible ? 1 : 0.35}
-        draggable={!obj.locked}
-        onMouseDown={(e) => onSelect(obj.id, e.evt.shiftKey || e.evt.ctrlKey || e.evt.metaKey)}
-        onTouchStart={() => onSelect(obj.id, false)}
-        onDragStart={() => onDragStart(obj.id)}
-        onDragMove={() => onDragMove(obj.id)}
-        onDragEnd={onDragEnd}
-        onMouseEnter={(e) => {
-          const c = e.target.getStage()?.container();
-          if (c) c.style.cursor = obj.locked ? 'not-allowed' : 'move';
-        }}
-        onMouseLeave={(e) => {
-          const c = e.target.getStage()?.container();
-          if (c) c.style.cursor = 'default';
-        }}
-      />
-      {/* visual layers — never listen for events so the hit-box owns interaction */}
-      {!dragging && sp?.color ? (
-        <Rect
-          x={obj.x}
-          y={obj.y}
-          width={obj.width}
-          height={obj.height}
-          rotation={obj.rotation}
-          fill={sp.color}
-          opacity={obj.visible ? 1 : 0.3}
-          listening={false}
-        />
-      ) : null}
-      {!dragging && img ? (
-        <KImage
-          image={img}
-          x={obj.x + ix}
-          y={obj.y + iy}
-          width={iw}
-          height={ih}
-          rotation={obj.rotation}
-          opacity={obj.visible ? 1 : 0.3}
-          listening={false}
-        />
-      ) : null}
-      {showLabel && !dragging && (
+      {selected && nat && (
+        <Rect {...frameNodeAttrs(obj)} stroke="#f59e0b" strokeWidth={1 / zoom} dash={[4 / zoom, 3 / zoom]} listening={false} />
+      )}
+      {showLabel && (
         <Text
-          x={obj.x}
-          y={obj.y - 14 / zoom}
+          x={vb.x}
+          y={vb.y - 14 / zoom}
           text={`${obj.locked ? '🔒 ' : ''}${obj.name}${obj.view ? ' 🔍' : ''}`}
           fontSize={11 / zoom}
           fill="#e2e8f0"
@@ -128,8 +122,9 @@ export default function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const trRef = useRef<Konva.Transformer>(null);
-  const nodes = useRef(new Map<string, Konva.Rect>());
-  const dragRef = useRef<{ pos: Map<string, { x: number; y: number }> } | null>(null);
+  const nodes = useRef(new Map<string, Konva.Node>());
+  const kinds = useRef(new Map<string, Kind>());
+  const dragRef = useRef<{ pos: Map<string, { x: number; y: number; ox: number; oy: number }> } | null>(null);
   const panRef = useRef<{ x: number; y: number } | null>(null);
   const marqueeAdditive = useRef(false);
 
@@ -139,6 +134,8 @@ export default function Canvas() {
   const [space, setSpace] = useState(false);
   const [panning, setPanning] = useState(false);
   const [dragging, setDragging] = useState(false);
+  // bumped whenever a node (re)mounts (e.g. after its image loads) so the Transformer re-binds
+  const [nodeVer, setNodeVer] = useState(0);
   const [marquee, setMarquee] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
 
   const w = ctx?.width ?? 0;
@@ -194,22 +191,28 @@ export default function Canvas() {
     };
   }, []);
 
-  const register = useCallback((id: string, node: Konva.Rect | null) => {
-    if (node) nodes.current.set(id, node);
-    else nodes.current.delete(id);
+  const register = useCallback((id: string, node: Konva.Node | null, kind: Kind) => {
+    if (node) {
+      nodes.current.set(id, node);
+      kinds.current.set(id, kind);
+    } else {
+      nodes.current.delete(id);
+      kinds.current.delete(id);
+    }
+    setNodeVer((v) => v + 1);
   }, []);
 
-  // bind the single shared Transformer to selected, unlocked nodes
+  // bind the single shared Transformer to selected, unlocked nodes (image nodes wrap the rendered image)
   useEffect(() => {
     const tr = trRef.current;
     if (!tr || !ctx) return;
     const list = ctx.objects
       .filter((o) => selected.includes(o.id) && !o.locked)
       .map((o) => nodes.current.get(o.id))
-      .filter((n): n is Konva.Rect => !!n);
+      .filter((n): n is Konva.Node => !!n);
     tr.nodes(list);
     tr.getLayer()?.batchDraw();
-  }, [selected, ctx, measured]);
+  }, [selected, ctx, measured, nodeVer]);
 
   // ---- object interaction ----
   const onSelect = useCallback((id: string, multi: boolean) => {
@@ -220,33 +223,31 @@ export default function Canvas() {
 
   const onDragStart = useCallback((id: string) => {
     const s = st();
-    const c = ctx;
     const ids = s.selectedObjectIds.includes(id) ? s.selectedObjectIds : [id];
-    const pos = new Map<string, { x: number; y: number }>();
+    const pos = new Map<string, { x: number; y: number; ox: number; oy: number }>();
     ids.forEach((i) => {
       const n = nodes.current.get(i);
-      const locked = c?.objects.find((o) => o.id === i)?.locked;
-      if (n && !locked) pos.set(i, { x: n.x(), y: n.y() });
+      const o = ctx?.objects.find((q) => q.id === i);
+      if (n && o && !o.locked) pos.set(i, { x: n.x(), y: n.y(), ox: o.x, oy: o.y });
     });
     dragRef.current = { pos };
     setDragging(true);
   }, [ctx]);
 
+  // Drags move the FRAME by a delta; the dragged node (image or frame) simply follows that delta.
   const onDragMove = useCallback(
     (id: string) => {
       const d = dragRef.current;
       const node = nodes.current.get(id);
       const start = d?.pos.get(id);
       if (!d || !node || !start) return;
-      let nx = node.x();
-      let ny = node.y();
+      let dx = node.x() - start.x;
+      let dy = node.y() - start.y;
       if (snapToGrid) {
-        nx = Math.round(nx / gridSize) * gridSize;
-        ny = Math.round(ny / gridSize) * gridSize;
-        node.position({ x: nx, y: ny });
+        dx = Math.round((start.ox + dx) / gridSize) * gridSize - start.ox;
+        dy = Math.round((start.oy + dy) / gridSize) * gridSize - start.oy;
+        node.position({ x: start.x + dx, y: start.y + dy });
       }
-      const dx = nx - start.x;
-      const dy = ny - start.y;
       d.pos.forEach((p, i) => {
         if (i !== id) nodes.current.get(i)?.position({ x: p.x + dx, y: p.y + dy });
       });
@@ -260,27 +261,29 @@ export default function Canvas() {
     setDragging(false);
     if (!d) return;
     const patches: Record<string, Partial<SceneObject>> = {};
-    d.pos.forEach((_, i) => {
+    d.pos.forEach((p, i) => {
       const n = nodes.current.get(i);
-      if (n) patches[i] = { x: Math.round(n.x()), y: Math.round(n.y()) };
+      if (n) patches[i] = { x: Math.round(p.ox + (n.x() - p.x)), y: Math.round(p.oy + (n.y() - p.y)) };
     });
     st().updateObjects(patches);
   }, []);
 
   const onTransformEnd = () => {
     const tr = trRef.current;
-    if (!tr) return;
+    if (!tr || !ctx) return;
     const patches: Record<string, Partial<SceneObject>> = {};
     tr.nodes().forEach((n) => {
-      patches[n.id()] = {
-        x: Math.round(n.x()),
-        y: Math.round(n.y()),
-        width: Math.max(5, Math.round(n.width() * n.scaleX())),
-        height: Math.max(5, Math.round(n.height() * n.scaleY())),
-        rotation: Math.round(n.rotation() * 10) / 10,
-      };
-      n.scaleX(1);
-      n.scaleY(1);
+      const o = ctx.objects.find((q) => q.id === n.id());
+      if (!o) return;
+      const attrs = { x: n.x(), y: n.y(), rotation: n.rotation(), scaleX: n.scaleX(), scaleY: n.scaleY() };
+      if (kinds.current.get(o.id) === 'image') {
+        // image scale / rotation / offset change; the logical frame size stays untouched
+        patches[o.id] = patchFromImageNode(o, attrs);
+      } else {
+        patches[o.id] = patchFromFrameNode({ ...attrs, width: n.width(), height: n.height() });
+        n.scaleX(1);
+        n.scaleY(1);
+      }
     });
     st().updateObjects(patches);
   };
@@ -454,8 +457,6 @@ export default function Canvas() {
                 key={o.id}
                 obj={o}
                 zoom={cam.zoom}
-                showLabel={showLabels}
-                dragging={dragging}
                 register={register}
                 onSelect={onSelect}
                 onDragStart={onDragStart}
@@ -488,6 +489,12 @@ export default function Canvas() {
               boundBoxFunc={(oldBox, newBox) => (Math.abs(newBox.width) < 5 || Math.abs(newBox.height) < 5 ? oldBox : newBox)}
               onTransformEnd={onTransformEnd}
             />
+          </Layer>
+          <Layer listening={false}>
+            {!dragging &&
+              ctx.objects.map((o) => (
+                <ObjOverlay key={o.id} obj={o} zoom={cam.zoom} selected={selected.includes(o.id)} showLabel={showLabels} />
+              ))}
           </Layer>
         </Stage>
       ) : (
