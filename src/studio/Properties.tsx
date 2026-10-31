@@ -1,6 +1,6 @@
 import React, { useMemo, useRef } from 'react';
 import { useCtx, useCurrentProject, useProjectAssets, useSprites, useStudioStore } from '../stores/store';
-import { assetRef, spriteRef, blankSprite, createSprite, OBJECT_TYPES, type ObjectType, type SceneObject, type TransformRule } from '../shared/types';
+import { assetRef, spriteRef, blankSprite, type SceneObject, type TransformRule } from '../shared/types';
 import { obtainableItems } from '../shared/validation';
 import { fileToImage } from '../shared/utils';
 import { btnCls, Field, inputCls, ListInput, NumInput, Section } from './ui';
@@ -28,15 +28,17 @@ function Preview({ url }: { url: string }) {
 }
 
 /**
- * Sprite picker — an object's visual can be ANY sprite: an uploaded image, an existing
- * asset, a solid color with no image at all, or fully invisible (image arrives later via
- * a transform rule). Sprites are shared/reusable across objects.
+ * Sprite picker — an object's visual is ANY image from the project's assets (or an upload), a
+ * solid color, or nothing at all (invisible hotspot). There is no predefined sprite list:
+ * a sprite is created on demand from the chosen asset.
  */
 function SpritePicker({ value, onPick }: { value: string; onPick: (ref: string) => void }) {
   const assets = useProjectAssets();
   const sprites = useSprites();
   const file = useRef<HTMLInputElement>(null);
   const current = value.startsWith('sprite:') ? sprites[value.slice(7)] : undefined;
+  // The dropdown shows what is CURRENTLY selected (it used to be bound to the sprite ref, which never matched an option).
+  const selectValue = !value ? '' : current ? (current.assetId ? current.assetId : '__blank__') : value;
 
   const upload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -57,33 +59,25 @@ function SpritePicker({ value, onPick }: { value: string; onPick: (ref: string) 
         <button className={`${btnCls} flex-1`} onClick={() => file.current?.click()}>📁 Upload</button>
         <select
           className={`${inputCls} flex-1`}
-          value={value}
+          value={selectValue}
           onChange={(e) => {
             const v = e.target.value;
-            if (v === '__blank__') onPick(spriteRef(st().addSprite(blankSprite('Blank')) .id));
-            else if (v === '__none__') onPick('');
+            if (v === '__blank__') onPick(spriteRef(st().addSprite(blankSprite('Blank')).id));
+            else if (v === '') onPick('');
             else if (v.startsWith('asset:')) onPick(st().useAssetSprite(v));
             else onPick(v);
           }}
         >
-          <option value="">— no sprite (invisible) —</option>
-          <option value="__blank__">＋ Blank sprite (color only)</option>
-          <optgroup label="Sprites">
-            {Object.values(sprites).map((sp) => (
-              <option key={sp.id} value={spriteRef(sp.id)}>🧩 {sp.name}{sp.color && !sp.assetId ? ' (color)' : ''}</option>
-            ))}
-          </optgroup>
-          <optgroup label="Assets (creates/uses a sprite)">
-            {assets.map((a) => (
-              <option key={a.id} value={assetRef(a.id)}>🖼 {a.name}</option>
-            ))}
-          </optgroup>
+          <option value="">— no image (invisible) —</option>
+          <option value="__blank__">■ Color only</option>
+          {assets.map((a) => (
+            <option key={a.id} value={assetRef(a.id)}>🖼 {a.name}</option>
+          ))}
         </select>
       </div>
       {current && (
         <div className="flex items-center gap-1 text-[11px] text-gray-400">
-          <span className="truncate">sprite: {current.name}</span>
-          <label className="flex items-center gap-1 mr-auto">
+          <label className="flex items-center gap-1">
             <input
               type="checkbox"
               checked={!!current.overflow}
@@ -94,7 +88,7 @@ function SpritePicker({ value, onPick }: { value: string; onPick: (ref: string) 
           </label>
           <input
             type="color"
-            className="w-6 h-6 bg-transparent border-0 p-0 cursor-pointer"
+            className="w-6 h-6 bg-transparent border-0 p-0 cursor-pointer mr-auto"
             value={current.color ?? '#888888'}
             onChange={(e) => st().updateSprite(current.id, { color: e.target.value })}
             title="Solid color fill (works without any image)"
@@ -209,12 +203,12 @@ export function PropertiesPanel() {
   return (
     <div className="p-3 space-y-3 text-sm">
       <datalist id="item-ids">{items.map((i) => <option key={i} value={i} />)}</datalist>
-      <h3 className="font-bold text-indigo-300 text-base">Object</h3>
+      <h3 className="font-bold text-indigo-300 text-base">Sprite</h3>
 
       <Field label="Name">
         <input className={inputCls} value={obj.name} onChange={(e) => set({ name: e.target.value })} />
       </Field>
-      <Field label="Sprite (visual)">
+      <Field label="Image">
         <SpritePicker value={obj.spriteRef} onPick={(ref) => set({ spriteRef: ref }, `${obj.id}:sprite`)} />
       </Field>
 
@@ -284,11 +278,15 @@ export function PropertiesPanel() {
             <Field label="Requires item">
               <input className={inputCls} list="item-ids" value={t.requiresItem} onChange={(e) => setT(i, { requiresItem: e.target.value })} />
             </Field>
-            <Field label="New sprite (any image / color)">
+            <Field label="New image (after transform)">
               <div className="flex gap-1">
-                <select className={inputCls} value={t.newSpriteId ? spriteRef(t.newSpriteId) : ''} onChange={(e) => setT(i, { newSpriteId: e.target.value ? e.target.value.slice(7) : undefined })}>
+                <select
+                  className={inputCls}
+                  value={t.newSpriteId ? sprites[t.newSpriteId]?.assetId ?? '' : ''}
+                  onChange={(e) => setT(i, { newSpriteId: e.target.value ? st().useAssetSprite(e.target.value).slice(7) : undefined })}
+                >
                   <option value="">(unchanged)</option>
-                  {Object.values(sprites).map((sp) => <option key={sp.id} value={spriteRef(sp.id)}>🧩 {sp.name}</option>)}
+                  {assets.map((a) => <option key={a.id} value={assetRef(a.id)}>🖼 {a.name}</option>)}
                 </select>
                 <button className={btnCls} title="Upload a new image as the post-transform sprite" onClick={async () => {
                   const inp = document.createElement('input');
@@ -342,7 +340,7 @@ export function PropertiesPanel() {
       </Section>
 
       <button className="w-full bg-red-700 hover:bg-red-600 text-white px-2 py-1.5 rounded text-xs mt-2" onClick={() => st().deleteObjects([obj.id])}>
-        Delete object
+        Delete sprite
       </button>
       {viewOf && null}
     </div>

@@ -6,7 +6,7 @@ import {
   useScene,
   useStudioStore,
 } from '../stores/store';
-import { assetRef, TYPE_COLORS, type BackgroundLayer } from '../shared/types';
+import { assetRef, TYPE_COLORS, type Asset, type BackgroundLayer } from '../shared/types';
 import { validateProject, type Issue } from '../shared/validation';
 import { fileToImage, uid } from '../shared/utils';
 import { btnCls, Field, inputCls, NumInput } from './ui';
@@ -17,6 +17,22 @@ const st = () => useStudioStore.getState();
 function Thumb({ url, className = '' }: { url: string; className?: string }) {
   const src = useResolved(url);
   return src ? <img src={src} alt="" className={`object-contain ${className}`} /> : <div className={`bg-gray-800 ${className}`} />;
+}
+
+/** Real pixel size of an image (stored asset sizes can be placeholders, e.g. 80×80 for seed assets). */
+function measure(url: string): Promise<{ w: number; h: number } | null> {
+  return new Promise((res) => {
+    const i = new Image();
+    i.onload = () => res({ w: i.naturalWidth || 0, h: i.naturalHeight || 0 });
+    i.onerror = () => res(null);
+    i.src = url;
+  });
+}
+
+/** Use an asset as background and size the room/view to the image's REAL dimensions. */
+async function applyBackground(a: Asset) {
+  const m = await measure(a.url);
+  st().setBackground(assetRef(a.id), m?.w || a.width, m?.h || a.height);
 }
 
 async function pickImages(e: React.ChangeEvent<HTMLInputElement>) {
@@ -109,6 +125,7 @@ export function RoomProps() {
 export function BackgroundPanel() {
   const ctx = useCtx();
   const assets = useProjectAssets();
+  const sprites = useStudioStore((s) => s.sprites);
   const file = useRef<HTMLInputElement>(null);
   const label = ctx?.view ? 'View background' : 'Background';
   const upload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -117,6 +134,10 @@ export function BackgroundPanel() {
     const a = st().addAsset(img);
     st().setBackground(assetRef(a.id), img.width, img.height);
   };
+  // Show the CURRENT background in the dropdown (it used to be hard-wired to "" so it always looked empty).
+  const bg = ctx?.backgroundUrl ?? '';
+  const bgAsset = bg.startsWith('sprite:') ? sprites[bg.slice(7)]?.assetId ?? '' : bg;
+  const current = bgAsset.startsWith('asset:') ? bgAsset.slice(6) : '';
   return (
     <div className="p-3 border-b border-gray-700 space-y-2">
       <h3 className="text-xs font-bold text-gray-400">{label}</h3>
@@ -124,16 +145,17 @@ export function BackgroundPanel() {
       <button className={`${btnCls} w-full`} onClick={() => file.current?.click()}>📁 Upload image (sets size)</button>
       <select
         className={inputCls}
-        value=""
+        value={current}
         onChange={(e) => {
           const a = assets.find((x) => x.id === e.target.value);
-          if (a) st().setBackground(assetRef(a.id), a.width, a.height);
+          if (a) void applyBackground(a);
         }}
       >
-        <option value="">Pick from assets…</option>
+        <option value="">{bg ? '(current background)' : 'Pick from assets…'}</option>
         {assets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
       </select>
-      {ctx?.backgroundUrl && (
+      {bg && <Thumb url={bg} className="w-full h-16 rounded" />}
+      {bg && (
         <button className={`${btnCls} w-full`} onClick={() => ctx && st().setBackground('', ctx.width, ctx.height)}>Clear background</button>
       )}
     </div>
@@ -255,7 +277,7 @@ export function AssetsPanel() {
             <div className="flex gap-0.5 mt-1">
               <button className={`${btnCls} flex-1 px-0`} title="Add to room" onClick={() => st().addObjectFromAsset(a.id)}>＋</button>
               <button className={`${btnCls} flex-1 px-0`} title="Use on selected object" disabled={selected.length === 0} onClick={() => st().updateObjects(Object.fromEntries(selected.map((i) => [i, { spriteRef: st().useAssetSprite(assetRef(a.id), a.name) }])))}>🖼</button>
-              <button className={`${btnCls} flex-1 px-0`} title="Use as background" onClick={() => st().setBackground(assetRef(a.id), a.width, a.height)}>BG</button>
+              <button className={`${btnCls} flex-1 px-0`} title="Use as background" onClick={() => void applyBackground(a)}>BG</button>
               <button className={`${btnCls} flex-1 px-0 text-red-300`} title="Delete" onClick={() => { if (!st().deleteAsset(a.id)) alert('This asset is still used in the project.'); }}>🗑</button>
             </div>
           </div>
