@@ -93,12 +93,12 @@ function ObjSprite({
   onOpenView: (objectId: string) => void;
 }) {
   const discovered = state.discoveredObjects[viewId || sceneId]?.includes(obj.id);
-  const pickupGone = obj.pickupable && state.inventory.includes(obj.pickupItemId || obj.id);
   // Objects that carry a digit (shows its badge once found) or still have transform rules
   // (an item must be usable on them after the first click) must stay on screen after discovery.
   const keepVisible = obj.digit !== undefined || !!obj.transforms?.length;
-  const hidden =
-    !obj.visible || (!keepVisible && ((!!discovered && !obj.view) || (!!pickupGone && !obj.view)));
+  // pickupGone removed: pickupObject already marks the object discovered, so `discovered` covers it
+  // (and checking inventory by itemId would wrongly hide every sibling sharing a pickupItemId).
+  const hidden = !obj.visible || (!keepVisible && !!discovered && !obj.view);
   const tIndex = (state.transformsApplied ?? {})[obj.id] ?? -1;
   const applied = obj.transforms?.[tIndex];
   // After a transform fires, the object takes on the rule's new sprite ("بعد از ترنسفورم عکس بگیرن").
@@ -412,7 +412,8 @@ function InventoryPanel() {
         const sp = getSprite(o.spriteRef, sprites);
         const u = spriteSrc(o.spriteRef, sprites, assets);
         if (o.grantsItem && !m[o.grantsItem]) m[o.grantsItem] = { name: o.name, url: u, color: sp?.color };
-        if (o.pickupable && !m[o.pickupItemId || o.id]) m[o.pickupItemId || o.id] = { name: o.name, url: u, color: sp?.color };
+        const key = o.pickupItemId || o.id;
+        if (o.pickupable && !m[key]) m[key] = { name: o.name, url: u, color: sp?.color };
         o.transforms?.forEach((t) => {
           if (t.grantsItem && !m[t.grantsItem]) {
             const tref = t.newSpriteId ? transformRef(t.newSpriteId) : o.spriteRef;
@@ -426,17 +427,20 @@ function InventoryPanel() {
     return m;
   }, [scenes, projectId, assets, sprites]);
 
+  // Group duplicates so e.g. 3 collected fuses show one icon with a ×3 counter.
+  const counts = inventory.reduce<Record<string, number>>((a, id) => ((a[id] = (a[id] ?? 0) + 1), a), {});
+
   return (
     <div className="bg-surface border-t border-gray-700 px-3 py-2 flex items-center gap-2 min-h-[64px] overflow-x-auto" dir="rtl">
       <span className="text-xs text-gray-400 shrink-0 ml-1">🎒 کیف:</span>
       {inventory.length === 0 && <span className="text-xs text-gray-600">خالی — بگردید و آیتم پیدا کنید!</span>}
-      {inventory.map((id) => {
+      {Object.keys(counts).map((id) => {
         const meta = itemMeta[id];
         return (
           <button
             key={id}
             onClick={() => selectItem(selectedItem === id ? null : id)}
-            className={`shrink-0 w-12 h-12 rounded-xl border flex items-center justify-center overflow-hidden transition-all ${
+            className={`relative shrink-0 w-12 h-12 rounded-xl border flex items-center justify-center overflow-hidden transition-all ${
               selectedItem === id ? 'border-amber-400 ring-2 ring-amber-400/50 scale-110' : 'border-gray-600 hover:border-gray-400'
             }`}
             title={meta?.name ?? itemName([], id)}
@@ -447,6 +451,9 @@ function InventoryPanel() {
               <div className="w-full h-full rounded-md" style={{ background: meta.color }} title={meta.name} />
             ) : (
               <span className="text-[9px] text-gray-300 px-0.5 truncate">{meta?.name ?? itemName([], id)}</span>
+            )}
+            {counts[id] > 1 && (
+              <span className="absolute -bottom-1 -left-1 bg-amber-500 text-black text-[10px] rounded-full px-1">×{counts[id]}</span>
             )}
           </button>
         );

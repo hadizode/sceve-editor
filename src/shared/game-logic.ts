@@ -82,16 +82,17 @@ export function pickupObject(
   // This is what transform rules' `requiresItem` and validation compare against, so it must stay an id —
   // never the object's display name.
   const itemId = obj.pickupItemId || obj.id;
-  let newInventory = [...state.inventory];
 
-  if (newInventory.includes(itemId)) {
+  // Block re-picking the *same* object instance, but not a second object that shares its pickupItemId.
+  const sceneDiscovered = state.discoveredObjects[sceneId] || [];
+  if (sceneDiscovered.includes(objectId)) {
     return { newState: state, success: false, message: 'این مورد قبلاً برداشته شده' };
   }
 
-  newInventory.push(itemId);
+  // چند شیء می‌توانند یک pickupItemId داشته باشند (مثل ۳ فیوز) → تکراری مجاز است
+  const newInventory = [...state.inventory, itemId];
 
   // Mark as discovered so it disappears
-  const sceneDiscovered = state.discoveredObjects[sceneId] || [];
   const newDiscoveredObjects = {
     ...state.discoveredObjects,
     [sceneId]: [...sceneDiscovered, objectId],
@@ -110,6 +111,16 @@ export function pickupObject(
     itemId,
   };
 }
+
+/**
+ * Remove exactly ONE occurrence of an item from the inventory.
+ * (Array.filter would drop every duplicate — e.g. 3 collected fuses — which is wrong when
+ * multiple objects share a pickupItemId.)
+ */
+const removeOne = (inv: string[], id: string) => {
+  const i = inv.indexOf(id);
+  return i < 0 ? inv : [...inv.slice(0, i), ...inv.slice(i + 1)];
+};
 
 /**
  * Apply an inventory item to an object (with transform support).
@@ -148,7 +159,7 @@ export function applyItemToObject(
         
         // Consume item if specified (default: true)
         if (rule.consumesItem !== false) {
-          newInventory = newInventory.filter((i: string) => i !== itemId);
+          newInventory = removeOne(newInventory, itemId);
         }
         
         // Grant new item if specified
@@ -198,7 +209,7 @@ export function applyItemToObject(
   // Remove used item from inventory if oneTimeUse
   let newInventory = [...state.inventory];
   if (obj.oneTimeUse) {
-    newInventory = newInventory.filter((i: string) => i !== itemId);
+    newInventory = removeOne(newInventory, itemId);
   }
 
   const newDiscoveredObjects = {
