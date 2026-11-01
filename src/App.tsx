@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import Studio from './studio/Studio';
 import Player from './player/Player';
 import { useStudioStore } from './stores/store';
+import { Toasts } from './shared/notify';
 
 type Tab = 'studio' | 'game';
 
@@ -21,22 +22,24 @@ export default function App() {
   return (
     <div className="h-screen flex flex-col bg-gray-900 text-white">
       {/* Top navigation: Studio <-> Game */}
-      <nav className="flex items-center gap-1 px-3 py-1.5 bg-surface border-b border-gray-700 flex-shrink-0">
+      <nav className="flex items-center gap-1 px-3 py-1.5 bg-surface border-b border-line flex-shrink-0" aria-label="ناوبری اصلی">
         <span className="text-xs font-bold text-indigo-300 ml-2 select-none">اتاق فرار</span>
         <button
-          className={`px-3 py-1 rounded-lg text-sm ${tab === 'studio' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+          aria-current={tab === 'studio' ? 'page' : undefined}
+          className={`px-3 py-1 rounded-lg text-sm ${tab === 'studio' ? 'bg-primary text-white' : 'text-gray-400 hover:text-white hover:bg-surface-hover'}`}
           onClick={() => setTab('studio')}
         >
           🛠 استودیو
         </button>
         <button
-          className={`px-3 py-1 rounded-lg text-sm ${tab === 'game' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+          aria-current={tab === 'game' ? 'page' : undefined}
+          className={`px-3 py-1 rounded-lg text-sm ${tab === 'game' ? 'bg-primary text-white' : 'text-gray-400 hover:text-white hover:bg-surface-hover'}`}
           onClick={() => setTab('game')}
         >
           🎮 بازی
         </button>
         {tab === 'game' && projectId && (
-          <span className="mr-auto text-xs text-gray-500 truncate max-w-[40vw]" dir="rtl">
+          <span className="mr-auto text-xs text-gray-400 truncate max-w-[40vw]" dir="rtl">
             در حال بازی: {projectName}
           </span>
         )}
@@ -44,7 +47,7 @@ export default function App() {
 
       <div className="flex-1 min-h-0 relative overflow-hidden">
         {!hydrated ? (
-          <div className="h-full flex items-center justify-center text-gray-400">Loading…</div>
+          <div className="h-full flex items-center justify-center text-gray-400">در حال بارگذاری…</div>
         ) : tab === 'studio' ? (
           <Studio />
         ) : projectId ? (
@@ -54,7 +57,7 @@ export default function App() {
             <p className="text-lg">🎮 هیچ پروژه‌ای باز نیست</p>
             <p className="text-sm">ابتدا در استودیو یک پروژه را باز یا بسازید، سپس به تب بازی بروید.</p>
             <button
-              className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-sm"
+              className="bg-primary hover:bg-primary-dark text-white px-4 py-2 rounded-xl text-sm"
               onClick={() => setTab('studio')}
             >
               رفتن به استودیو →
@@ -62,6 +65,8 @@ export default function App() {
           </div>
         )}
       </div>
+
+      <Toasts />
     </div>
   );
 }
