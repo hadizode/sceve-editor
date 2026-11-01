@@ -1,6 +1,6 @@
 import React, { useMemo, useRef } from 'react';
 import { useCtx, useCurrentProject, useProjectAssets, useSprites, useStudioStore } from '../stores/store';
-import { assetRef, spriteRef, transformRef, blankSprite, type SceneObject, type Sprite, type TransformEffect, type TransformRule } from '../shared/types';
+import { assetRef, spriteRef, transformRef, blankSprite, type SceneObject, type Sprite, type TransformCondition, type TransformEffect, type TransformRule } from '../shared/types';
 import { btnCls, Field, inputCls, ListInput, NumInput, Section } from './ui';
 import { useResolved } from './konva-bits';
 import { fileToImage } from '../shared/utils';
@@ -192,6 +192,80 @@ function EffectsEditor({ effects, onChange }: { effects: TransformEffect[]; onCh
   );
 }
 
+// ---------- Conditions editor (rule gating: "only when ALL of these are transformed / held") ----------
+/**
+ * A condition is a logical AND of prerequisites that must hold before a transform rule may fire.
+ * The classic case: "if all three fuses AND the connector have been transformed → transform this
+ * panel's sprite". Prerequisites can point at objects in ANY room of the project.
+ */
+function ConditionsEditor({ cond, onChange }: { cond?: TransformCondition; onChange: (next: TransformCondition | undefined) => void }) {
+  const allObjs = useProjectObjects();
+  const objs = cond?.transformedObjects ?? [];
+  const items = cond?.itemsInInventory ?? [];
+
+  const setObjs = (list: TransformCondition['transformedObjects']) => {
+    const next: TransformCondition = { ...cond, transformedObjects: list?.length ? list : undefined };
+    if (!next.transformedObjects && !next.itemsInInventory?.length) onChange(undefined);
+    else onChange(next);
+  };
+  const setItems = (list: string[]) => {
+    const next: TransformCondition = { ...cond, itemsInInventory: list.length ? list : undefined };
+    if (!next.transformedObjects && !next.itemsInInventory) onChange(undefined);
+    else onChange(next);
+  };
+  // Don't offer the same object twice.
+  const usedIds = new Set(objs.map((e) => `${e.sceneId ?? ''}|${e.objectId}`));
+
+  return (
+    <div className="space-y-2 bg-surface rounded p-2 border border-amber-700/40">
+      <p className="text-[11px] font-bold text-amber-300">🔐 Condition — only fire when ALL of these hold (empty = always)</p>
+
+      {objs.map((e, i) => {
+        const key = `${e.sceneId ?? ''}|${e.objectId}`;
+        return (
+          <div key={i} className="flex gap-1 items-center">
+            <select
+              className={`${inputCls} flex-1`}
+              value={key}
+              onChange={(ev) => {
+                const [sid, oid] = ev.target.value.split('|');
+                setObjs(objs.map((x, j) => (j === i ? { sceneId: sid || undefined, objectId: oid, minRule: x.minRule } : x)));
+              }}
+            >
+              <option value="">— choose object —</option>
+              {allObjs
+                .filter((t) => t.obj.transforms?.length && (!usedIds.has(t.key) || t.key === key))
+                .map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {shortName(t.sceneTitle)} › {shortName(t.objTitle)} ({t.obj.transforms!.length} rule{t.obj.transforms!.length > 1 ? 's' : ''})
+                  </option>
+                ))}
+            </select>
+            <span className="text-[10px] text-gray-400 shrink-0" title="Which rule of that object must already be applied (0 = first rule)">rule≥</span>
+            <div className="w-14 shrink-0">
+              <NumInput value={(e.minRule ?? 0) + 1} min={1} onChange={(n) => setObjs(objs.map((x, j) => (j === i ? { ...x, minRule: Math.max(0, Math.floor(n)) - 1 } : x)))} />
+            </div>
+            <button className="text-red-400 hover:text-red-300 shrink-0" onClick={() => setObjs(objs.filter((_, j) => j !== i))}>✕</button>
+          </div>
+        );
+      })}
+      {objs.some((e) => e.objectId && !allObjs.some((t) => t.obj.id === e.objectId)) && (
+        <p className="text-[10px] text-orange-400">⚠ Some prerequisite objects no longer exist — re-select them.</p>
+      )}
+      <button
+        className={`${btnCls} w-full border border-amber-700/60 text-amber-200 text-[11px]`}
+        onClick={() => setObjs([...objs, { objectId: '', minRule: 0 }])}
+      >
+        + Object must be transformed
+      </button>
+
+      <Field label="…and these items must be in the inventory (comma separated)">
+        <ListInput value={items} onChange={setItems} placeholder="fuse, connector" />
+      </Field>
+    </div>
+  );
+}
+
 // ---------- Door editor ----------
 function DoorSection({ obj, set }: { obj: SceneObject; set: (p: Partial<SceneObject>, key?: string) => void }) {
   const project = useCurrentProject();
@@ -282,6 +356,11 @@ function TransitionsEditor({ obj, set }: { obj: SceneObject; set: (p: Partial<Sc
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-300">
                 <label className="flex items-center gap-2"><input type="checkbox" checked={t.consumesItem !== false} onChange={(e) => setT(i, { consumesItem: e.target.checked })} />Consumes item</label>
                 <label className="flex items-center gap-2"><input type="checkbox" checked={!!t.triggersDiscovery} onChange={(e) => setT(i, { triggersDiscovery: e.target.checked })} />Counts as discovery</label>
+              </div>
+
+              {/* per-rule CONDITIONS — gate the rule behind other objects' transforms / inventory */}
+              <div className="border-t border-amber-900/50 pt-2">
+                <ConditionsEditor cond={t.conditions} onChange={(next) => setT(i, { conditions: next })} />
               </div>
 
               {/* per-rule TRANSITION EFFECTS — the heart of the separate transitions engine */}

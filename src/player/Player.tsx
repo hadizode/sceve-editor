@@ -9,7 +9,7 @@ import { cssMatrix, frameMatrix, imageMatrix } from '../shared/geometry';
 /** Resolve a sprite/image ref to the concrete image URL ('' when the sprite has no image). */
 const spriteSrc = (ref: string | undefined, sprites: Record<string, Sprite>, assets: Record<string, Asset>) =>
   ref ? resolveSprite(ref, sprites, assets) : '';
-import { allRoomsComplete } from '../shared/game-logic';
+import { allRoomsComplete, checkTransformCondition } from '../shared/game-logic';
 
 const faDigits = (s: string) => s.replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[+d]);
 
@@ -105,11 +105,15 @@ function ObjSprite({
   // Effects can also transform OTHER objects automatically — the engine records those under the same
   // `transformsApplied` map, so we show that rule's visuals too when no direct rule has fired yet.
   const autoRule = applied ? undefined : obj.transforms?.[Math.max(tIndex, 0)];
+  // Rules gated by conditions only take visual effect once their prerequisites hold (e.g. "the panel
+  // lights up as soon as ALL three fuses + the connector are transformed") — even when the engine
+  // already recorded the automatic application for this object.
   const shown = applied ?? (tIndex >= 0 ? autoRule : undefined);
-  const ref = shown?.newSpriteId ? transformRef(shown.newSpriteId) : obj.spriteRef;
+  const shownOk = !!shown && checkTransformCondition(shown.conditions, state);
+  const ref = shownOk && shown?.newSpriteId ? transformRef(shown.newSpriteId) : obj.spriteRef;
   const sp = getSprite(ref, sprites);
   const url = spriteSrc(ref, sprites, assets);
-  const name = shown?.newName || obj.name;
+  const name = (shownOk ? shown?.newName : undefined) || obj.name;
   const [img] = useImage(url || '', 'anonymous');
   const selectedItem = usePlayerStore((s) => s.selectedItem);
   const clickObject = usePlayerStore((s) => s.clickObject);
@@ -130,8 +134,9 @@ function ObjSprite({
     // (e.g. unlocking), otherwise clicking walks straight through (clickObject handles the door).
     if (obj.door && !selectedItem) { clickObject(obj.id, viewId); return; }
     if (selectedItem) { useItemOnObject(selectedItem, obj.id, viewId); return; }
-    // rule without an item: executes with a simple click
-    if (nextRule && !nextRule.requiresItem) { useItemOnObject(null, obj.id, viewId); return; }
+    // rule without an item: executes with a simple click — but only when its conditions hold;
+    // unmet conditions fall through to useItemOnObject(null, …) which shows the "still missing" hint.
+    if (nextRule && !nextRule.requiresItem && checkTransformCondition(nextRule.conditions, state)) { useItemOnObject(null, obj.id, viewId); return; }
     if (obj.view) { onOpenView(obj.id); return; }
     if (obj.pickupable) { pickup(obj.id, viewId); return; }
     // transform-only object with no message: show a hint instead of staying silent

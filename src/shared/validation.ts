@@ -102,6 +102,21 @@ export function validateProject(
         // An empty requiresItem is valid: it means "no item required" (fires on a plain click).
         if (t.requiresItem && !obtainable.has(t.requiresItem))
           at(`"${o.name}" transform ${i + 1} requires "${t.requiresItem}" but nothing grants it`, 'error', top);
+        // Conditions ("only fire once ALL these objects are transformed / items held") must reference real things.
+        t.conditions?.transformedObjects?.forEach((c, ci) => {
+          const host = c.sceneId ? list.find((s2) => s2.id === c.sceneId) : scene;
+          const target = host ? flattenObjects(host).find((x) => x.id === c.objectId) : undefined;
+          if (!target)
+            at(`"${o.name}" transform ${i + 1} condition #${ci + 1} points at object "${c.objectId || '?'}" that does not exist`, 'error', top);
+          else if (!(target.transforms?.length ?? 0))
+            at(`"${o.name}" transform ${i + 1} waits for "${target.name}" to transform, but it has no transform rules`, 'error', top);
+          else if ((c.minRule ?? 0) >= target.transforms!.length)
+            at(`"${o.name}" transform ${i + 1} waits for rule ${(c.minRule ?? 0) + 1} of "${target.name}" which only has ${target.transforms!.length}`, 'error', top);
+        });
+        t.conditions?.itemsInInventory?.forEach((item) => {
+          if (!obtainable.has(item))
+            at(`"${o.name}" transform ${i + 1} condition needs item "${item}" in the inventory but nothing grants it`, 'error', top);
+        });
       });
       // A sprite that requires an item / transforms should actually do something when interacted with.
       if ((o.requiresItem?.length || o.transforms?.length) && !o.grantsItem && o.digit === undefined && !o.view && !o.message && !o.pickupable)
