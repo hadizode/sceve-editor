@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Konva from 'konva';
 import { Stage, Layer, Image as KImage, Rect, Text, Transformer, Shape, Circle } from 'react-konva';
-import { frameNodeAttrs, imageNodeAttrs, patchFromFrameNode, patchFromImageNode, visualBounds, polygonNodePoints, polyActive, frameMatrix, invert, apply, type Pt } from '../shared/geometry';
+import { frameNodeAttrs, imageNodeAttrs, patchFromFrameNode, patchFromImageNode, visualBounds, polygonNodePoints, polygonCorners, boundsOf, polyActive, konvaHitFunc, frameMatrix, invert, apply, type Pt } from '../shared/geometry';
 import { useCtx, useScene, useStudioStore } from '../stores/store';
 import { type SceneObject } from '../shared/types';
 import { clamp, fileToImage } from '../shared/utils';
@@ -63,7 +63,38 @@ function ObjNode({ obj, zoom, register, onSelect, onDragStart, onDragMove, onDra
     },
   };
 
+  // Polygon frame REPLACES the rect frame as the interactive/hit shape: when a polygon is set,
+  // the draggable node becomes an invisible Konva Shape over the polygon's bounding box whose
+  // hit region is exactly the polygon (clicks/drag outside it don't register). The image and the
+  // color fill are still rendered underneath (non-interactive), clipped to the same polygon.
+  const poly = polyActive(obj);
+  const hitFunc = konvaHitFunc(obj, nat);
+  const pb = poly ? boundsOf(polygonCorners(obj)) : null;
+  const polyShape =
+    poly && pb ? (
+      <Shape
+        ref={frameRef as any}
+        x={pb.x}
+        y={pb.y}
+        width={Math.max(1, pb.width)}
+        height={Math.max(1, pb.height)}
+        hitFunc={hitFunc}
+        {...common}
+      />
+    ) : null;
+
   if (hasImage) {
+    if (poly) {
+      return (
+        <>
+          {sp?.color && (
+            <Rect {...frameNodeAttrs(obj)} fill={sp.color} opacity={obj.visible ? 1 : 0.4} listening={false} clip={{ points: polygonNodePoints(obj) }} />
+          )}
+          <KImage image={img} {...imageNodeAttrs(obj, nat!)} listening={false} clip={{ points: polygonNodePoints(obj) }} />
+          {polyShape}
+        </>
+      );
+    }
     return (
       <>
         {sp?.color && <Rect {...frameNodeAttrs(obj)} fill={sp.color} opacity={obj.visible ? 1 : 0.4} listening={false} />}
@@ -71,6 +102,7 @@ function ObjNode({ obj, zoom, register, onSelect, onDragStart, onDragMove, onDra
       </>
     );
   }
+  if (poly && pb) return polyShape;
   return (
     <Rect
       ref={frameRef}
@@ -333,6 +365,12 @@ export default function Canvas() {
       const o = ctx.objects.find((q) => q.id === n.id());
       if (!o) return;
       const attrs = { x: n.x(), y: n.y(), rotation: n.rotation(), scaleX: n.scaleX(), scaleY: n.scaleY() };
+      if (polyActive(o)) {
+        // polygon hit-shape node sits at the polygon's bounding box — don't treat it as a frame Rect.
+        // Resizing it would desync frame↔polygon-local coords; dragging (delta-based) still works.
+        n.getLayer()?.batchDraw();
+        return;
+      }
       if (kinds.current.get(o.id) === 'image') {
         // image scale / rotation / offset change; the logical frame size stays untouched
         patches[o.id] = patchFromImageNode(o, attrs);

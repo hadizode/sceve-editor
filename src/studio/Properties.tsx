@@ -2,7 +2,7 @@ import React, { useMemo, useRef } from 'react';
 import { useCtx, useCurrentProject, useProjectAssets, useSprites, useStudioStore } from '../stores/store';
 import { assetRef, spriteRef, blankSprite, type FramePoint, type SceneObject } from '../shared/types';
 import { obtainableItems } from '../shared/validation';
-import { fitScale } from '../shared/geometry';
+import { fitScale, polyActive } from '../shared/geometry';
 import { fileToImage } from '../shared/utils';
 import { btnCls, Field, inputCls, ListInput, NumInput, Section } from './ui';
 import { useResolved } from './konva-bits';
@@ -107,6 +107,7 @@ function SpritePicker({ value, onPick }: { value: string; onPick: (ref: string) 
  */
 function ImageSection({ obj, set }: { obj: SceneObject; set: (p: Partial<SceneObject>, key?: string) => void }) {
   const src = useResolved(obj.spriteRef);
+  const polyActiveObj = polyActive(obj); // polygon frame auto-replaces the rect as hit area
   const fit = () => {
     const i = new Image();
     i.onload = () => i.naturalWidth && set(fitScale(obj, { width: i.naturalWidth, height: i.naturalHeight }));
@@ -177,11 +178,13 @@ function ImageSection({ obj, set }: { obj: SceneObject; set: (p: Partial<SceneOb
         <button className={btnCls} disabled={!src} onClick={fit}>Fit to frame</button>
       </div>
       <Field label="Hit area">
-        <select className={inputCls} value={obj.hitArea ?? 'frame'} onChange={(e) => set({ hitArea: e.target.value === 'image' ? 'image' : e.target.value === 'polygon' ? 'polygon' : undefined })}>
-          <option value="frame">Frame (default)</option>
+        {/* Polygon frame is NOT a selectable mode: when framePolygon has ≥3 points it automatically
+            REPLACES the rect frame as the hit area (see FramePolygonSection below). */}
+        <select className={inputCls} value={obj.hitArea ?? 'frame'} onChange={(e) => set({ hitArea: e.target.value === 'image' ? 'image' : undefined })}>
+          <option value="frame">{polyActiveObj ? 'Polygon frame (auto)' : 'Frame (default)'}</option>
           <option value="image">Image shape</option>
-          <option value="polygon">Polygon frame</option>
         </select>
+        {polyActiveObj && <p className="text-[10px] text-fuchsia-400 mt-1">📐 polygon active — it replaces the frame as the click area automatically</p>}
       </Field>
     </Section>
   );
