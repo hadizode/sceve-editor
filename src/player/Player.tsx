@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import useImage from 'use-image';
 import { itemName, usePlayerStore } from '../stores/store';
 import type { Asset, Scene, SceneObject, SessionState, Sprite, View } from '../shared/types';
-import { getSprite, resolveSprite } from '../shared/types';
+import { getSprite, resolveSprite, transformRef } from '../shared/types';
 import { cssMatrix, frameMatrix, imageMatrix } from '../shared/geometry';
 
 /** Resolve a sprite/image ref to the concrete image URL ('' when the sprite has no image). */
@@ -93,9 +93,7 @@ function ObjSprite({
   onOpenView: (objectId: string) => void;
 }) {
   const discovered = state.discoveredObjects[viewId || sceneId]?.includes(obj.id);
-  // Pickup items are keyed by NAME in the inventory (see game-logic.pickupObject), so an
-  // id collision can never hide a different object. Fall back to legacy id-keyed entries.
-  const pickupGone = obj.pickupable && (state.inventory.includes(obj.name) || state.inventory.includes(obj.pickupItemId || obj.id));
+  const pickupGone = obj.pickupable && state.inventory.includes(obj.pickupItemId || obj.id);
   // Objects that carry a digit (shows its badge once found) or still have transform rules
   // (an item must be usable on them after the first click) must stay on screen after discovery.
   const keepVisible = obj.digit !== undefined || !!obj.transforms?.length;
@@ -104,7 +102,7 @@ function ObjSprite({
   const tIndex = (state.transformsApplied ?? {})[obj.id] ?? -1;
   const applied = obj.transforms?.[tIndex];
   // After a transform fires, the object takes on the rule's new sprite ("بعد از ترنسفورم عکس بگیرن").
-  const ref = applied?.newSpriteId ? `sprite:${applied.newSpriteId}` : obj.spriteRef;
+  const ref = applied?.newSpriteId ? transformRef(applied.newSpriteId) : obj.spriteRef;
   const sp = getSprite(ref, sprites);
   const url = spriteSrc(ref, sprites, assets);
   const name = applied?.newName || obj.name;
@@ -414,10 +412,10 @@ function InventoryPanel() {
         const sp = getSprite(o.spriteRef, sprites);
         const u = spriteSrc(o.spriteRef, sprites, assets);
         if (o.grantsItem && !m[o.grantsItem]) m[o.grantsItem] = { name: o.name, url: u, color: sp?.color };
-        if (o.pickupable && !m[o.name]) m[o.name] = { name: o.name, url: u, color: sp?.color };
+        if (o.pickupable && !m[o.pickupItemId || o.id]) m[o.pickupItemId || o.id] = { name: o.name, url: u, color: sp?.color };
         o.transforms?.forEach((t) => {
           if (t.grantsItem && !m[t.grantsItem]) {
-            const tref = t.newSpriteId ? `sprite:${t.newSpriteId}` : o.spriteRef;
+            const tref = t.newSpriteId ? transformRef(t.newSpriteId) : o.spriteRef;
             m[t.grantsItem] = { name: `${o.name} ✨`, url: spriteSrc(tref, sprites, assets), color: getSprite(tref, sprites)?.color };
           }
         });

@@ -1,5 +1,5 @@
 import type { Asset, Project, Scene, SceneObject, Sprite } from './types';
-import { getSprite } from './types';
+import { getSprite, transformRef } from './types';
 
 export interface Issue {
   level: 'error' | 'warning';
@@ -31,12 +31,12 @@ export function sceneRefs(scene: Scene): string[] {
   const refs: string[] = [scene.backgroundUrl, ...scene.backgroundLayers.map((l) => l.spriteRef)];
   for (const o of scene.objects) {
     refs.push(o.spriteRef);
-    o.transforms?.forEach((t) => t.newSpriteId && refs.push(t.newSpriteId));
+    o.transforms?.forEach((t) => t.newSpriteId && refs.push(transformRef(t.newSpriteId)));
     if (o.view) {
       refs.push(o.view.backgroundUrl);
       o.view.objects.forEach((v) => {
         refs.push(v.spriteRef);
-        v.transforms?.forEach((t) => t.newSpriteId && refs.push(t.newSpriteId));
+        v.transforms?.forEach((t) => t.newSpriteId && refs.push(transformRef(t.newSpriteId)));
       });
     }
   }

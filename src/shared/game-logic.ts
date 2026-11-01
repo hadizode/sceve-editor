@@ -78,10 +78,10 @@ export function pickupObject(
     return { newState: state, success: false, message: 'این مورد قابل برداشتن نیست' };
   }
 
-  // Only the inventory key changes: store the item under its NAME instead of its id,
-  // so an object whose id merely looks similar to another item's id can never be
-  // treated as already collected (and thus removed) when a different item is picked up.
-  const itemId = obj.name;
+  // Items live in the inventory keyed by their item id (`pickupItemId`, falling back to the object id).
+  // This is what transform rules' `requiresItem` and validation compare against, so it must stay an id —
+  // never the object's display name.
+  const itemId = obj.pickupItemId || obj.id;
   let newInventory = [...state.inventory];
 
   if (newInventory.includes(itemId)) {

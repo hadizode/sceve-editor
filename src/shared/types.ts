@@ -82,6 +82,9 @@ export interface Sprite {
 /** Sprites are referenced as `sprite:<id>` so designers can swap one image everywhere at once. */
 export const spriteRef = (id: string) => `sprite:${id}`;
 
+/** Normalize a stored sprite id/ref into a full `sprite:<id>` reference (tolerates bare ids and direct URLs). */
+export const transformRef = (id?: string) => (!id ? '' : id.startsWith('sprite:') ? id : spriteRef(id));
+
 /** Resolve a sprite/image reference to a concrete URL. */
 export function resolveSprite(ref: string, sprites: Record<string, Sprite>, assets: Record<string, Asset>): string {
   if (ref.startsWith('sprite:')) return resolveUrl(sprites[ref.slice(7)]?.assetId ?? '', assets);
@@ -395,9 +398,13 @@ export class SpriteRegistry {
 }
 
 function normalizeTransform(r: any, reg: SpriteRegistry): TransformRule {
+  // Tolerant normalization: older data may store a bare sprite id (`spr-…`) instead of a full
+  // `sprite:` ref — promote it before registering so it resolves to the right sprite.
+  const raw = r?.newSpriteId ?? r?.newImageUrl;
+  const ref = typeof raw === 'string' && raw.startsWith('spr-') ? `sprite:${raw}` : raw;
   return {
     requiresItem: str(r?.requiresItem),
-    newSpriteId: reg.register(r?.newSpriteId ?? r?.newImageUrl) || undefined,
+    newSpriteId: reg.register(ref) || undefined,
     newName: str(r?.newName) || undefined,
     newMessage: str(r?.newMessage) || undefined,
     grantsItem: str(r?.grantsItem) || undefined,
@@ -527,16 +534,19 @@ export function normalizeBundle(text: string): ProjectBundle {
       ]
     : scenes;
   const sprites = reg.list();
+  // The registry may have created NEW assets while normalizing (direct data/external URLs are
+  // imported into the asset library). Return those too, otherwise imported bundles lose images.
+  const allAssets = Object.values(assetMap);
   const project: Project = {
     id: pid,
     name: str(data.project.name) || 'Imported project',
     description: str(data.project.description),
     scenes: ordered.map((s) => s.id),
     finalLockDigits: ordered.map((s) => s.exitNumber).join(''),
-    assets: strList(data.project.assets).filter((id) => assetMap[id]),
+    assets: [...new Set([...strList(data.project.assets).filter((id) => assetMap[id]), ...allAssets.map((a) => a.id)])],
     sprites: sprites.map((s) => s.id),
     createdAt: str(data.project.createdAt) || nowIso(),
     updatedAt: nowIso(),
   };
-  return { format: 'escape-studio', version: 3, project, scenes: ordered, assets, sprites };
+  return { format: 'escape-studio', version: 3, project, scenes: ordered, assets: allAssets, sprites };
 }
