@@ -78,6 +78,18 @@ export interface DoorTarget {
   lockedMessage?: string;
 }
 
+/**
+ * A CONDITION that must hold before a transform rule may fire. The classic use case is an AND over
+ * several prerequisites: "if all three fuses AND the connector are transformed → transform another
+ * sprite". Every non-empty list must be satisfied; empty/missing conditions = always true.
+ */
+export interface TransformCondition {
+  /** All of these objects must have applied at least `minRule + 1` of their transform rules (-1 = none needed). */
+  transformedObjects?: { sceneId?: string; objectId: string; minRule?: number }[];
+  /** All of these item ids must currently be in the inventory (duplicates are not required). */
+  itemsInInventory?: string[];
+}
+
 export interface TransformRule {
   requiresItem: string;
   /** New sprite for the object after this rule fires — can be any image. */
@@ -87,6 +99,8 @@ export interface TransformRule {
   grantsItem?: string;
   consumesItem?: boolean;
   triggersDiscovery?: boolean;
+  /** Extra gating ("only once ALL of these objects are transformed…"). Empty = no extra condition. */
+  conditions?: TransformCondition;
   /** Side actions fired when this rule applies (other objects / other rooms / doors). */
   effects?: TransformEffect[];
 }
@@ -467,6 +481,23 @@ const normalizeSpriteValue = (v: unknown, reg: SpriteRegistry): string | undefin
   return reg.register(v) || undefined;
 };
 
+/** Normalize the extra gating condition of a rule ("only when ALL these objects are transformed / items held"). */
+function normalizeConditions(raw: any): TransformCondition | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const objs = Array.isArray(raw.transformedObjects)
+    ? raw.transformedObjects
+        .filter((e: any) => e && typeof e === 'object' && str(e.objectId))
+        .map((e: any) => ({
+          sceneId: str(e.sceneId) || undefined,
+          objectId: str(e.objectId),
+          minRule: Number.isInteger(e.minRule) ? Math.max(-1, e.minRule as number) : undefined,
+        }))
+    : [];
+  const items = strList(raw.itemsInInventory);
+  if (!objs.length && !items.length) return undefined;
+  return { transformedObjects: objs.length ? objs : undefined, itemsInInventory: items.length ? items : undefined };
+}
+
 function normalizeEffects(list: any, reg: SpriteRegistry): TransformEffect[] | undefined {
   if (!Array.isArray(list) || !list.length) return undefined;
   const out: TransformEffect[] = [];
@@ -498,6 +529,7 @@ function normalizeTransform(r: any, reg: SpriteRegistry): TransformRule {
     grantsItem: str(r?.grantsItem) || undefined,
     consumesItem: r?.consumesItem !== false,
     triggersDiscovery: r?.triggersDiscovery === true,
+    conditions: normalizeConditions(r?.conditions),
     effects: normalizeEffects(r?.effects, reg),
   };
 }

@@ -1,4 +1,4 @@
-import type { Scene, SceneObject, SessionState, TransformEffect } from './types';
+import type { Scene, SceneObject, SessionState, TransformCondition, TransformEffect } from './types';
 
 // ============ Effects / Transitions Engine ============
 // A strong, separate part of the game logic: when something happens (a transform fires, an item is
@@ -16,6 +16,48 @@ export interface EffectCtx {
 const pushMsg = (ctx: EffectCtx, m?: string) => {
   if (m && !ctx.messages.includes(m)) ctx.messages.push(m);
 };
+
+/** All objects of a scene including nested close-up view objects (effect targets live anywhere). */
+const allObjectsOf = (sc: Scene): SceneObject[] => [...sc.objects, ...sc.objects.flatMap((o) => (o.view ? o.view.objects : []))];
+
+// ============ Conditions ============
+// A rule can carry extra gating beyond its `requiresItem`: e.g. "only fire once ALL three fuses AND
+// the connector have been transformed". Every listed prerequisite must hold (logical AND).
+
+/** True when every prerequisite of the condition is satisfied by the current session state. */
+export function checkTransformCondition(
+  cond: TransformCondition | undefined,
+  state: SessionState,
+  scenesById?: Record<string, Scene>
+): boolean {
+  if (!cond) return true;
+  for (const it of cond.itemsInInventory ?? []) {
+    if (!state.inventory.includes(it)) return false;
+  }
+  for (const req of cond.transformedObjects ?? []) {
+    const applied = state.transformsApplied?.[req.objectId] ?? -1;
+    if (applied < (req.minRule ?? 0)) return false;
+    // If the author pinned the prerequisite to a specific room, make sure the object really lives there.
+    if (req.sceneId && scenesById) {
+      const sc = scenesById[req.sceneId];
+      if (sc && !allObjectsOf(sc).some((o) => o.id === req.objectId)) return false;
+    }
+  }
+  return true;
+}
+
+/** Human-readable reason why the condition currently fails ('' when it holds). */
+export function conditionFailMessage(cond: TransformCondition | undefined, state: SessionState): string {
+  if (!cond) return '';
+  for (const it of cond.itemsInInventory ?? []) {
+    if (!state.inventory.includes(it)) return `⏳ هنوز همه شرایط فراهم نشده — آیتم «${it}» در کیف شما نیست`;
+  }
+  for (const req of cond.transformedObjects ?? []) {
+    const applied = state.transformsApplied?.[req.objectId] ?? -1;
+    if (applied < (req.minRule ?? 0)) return '⏳ هنوز همه شرایط فراهم نشده — اول بقیه موارد را فعال کنید';
+  }
+  return '';
+}
 
 /** Apply one effect to the session state. Returns the updated state (same ref when nothing changed). */
 function applyEffect(state: SessionState, eff: TransformEffect, triggerSceneId: string, ctx: EffectCtx): SessionState {
@@ -55,6 +97,9 @@ function applyEffect(state: SessionState, eff: TransformEffect, triggerSceneId: 
   const idx = eff.ruleIndex ?? 0;
   const rule = obj.transforms[idx];
   if (!rule) return state;
+  // Conditions still gate automatic transforms: "transform box X" only fires when X's own
+  // prerequisites (e.g. all three fuses + the connector already transformed) actually hold.
+  if (!checkTransformCondition(rule.conditions, state, ctx.scenesById)) return state;
   // Idempotent: each (scene, object) gets its automatic chain applied once, following links forward.
   if (ctx.visited.has(`${scopeId}|${obj.id}`)) return state;
   ctx.visited.add(`${scopeId}|${obj.id}`);
@@ -96,9 +141,6 @@ export function applyEffects(
   }
   return { state: s, messages: ctx.messages };
 }
-
-/** All objects of a scene including nested close-up view objects (effect targets live anywhere). */
-const allObjectsOf = (sc: Scene): SceneObject[] => [...sc.objects, ...sc.objects.flatMap((o) => (o.view ? o.view.objects : []))];
 
 /** Every effect declared in a project's scenes — used by validation and by the Studio preview overlay. */
 export function collectProjectEffects(scenes: Scene[]): { eff: TransformEffect; fromSceneId: string; fromName: string }[] {
@@ -284,8 +326,10 @@ export function applyItemToObject(
     if (nextTransformIndex < obj.transforms.length) {
       const rule = obj.transforms[nextTransformIndex];
       const free = !rule.requiresItem; // empty = no item required
+      // Extra gating conditions ("only once ALL these objects are transformed / items held").
+      const condOk = checkTransformCondition(rule.conditions, state, ctx?.scenesById);
 
-      if (free || (itemId !== null && rule.requiresItem === itemId)) {
+      if (condOk && (free || (itemId !== null && rule.requiresItem === itemId))) {
         // Apply transform
         let newInventory = [...state.inventory];
 
@@ -340,11 +384,28 @@ export function applyItemToObject(
   }
 
   if (!itemId) {
+    // A matching item but unmet conditions → explain what is still missing.
+    const condMsg = obj.transforms
+      ?.map((t, i) =>
+        ((state.transformsApplied ?? {})[objectId] ?? -1) + 1 === i && !checkTransformCondition(t.conditions, state, ctx?.scenesById)
+          ? conditionFailMessage(t.conditions, state)
+          : ''
+      )
+      .find(Boolean);
     return {
       newState: state,
       success: false,
-      message: needsItem ? 'برای استفاده از این مورد، آیتم مناسب را از کیف خود انتخاب کنید' : 'این مورد قابل استفاده نیست',
+      message:
+        condMsg ||
+        (needsItem ? 'برای استفاده از این مورد، آیتم مناسب را از کیف خود انتخاب کنید' : 'این مورد قابل استفاده نیست'),
     };
+  }
+
+  // Item selected but the next rule's conditions are not met yet → tell the player why.
+  const nextIdx = ((state.transformsApplied ?? {})[objectId] ?? -1) + 1;
+  const nextRule = obj.transforms?.[nextIdx];
+  if (nextRule && !checkTransformCondition(nextRule.conditions, state, ctx?.scenesById)) {
+    return { newState: state, success: false, message: conditionFailMessage(nextRule.conditions, state) || 'هنوز شرایط لازم فراهم نشده است' };
   }
 
   // Fallback: check requiresItem (old behavior for containers)
