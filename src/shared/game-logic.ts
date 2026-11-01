@@ -72,14 +72,22 @@ function applyEffect(state: SessionState, eff: TransformEffect, triggerSceneId: 
   next = { ...next, transformsApplied: { ...(next.transformsApplied ?? {}), [obj.id]: Math.max(next.transformsApplied?.[obj.id] ?? -1, idx) } };
   pushMsg(ctx, rule.newMessage);
   // The auto-transformed object may itself carry effects → the engine follows them recursively.
-  if (rule.effects?.length) next = applyEffects(next, rule.effects, scopeId, ctx);
+  if (rule.effects?.length) next = applyEffects(next, rule.effects, scopeId, ctx.scenesById).state;
   return next;
 }
 
-/** Fire a batch of effects; returns the new state plus any toast messages they produced. */
-export function applyEffects(state: SessionState, effects: TransformEffect[], sceneId: string, scenesById: Record<string, Scene>): { state: SessionState; messages: string[] } {
-  if (!effects.length) return { state, messages: [] };
-  const ctx: EffectCtx = { scenesById, visited: new Set<string>(), messages: [] };
+/** Fire a batch of effects (recursive-safe); returns the new state plus any toast messages they produced. */
+export function applyEffects(
+  state: SessionState,
+  effects: TransformEffect[],
+  sceneId: string,
+  scenesByIdOrCtx: Record<string, Scene> | EffectCtx
+): { state: SessionState; messages: string[] } {
+  const ctx: EffectCtx =
+    'scenesById' in scenesByIdOrCtx && (scenesByIdOrCtx as EffectCtx).visited instanceof Set
+      ? (scenesByIdOrCtx as EffectCtx)
+      : { scenesById: scenesByIdOrCtx as Record<string, Scene>, visited: new Set<string>(), messages: [] };
+  if (!effects.length) return { state, messages: ctx.messages };
   let s = state;
   for (const eff of effects) {
     const before = s;

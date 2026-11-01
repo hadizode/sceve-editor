@@ -1,11 +1,12 @@
 import React, { useMemo, useRef } from 'react';
 import { useCtx, useCurrentProject, useProjectAssets, useSprites, useStudioStore } from '../stores/store';
-import { assetRef, spriteRef, transformRef, blankSprite, type SceneObject, type TransformRule } from '../shared/types';
+import { assetRef, spriteRef, blankSprite, type SceneObject } from '../shared/types';
 import { obtainableItems } from '../shared/validation';
 import { fitScale } from '../shared/geometry';
 import { fileToImage } from '../shared/utils';
 import { btnCls, Field, inputCls, ListInput, NumInput, Section } from './ui';
 import { useResolved } from './konva-bits';
+import { TransitionsPanel } from './Transitions';
 
 const st = () => useStudioStore.getState();
 const r1 = (n: number) => Math.round(n * 10) / 10;
@@ -232,9 +233,6 @@ export function PropertiesPanel() {
 
   const obj = selected[0];
   const set = (patch: Partial<SceneObject>, key?: string) => st().updateObject(obj.id, patch, key ?? `${obj.id}:${Object.keys(patch).join()}`);
-  const ts = obj.transforms ?? [];
-  const setT = (i: number, patch: Partial<TransformRule>) =>
-    set({ transforms: ts.map((t, j) => (j === i ? { ...t, ...patch } : t)) }, `${obj.id}:tf${i}:${Object.keys(patch)[0]}`);
 
   return (
     <div className="p-3 space-y-3 text-sm">
@@ -305,59 +303,8 @@ export function PropertiesPanel() {
         )}
       </Section>
 
-      <Section title="🔄 Transforms" color="text-purple-300">
-        <p className="text-xs text-gray-500">Rules run in order: rule 2 only applies after rule 1.</p>
-        {ts.map((t, i) => (
-          <div key={i} className="bg-surface-light rounded p-2 space-y-2">
-            <div className="flex justify-between items-center text-xs">
-              <span className="text-purple-300">Rule {i + 1}</span>
-              <button className="text-red-400 hover:text-red-300" onClick={() => set({ transforms: ts.length > 1 ? ts.filter((_, j) => j !== i) : undefined })}>✕</button>
-            </div>
-            <Field label="Requires item">
-              <input className={inputCls} list="item-ids" value={t.requiresItem} onChange={(e) => setT(i, { requiresItem: e.target.value })} />
-            </Field>
-            <Field label="New image (after transform)">
-              <div className="flex gap-1">
-                <select
-                  className={inputCls}
-                  value={t.newSpriteId ? sprites[transformRef(t.newSpriteId).slice(7)]?.assetId ?? '' : ''}
-                  onChange={(e) => setT(i, { newSpriteId: e.target.value ? st().useAssetSprite(e.target.value) : undefined })}
-                >
-                  <option value="">(unchanged)</option>
-                  {assets.map((a) => <option key={a.id} value={assetRef(a.id)}>🖼 {a.name}</option>)}
-                </select>
-                <button className={btnCls} title="Upload a new image as the post-transform sprite" onClick={async () => {
-                  const inp = document.createElement('input');
-                  inp.type = 'file'; inp.accept = 'image/*';
-                  inp.onchange = async () => {
-                    const f = inp.files?.[0];
-                    if (!f) return;
-                    try {
-                      const a = st().addAsset(await fileToImage(f));
-                      setT(i, { newSpriteId: st().useAssetSprite(assetRef(a.id), a.name) });
-                    } catch (err) { alert((err as Error).message); }
-                  };
-                  inp.click();
-                }}>📁</button>
-              </div>
-            </Field>
-            <Field label="New name">
-              <input className={inputCls} dir="rtl" lang="fa" value={t.newName ?? ''} onChange={(e) => setT(i, { newName: e.target.value || undefined })} />
-            </Field>
-            <Field label="New message">
-              <input className={inputCls} dir="rtl" lang="fa" value={t.newMessage ?? ''} onChange={(e) => setT(i, { newMessage: e.target.value || undefined })} />
-            </Field>
-            <Field label="Grants item">
-              <input className={inputCls} list="item-ids" value={t.grantsItem ?? ''} onChange={(e) => setT(i, { grantsItem: e.target.value || undefined })} />
-            </Field>
-            <Check label="Consumes item" checked={t.consumesItem !== false} onChange={(v) => setT(i, { consumesItem: v })} />
-            <Check label="Counts as discovery" checked={!!t.triggersDiscovery} onChange={(v) => setT(i, { triggersDiscovery: v })} />
-          </div>
-        ))}
-        <button className="w-full bg-purple-700 hover:bg-purple-600 text-white px-2 py-1.5 rounded text-xs" onClick={() => set({ transforms: [...ts, { requiresItem: '', consumesItem: true }] })}>
-          + Add transform rule
-        </button>
-      </Section>
+      {/* Transforms / effects / doors live in their own dedicated panel — see studio/Transitions.tsx */}
+      <TransitionsPanel obj={obj} set={set} />
 
       <Section title="🔍 Interactive view" color="text-amber-300">
         {obj.view ? (
