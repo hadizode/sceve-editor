@@ -7,11 +7,14 @@
   --color-accent: #f59e0b;
   --color-success: #10b981;
   --color-danger: #ef4444;
-  --color-surface: #1e1e2e;
-  --color-surface-light: #2a2a3e;
-  --color-surface-lighter: #363650;
-  --color-surface-hover: #30304a;
+  /* Pro-editor palette: near-black viewport, slightly lighter docks, lighter dock headers */
+  --color-surface: #1b1b24;
+  --color-surface-light: #252531;
+  --color-surface-lighter: #303040;
+  --color-surface-hover: #2b2b3a;
   --color-line: #2e2e44;
+  --color-dock-head: #23232e;
+  --color-viewport: #111117;
 }
 
 * {
@@ -58,18 +61,24 @@ body {
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: #1e1e2e;
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #4a4a6a;
-  border-radius: 3px;
-}
-aside ::-webkit-scrollbar-thumb {
   background: #3a3a55;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #4a4a6a;
+}
+
+/* Bottom dock is wide and short: lay the (originally 2-column) asset grid out as a responsive tile grid.
+   Unlayered on purpose so it wins over the Tailwind utility inside AssetsPanel. */
+.dock-assets .grid.grid-cols-2 {
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
 }
 
 /* Animations */
