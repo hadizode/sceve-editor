@@ -1,4 +1,4 @@
-import type { SceneObject } from './types';
+import type { FramePoint, SceneObject } from './types';
 
 export interface Pt { x: number; y: number }
 export interface Size { width: number; height: number }
@@ -7,7 +7,11 @@ export interface Rect { x: number; y: number; width: number; height: number }
 export type Mat = readonly [number, number, number, number, number, number];
 
 export type Xf = Pick<SceneObject, 'x' | 'y' | 'width' | 'height' | 'rotation'> &
-  Partial<Pick<SceneObject, 'scaleX' | 'scaleY' | 'imageOffsetX' | 'imageOffsetY' | 'hitArea'>>;
+  Partial<Pick<SceneObject, 'scaleX' | 'scaleY' | 'imageOffsetX' | 'imageOffsetY' | 'hitArea' | 'framePolygon'>>;
+
+/** A polygon frame is active when it has ≥3 points — no explicit hitArea selection needed. */
+export const polyPts = (o: Xf): FramePoint[] | null =>
+  Array.isArray(o.framePolygon) && o.framePolygon.length >= 3 ? o.framePolygon : null;
 
 const rad = (d: number) => (d * Math.PI) / 180;
 const r1 = (n: number) => Math.round(n * 10) / 10;
@@ -78,7 +82,7 @@ export function boundsOf(pts: Pt[]): Rect {
 export const frameBounds = (o: Xf) => boundsOf(frameCorners(o));
 export const imageBounds = (o: Xf, nat: Size) => boundsOf(imageCorners(o, nat));
 /** What the user sees: the rendered image if there is one, else the frame. */
-export const visualBounds = (o: Xf, nat: Size | null) => (nat ? imageBounds(o, nat) : frameBounds(o));
+export const visualBounds = (o: Xf, nat: Size | null) => (nat ? imageBounds(o, nat) : polyActive(o) ? polygonBounds(o) : frameBounds(o));
 
 function inLocalRect(m: Mat, w: number, h: number, p: Pt): boolean {
   const inv = invert(m);
@@ -87,8 +91,40 @@ function inLocalRect(m: Mat, w: number, h: number, p: Pt): boolean {
   return l.x >= 0 && l.x <= w && l.y >= 0 && l.y <= h;
 }
 
-/** Default hit area is the frame; `hitArea: 'image'` uses the rendered image's rotated rectangle. */
+// ---------- polygon frame (per-side sizing / extra sides) ----------
+export const polyActive = (o: Xf): boolean => !!polyPts(o);
+/** Frame-local polygon points → scene points (follows the frame's rotation/scale). */
+export const polygonCorners = (o: Xf): Pt[] => {
+  const pts = polyPts(o);
+  if (!pts) return [];
+  const m = frameMatrix(o);
+  return pts.map((p) => apply(m, { x: p.x, y: p.y }));
+};
+export const polygonBounds = (o: Xf): Rect => {
+  const c = polygonCorners(o);
+  return c.length ? boundsOf(c) : frameBounds(o);
+};
+/** Ray-cast point-in-polygon in FRAME-LOCAL coordinates. */
+export function pointInPolygonLocal(pts: FramePoint[], p: Pt): boolean {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i].x, yi = pts[i].y, xj = pts[j].x, yj = pts[j].y;
+    if (yi > p.y !== yj > p.y && p.x < ((xj - xi) * (p.y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * Hit area priority: polygon frame (if set) > rendered image ('image') > rectangular frame.
+ * A polygon frame is auto-active — no explicit mode selection required.
+ */
 export function hitTest(o: Xf, nat: Size | null, p: Pt): boolean {
+  const pts = polyPts(o);
+  if (pts) {
+    const inv = invert(frameMatrix(o));
+    if (!inv) return false;
+    return pointInPolygonLocal(pts, apply(inv, p));
+  }
   if (o.hitArea === 'image' && nat) {
     const n = natural(o, nat);
     return inLocalRect(imageMatrix(o, nat), n.width, n.height, p);
@@ -129,6 +165,34 @@ export const frameNodeAttrs = (o: Xf) => {
   const c = frameCenter(o);
   return { x: c.x, y: c.y, offsetX: o.width / 2, offsetY: o.height / 2, width: o.width, height: o.height, rotation: o.rotation };
 };
+/** Konva points array (scene coords, flat [x,y,…]) for the polygon frame — empty when no polygon. */
+export function polygonNodePoints(o: Xf): number[] {
+  return polygonCorners(o).flatMap((p) => [p.x, p.y]);
+}
+/** Konva hitFunc matching hitTest(): polygon > image > rect. Attach to the interactive node. */
+export function konvaHitFunc(o: Xf, nat: Size | null) {
+  const pts = polyPts(o);
+  if (pts) {
+    const fm = frameMatrix(o);
+    return (ctx: any) => {
+      ctx.beginPath();
+      pts.forEach((p, i) => { const q = apply(fm, { x: p.x, y: p.y }); (i ? ctx.lineTo : ctx.moveTo).call(ctx, q.x, q.y); });
+      ctx.closePath();
+      ctx.fillStrokeShape(this);
+    };
+  }
+  if (o.hitArea === 'image' && nat) {
+    const im = imageMatrix(o, nat);
+    const n = natural(o, nat);
+    return (ctx: any) => {
+      ctx.setTransform?.(im[0], im[1], im[2], im[3], im[4], im[5]);
+      ctx.beginPath();
+      ctx.rect(0, 0, n.width, n.height);
+      ctx.fillStrokeShape(this);
+    };
+  }
+  return undefined;
+}
 export function patchFromFrameNode(node: { x: number; y: number; width: number; height: number; scaleX: number; scaleY: number; rotation: number }) {
   const w = Math.max(1, Math.round(Math.abs(node.width * node.scaleX)));
   const h = Math.max(1, Math.round(Math.abs(node.height * node.scaleY)));

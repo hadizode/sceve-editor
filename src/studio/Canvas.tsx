@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Konva from 'konva';
-import { Stage, Layer, Image as KImage, Rect, Text, Transformer, Shape } from 'react-konva';
+import { Stage, Layer, Image as KImage, Rect, Text, Transformer, Shape, Circle } from 'react-konva';
+import { frameNodeAttrs, imageNodeAttrs, patchFromFrameNode, patchFromImageNode, visualBounds, polygonNodePoints, polyActive, frameMatrix, invert, apply, type Pt } from '../shared/geometry';
 import { useCtx, useScene, useStudioStore } from '../stores/store';
 import { type SceneObject } from '../shared/types';
 import { clamp, fileToImage } from '../shared/utils';
-import { frameNodeAttrs, imageNodeAttrs, patchFromFrameNode, patchFromImageNode, visualBounds } from '../shared/geometry';
 import { Bg, useSrc, useSpriteOf } from './konva-bits';
 import { isTyping, useElementSize } from './ui';
 
@@ -93,6 +93,21 @@ function ObjOverlay({ obj, zoom, selected, showLabel }: { obj: SceneObject; zoom
       {selected && nat && (
         <Rect {...frameNodeAttrs(obj)} stroke="#f59e0b" strokeWidth={1 / zoom} dash={[4 / zoom, 3 / zoom]} listening={false} />
       )}
+      {polyActive(obj) && (
+        <Shape
+          sceneFunc={(ctx, shape) => {
+            const pts = polygonNodePoints(obj);
+            ctx.beginPath();
+            for (let i = 0; i < pts.length; i += 2) (i ? ctx.lineTo : ctx.moveTo).call(ctx, pts[i], pts[i + 1]);
+            ctx.closePath();
+            ctx.fillStrokeShape(shape);
+          }}
+          stroke={selected ? '#22d3ee' : 'rgba(34,211,238,0.55)'}
+          strokeWidth={1 / zoom}
+          dash={[6 / zoom, 4 / zoom]}
+          listening={false}
+        />
+      )}
       {showLabel && (
         <Text
           x={vb.x}
@@ -105,6 +120,48 @@ function ObjOverlay({ obj, zoom, selected, showLabel }: { obj: SceneObject; zoom
           listening={false}
         />
       )}
+    </>
+  );
+}
+
+/** Draggable vertex handles for the selected object's polygon frame (edit mode). */
+function PolyHandles({ obj, zoom }: { obj: SceneObject; zoom: number }) {
+  const pts = obj.framePolygon;
+  if (!pts || pts.length < 3) return null;
+  const m = frameMatrix(obj);
+  const move = (i: number, scenePt: Pt) => {
+    const inv = invert(m);
+    if (!inv) return;
+    const local = apply(inv, scenePt);
+    const next = pts.map((q, j) => (j === i ? { x: Math.round(local.x), y: Math.round(local.y) } : q));
+    st().updateObject(obj.id, { framePolygon: next });
+  };
+  return (
+    <>
+      {pts.map((p, i) => {
+        const q = apply(m, { x: p.x, y: p.y });
+        return (
+          <Circle
+            key={i}
+            x={q.x}
+            y={q.y}
+            radius={5 / zoom}
+            fill="#22d3ee"
+            stroke="#0e7490"
+            strokeWidth={1 / zoom}
+            draggable
+            onDragMove={(e) => move(i, { x: e.target.x(), y: e.target.y() })}
+            onMouseEnter={(e) => {
+              const c = e.target.getStage()?.container();
+              if (c) c.style.cursor = 'pointer';
+            }}
+            onMouseLeave={(e) => {
+              const c = e.target.getStage()?.container();
+              if (c) c.style.cursor = 'default';
+            }}
+          />
+        );
+      })}
     </>
   );
 }
@@ -464,6 +521,11 @@ export default function Canvas() {
                 onDragEnd={onDragEnd}
               />
             ))}
+            {/* polygon-frame vertex handles for the single selected object */}
+            {selected.length === 1 && (() => {
+              const o = ctx.objects.find((x) => x.id === selected[0]);
+              return o && polyActive(o) ? <PolyHandles obj={o} zoom={cam.zoom} /> : null;
+            })()}
             <Transformer
               ref={trRef}
               rotateEnabled

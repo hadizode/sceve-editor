@@ -234,8 +234,18 @@ export interface View {
   closeMessage?: string;
 }
 
-/** What counts as a click on a sprite: its logical frame (default) or its rendered image's bounds. */
-export type HitArea = 'frame' | 'image';
+/** What counts as a click on a sprite: its logical frame (default), the rendered image's bounds, or the custom polygon. */
+export type HitArea = 'frame' | 'image' | 'polygon';
+
+/**
+ * A side length of the sprite's polygon frame, in FRAME-LOCAL coordinates
+ * (x → right along the top edge, y → down along the left edge; the frame box is 0..width / 0..height).
+ * Points are ordered around the shape; the engine closes the loop automatically.
+ */
+export interface FramePoint {
+  x: number;
+  y: number;
+}
 
 /** Draw order = position in the `objects` array (last = on top). */
 export interface SceneObject {
@@ -259,6 +269,13 @@ export interface SceneObject {
   imageOffsetY?: number;
   /** Hit area for clicks in the Player. Default 'frame'. */
   hitArea?: HitArea;
+  /**
+   * Custom polygon frame ("per-side sizing / extra sides"). When present, this shape REPLACES the
+   * rectangular frame as the selection box outline and the click/hit area (auto-active: picking
+   * 'polygon' is not required). Coordinates are frame-local (0..width, 0..height) and follow the
+   * object's rotation/scale like everything else.
+   */
+  framePolygon?: FramePoint[];
   visible: boolean;
   locked: boolean;
   oneTimeUse: boolean;
@@ -559,6 +576,15 @@ function normalizeView(r: any, reg: SpriteRegistry): View {
   };
 }
 
+/** Frame-local polygon points → clean list (≥3 finite points), or undefined. Used by import/migration. */
+export function normalizeFramePolygon(raw: any): FramePoint[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const pts = raw
+    .map((p: any) => ({ x: num(p?.x, NaN), y: num(p?.y, NaN) }))
+    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+  return pts.length >= 3 ? pts : undefined;
+}
+
 export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): SceneObject {
   const o = raw ?? {};
   // Old bundles had decoration/inventory/container types — everything is one unified sprite now.
@@ -579,7 +605,8 @@ export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): Scene
     scaleY: Number.isFinite(o.scaleY) && o.scaleY !== 0 && o.scaleY !== 1 ? o.scaleY : undefined,
     imageOffsetX: Number.isFinite(o.imageOffsetX) && o.imageOffsetX !== 0 ? o.imageOffsetX : undefined,
     imageOffsetY: Number.isFinite(o.imageOffsetY) && o.imageOffsetY !== 0 ? o.imageOffsetY : undefined,
-    hitArea: o.hitArea === 'image' ? 'image' : undefined,
+    hitArea: o.hitArea === 'image' || o.hitArea === 'polygon' ? o.hitArea : undefined,
+    framePolygon: normalizeFramePolygon(o.framePolygon),
     visible: o.visible !== false,
     locked: o.locked === true,
     oneTimeUse: o.oneTimeUse === true,
