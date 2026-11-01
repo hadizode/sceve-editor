@@ -1,4 +1,5 @@
 import { clamp, nowIso, svgDataUrl, uid } from './utils';
+import { migrateLegacyGeometry, type Size } from './geometry';
 
 // ============ Basic types ============
 /**
@@ -118,8 +119,7 @@ export interface TransformRule {
  * - only `color` → a solid colored rectangle of any size
  * - `assetId` → any uploaded image
  *
- * Images are ALWAYS rendered at their natural size × the object's transform
- * (see shared/geometry.ts) and are never fitted to or clipped by the object frame.
+ * The image is always stretched to fill the object's box (see shared/geometry.ts).
  */
 export interface Sprite {
   id: string;
@@ -128,9 +128,9 @@ export interface Sprite {
   assetId: string;
   /** Optional solid color fill (hex). Empty = transparent / no color. */
   color?: string;
-  /** @deprecated ignored — images always render at natural size and may overflow the frame. */
+  /** @deprecated ignored. */
   overflow?: boolean;
-  /** @deprecated ignored — images are never fitted into the frame. */
+  /** @deprecated ignored. */
   fit?: 'fill' | 'contain' | 'cover';
   createdAt: string;
 }
@@ -234,23 +234,18 @@ export interface View {
   closeMessage?: string;
 }
 
-/**
- * What counts as a click on a sprite: its logical frame (default) or the rendered image's bounds.
- * NOTE: 'polygon' is accepted when reading legacy data but is meaningless as a stored mode —
- * a polygon frame (framePolygon, ≥3 points) always REPLACES the rect frame as the hit area
- * automatically, so it never needs to be selected here.
- */
-export type HitArea = 'frame' | 'image' | 'polygon';
-
-/**
- * A side length of the sprite's polygon frame, in FRAME-LOCAL coordinates
- * (x → right along the top edge, y → down along the left edge; the frame box is 0..width / 0..height).
- * Points are ordered around the shape; the engine closes the loop automatically.
- */
-export interface FramePoint {
+/** A 2D point. */
+export interface Pt {
   x: number;
   y: number;
 }
+
+/**
+ * Click shape of an object, ALWAYS relative to the object's box so it survives any resize:
+ * - `box` (default / undefined): the whole box
+ * - `polygon`: points normalized to 0..1 of the box (x → right, y → down), ≥ 3 points
+ */
+export type HitShape = { kind: 'box' } | { kind: 'polygon'; points: Pt[] };
 
 /** Draw order = position in the `objects` array (last = on top). */
 export interface SceneObject {
@@ -260,27 +255,20 @@ export interface SceneObject {
   type?: ObjectType;
   /** The object's sprite — a `sprite:<id>` reference to any image asset. */
   spriteRef: string;
-  /** Logical frame: selection box, data model and default hit area. NOT the image bounds. */
+  // ---- geometry: the ONLY geometry fields. The image always fills the box. ----
+  /** Top-left of the (unrotated) box. */
   x: number;
   y: number;
+  /** Box size in px (> 0). */
   width: number;
   height: number;
+  /** Degrees, pivot = box centre. */
   rotation: number;
-  /** Image scale applied on top of its NATURAL size. Negative = flipped. Default 1. */
-  scaleX?: number;
-  scaleY?: number;
-  /** Image centre offset from the frame centre, in the sprite's rotated space. Default 0. */
-  imageOffsetX?: number;
-  imageOffsetY?: number;
-  /** Hit area for clicks in the Player. Default 'frame'. */
-  hitArea?: HitArea;
-  /**
-   * Custom polygon frame ("per-side sizing / extra sides"). When present, this shape REPLACES the
-   * rectangular frame as the selection box outline and the click/hit area (auto-active: picking
-   * 'polygon' is not required). Coordinates are frame-local (0..width, 0..height) and follow the
-   * object's rotation/scale like everything else.
-   */
-  framePolygon?: FramePoint[];
+  /** Mirror around the box centre. */
+  flipX?: boolean;
+  flipY?: boolean;
+  /** Click shape. Default: the whole box. */
+  hit?: HitShape;
   visible: boolean;
   locked: boolean;
   oneTimeUse: boolean;
@@ -440,6 +428,16 @@ export class SpriteRegistry {
     return 'u|' + h.toString(36) + '|' + url.length;
   }
   constructor(private assets: Record<string, Asset>, private nameHint = '', private knownSprites?: Record<string, Sprite>) {}
+
+  /** Natural pixel size of a sprite's image when its asset is known (used only by legacy geometry migration). */
+  naturalSize(ref: string): Size | null {
+    if (!ref.startsWith('sprite:')) return null;
+    const id = ref.slice(7);
+    const sp = this.knownSprites?.[id] ?? [...this.byKey.values()].find((s) => s.id === id);
+    const a = sp?.assetId.startsWith('asset:') ? this.assets[sp.assetId.slice(6)] : undefined;
+    return a && a.width > 0 && a.height > 0 ? { width: a.width, height: a.height } : null;
+  }
+
   /** Accepts an existing `sprite:` ref (kept as-is), a color value, or any image URL/asset-ref (wrapped in a new sprite). */
   register(raw: unknown): string {
     // Newer sprite payloads may carry extra props (color/overflow/fit) alongside a ref/url/color.
@@ -581,14 +579,16 @@ function normalizeView(r: any, reg: SpriteRegistry): View {
   };
 }
 
-/** Frame-local polygon points → clean list (≥3 finite points), or undefined. Used by import/migration. */
-export function normalizeFramePolygon(raw: any): FramePoint[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  const pts = raw
-    .map((p: any) => ({ x: num(p?.x, NaN), y: num(p?.y, NaN) }))
-    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
-  return pts.length >= 3 ? pts : undefined;
+/** Click shape → clean value (polygon with ≥ 3 finite points clamped to 0..1), else undefined (= box). */
+export function normalizeHit(raw: any): HitShape | undefined {
+  if (!raw || typeof raw !== 'object' || raw.kind !== 'polygon' || !Array.isArray(raw.points)) return undefined;
+  const pts: Pt[] = raw.points
+    .map((p: any) => ({ x: clamp(num(p?.x, NaN), 0, 1), y: clamp(num(p?.y, NaN), 0, 1) }))
+    .filter((p: Pt) => Number.isFinite(p.x) && Number.isFinite(p.y));
+  return pts.length >= 3 ? { kind: 'polygon', points: pts } : undefined;
 }
+
+const LEGACY_GEOM_KEYS = ['scaleX', 'scaleY', 'imageOffsetX', 'imageOffsetY', 'framePolygon', 'hitArea'];
 
 export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): SceneObject {
   const o = raw ?? {};
@@ -596,23 +596,50 @@ export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): Scene
   const legacyType = typeof o.type === 'string' ? o.type : '';
   const req = strList(o.requiresItem);
   const digit = Number.isInteger(o.digit) ? clamp(o.digit, 0, 9) : undefined;
+  const spriteRefValue = reg.register(o.spriteRef ?? o.imageUrl);
+
+  const x = num(o.x, 0);
+  const y = num(o.y, 0);
+  const width = Math.max(1, num(o.width, 80));
+  const height = Math.max(1, num(o.height, 80));
+  const rotation = num(o.rotation, 0);
+  // Old frame + image-transform model (scale/offset/framePolygon/hitArea) → single box model.
+  const isLegacyGeom = LEGACY_GEOM_KEYS.some((k) => o[k] !== undefined && o[k] !== null);
+  const geom = isLegacyGeom
+    ? migrateLegacyGeometry(
+        {
+          x, y, width, height, rotation,
+          scaleX: Number.isFinite(o.scaleX) ? o.scaleX : undefined,
+          scaleY: Number.isFinite(o.scaleY) ? o.scaleY : undefined,
+          imageOffsetX: Number.isFinite(o.imageOffsetX) ? o.imageOffsetX : undefined,
+          imageOffsetY: Number.isFinite(o.imageOffsetY) ? o.imageOffsetY : undefined,
+          hitArea: typeof o.hitArea === 'string' ? o.hitArea : undefined,
+          framePolygon: Array.isArray(o.framePolygon)
+            ? o.framePolygon.map((p: any) => ({ x: num(p?.x, 0), y: num(p?.y, 0) }))
+            : undefined,
+        },
+        reg.naturalSize(spriteRefValue)
+      )
+    : {
+        x, y, width, height, rotation,
+        flipX: o.flipX === true ? true : undefined,
+        flipY: o.flipY === true ? true : undefined,
+        hit: normalizeHit(o.hit),
+      };
+
   return {
     id: str(o.id) || uid('obj'),
     name: str(o.name) || 'Object',
     type: OBJECT_TYPE,
-    spriteRef: reg.register(o.spriteRef ?? o.imageUrl),
-    x: num(o.x, 0),
-    y: num(o.y, 0),
-    width: Math.max(1, num(o.width, 80)),
-    height: Math.max(1, num(o.height, 80)),
-    rotation: num(o.rotation, 0),
-    scaleX: Number.isFinite(o.scaleX) && o.scaleX !== 0 && o.scaleX !== 1 ? o.scaleX : undefined,
-    scaleY: Number.isFinite(o.scaleY) && o.scaleY !== 0 && o.scaleY !== 1 ? o.scaleY : undefined,
-    imageOffsetX: Number.isFinite(o.imageOffsetX) && o.imageOffsetX !== 0 ? o.imageOffsetX : undefined,
-    imageOffsetY: Number.isFinite(o.imageOffsetY) && o.imageOffsetY !== 0 ? o.imageOffsetY : undefined,
-    // 'polygon' is legacy noise now (the polygon auto-replaces the frame) — keep only 'image'.
-    hitArea: o.hitArea === 'image' ? 'image' : undefined,
-    framePolygon: normalizeFramePolygon(o.framePolygon),
+    spriteRef: spriteRefValue,
+    x: geom.x,
+    y: geom.y,
+    width: geom.width,
+    height: geom.height,
+    rotation: geom.rotation,
+    flipX: geom.flipX,
+    flipY: geom.flipY,
+    hit: geom.hit,
     visible: o.visible !== false,
     locked: o.locked === true,
     oneTimeUse: o.oneTimeUse === true,

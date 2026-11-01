@@ -1,78 +1,32 @@
 import React, { useRef, useState } from 'react';
-import { Stage, Layer, Image as KImage, Rect, Shape } from 'react-konva';
+import { Stage, Layer, Image as KImage, Rect } from 'react-konva';
 import { useScene, useStudioStore } from '../stores/store';
 import type { Asset, BackgroundLayer, SceneObject, Sprite, View } from '../shared/types';
 import { getSprite, resolveSprite } from '../shared/types';
-import { frameNodeAttrs, imageNodeAttrs, polygonNodePoints, polyActive } from '../shared/geometry';
+import { konvaHitFunc, konvaNodeAttrs } from '../shared/geometry';
 import { Bg, useSrc } from './konva-bits';
 import { useElementSize } from './ui';
 
+const pointer = (e: any, on: boolean) => {
+  const c = e.target.getStage()?.container();
+  if (c) c.style.cursor = on ? 'pointer' : 'default';
+};
+
+/** Same single-node model as the Studio canvas and the Player: image fills the box, hit shape is a hitFunc. */
 function PObj({ obj, found, onClick, sprites, assets }: { obj: SceneObject; found: boolean; onClick: () => void; sprites: Record<string, Sprite>; assets: Record<string, Asset> }) {
   const url = resolveSprite(obj.spriteRef, sprites, assets);
   const sp = getSprite(obj.spriteRef, sprites);
   const img = useSrc(url);
   if (!obj.visible || (found && obj.oneTimeUse)) return null;
-  const click = { onClick, onTap: onClick };
-  const nat = img && img.naturalWidth > 0 ? { width: img.naturalWidth, height: img.naturalHeight } : null;
-  // color-only sprite fallback
-  if (!img || !nat) {
-    if (!sp?.color) return null;
-    return <Rect {...frameNodeAttrs(obj)} fill={sp.color} {...click} />;
-  }
-  // image drawn at natural size x transform (same math as Studio/Player); hit area = polygon frame > image > frame
-  const polyHit = polyActive(obj);
-  const imageHit = !polyHit && obj.hitArea === 'image';
+  const attrs = konvaNodeAttrs(obj);
+  const hitFunc = konvaHitFunc(obj);
+  const click = { onClick, onTap: onClick, onMouseEnter: (e: any) => pointer(e, true), onMouseLeave: (e: any) => pointer(e, false) };
+  const hasImage = !!img && img.naturalWidth > 0;
+  if (!hasImage && !sp?.color) return null;
   return (
     <>
-      <KImage
-        image={img}
-        {...imageNodeAttrs(obj, nat)}
-        listening={imageHit}
-        {...(imageHit ? click : {})}
-        onMouseEnter={(e) => {
-          const c = e.target.getStage()?.container();
-          if (c) c.style.cursor = 'pointer';
-        }}
-        onMouseLeave={(e) => {
-          const c = e.target.getStage()?.container();
-          if (c) c.style.cursor = 'default';
-        }}
-      />
-      {polyHit ? (
-        <Shape
-          sceneFunc={(ctx, shape) => {
-            const pts = polygonNodePoints(obj);
-            ctx.beginPath();
-            for (let i = 0; i < pts.length; i += 2) (i ? ctx.lineTo : ctx.moveTo).call(ctx, pts[i], pts[i + 1]);
-            ctx.closePath();
-            ctx.fillStrokeShape(shape);
-          }}
-          fill="rgba(0,0,0,0)"
-          {...click}
-          onMouseEnter={(e) => {
-            const c = e.target.getStage()?.container();
-            if (c) c.style.cursor = 'pointer';
-          }}
-          onMouseLeave={(e) => {
-            const c = e.target.getStage()?.container();
-            if (c) c.style.cursor = 'default';
-          }}
-        />
-      ) : !imageHit && (
-        <Rect
-          {...frameNodeAttrs(obj)}
-          fill="rgba(0,0,0,0)"
-          {...click}
-          onMouseEnter={(e) => {
-            const c = e.target.getStage()?.container();
-            if (c) c.style.cursor = 'pointer';
-          }}
-          onMouseLeave={(e) => {
-            const c = e.target.getStage()?.container();
-            if (c) c.style.cursor = 'default';
-          }}
-        />
-      )}
+      {sp?.color && <Rect {...attrs} fill={sp.color} hitFunc={hasImage ? undefined : hitFunc} listening={!hasImage} {...(hasImage ? {} : click)} />}
+      {hasImage && <KImage image={img} {...attrs} hitFunc={hitFunc} {...click} />}
     </>
   );
 }
