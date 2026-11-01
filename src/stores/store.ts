@@ -826,7 +826,7 @@ interface PlayerState {
   switchScene: (id: string) => void;
   clickObject: (objectId: string, viewId?: string) => void;
   pickup: (objectId: string, viewId?: string) => void;
-  useItemOnObject: (itemId: string, objectId: string, viewId?: string) => void;
+  useItemOnObject: (itemId: string | null, objectId: string, viewId?: string) => void;
   enterLockDigit: (d: string) => void;
   clearLockDigit: () => void;
   submitLock: () => void;

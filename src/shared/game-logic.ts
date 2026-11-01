@@ -129,39 +129,42 @@ export function applyItemToObject(
   state: SessionState,
   sceneId: string,
   objectId: string,
-  itemId: string,
+  itemId: string | null, // null = click without a selected item
   objects: SceneObject[]
-): { 
-  newState: SessionState; 
-  success: boolean; 
+): {
+  newState: SessionState;
+  success: boolean;
   message: string;
   transformed?: boolean;
 } {
   const obj = objects.find(o => o.id === objectId);
   if (!obj) return { newState: state, success: false, message: 'مورد یافت نشد' };
-  
-  if (!state.inventory.includes(itemId)) {
+
+  if (itemId && !state.inventory.includes(itemId)) {
     return { newState: state, success: false, message: 'شما این آیتم را ندارید' };
   }
 
-  // Check if this object has transforms and the *next* rule requires this item.
+  // Check if this object has transforms and the *next* rule matches.
   // Progress is tracked in session state (`transformsApplied`), never on the editable object.
+  // An empty `requiresItem` means "no item required" — the rule fires with a plain click.
+  let needsItem = false;
   if (obj.transforms && obj.transforms.length > 0) {
     const currentTransform = (state.transformsApplied ?? {})[objectId] ?? -1;
     const nextTransformIndex = currentTransform + 1;
-    
+
     if (nextTransformIndex < obj.transforms.length) {
       const rule = obj.transforms[nextTransformIndex];
-      
-      if (rule.requiresItem === itemId) {
+      const free = !rule.requiresItem; // empty = no item required
+
+      if (free || (itemId !== null && rule.requiresItem === itemId)) {
         // Apply transform
         let newInventory = [...state.inventory];
-        
-        // Consume item if specified (default: true)
-        if (rule.consumesItem !== false) {
-          newInventory = removeOne(newInventory, itemId);
+
+        // Consume the item only when the rule actually required one (default: true)
+        if (!free && rule.consumesItem !== false) {
+          newInventory = removeOne(newInventory, rule.requiresItem);
         }
-        
+
         // Grant new item if specified
         if (rule.grantsItem && !newInventory.includes(rule.grantsItem)) {
           newInventory.push(rule.grantsItem);
@@ -193,14 +196,23 @@ export function applyItemToObject(
           transformed: true,
         };
       }
+      needsItem = true;
     }
+  }
+
+  if (!itemId) {
+    return {
+      newState: state,
+      success: false,
+      message: needsItem ? 'برای استفاده از این مورد، آیتم مناسب را از کیف خود انتخاب کنید' : 'این مورد قابل استفاده نیست',
+    };
   }
 
   // Fallback: check requiresItem (old behavior for containers)
   if (!obj.requiresItem || !obj.requiresItem.includes(itemId)) {
     return { newState: state, success: false, message: 'این آیتم اینجا کار نمی‌کند' };
   }
-  
+
   const sceneDiscovered = state.discoveredObjects[sceneId] || [];
   if (sceneDiscovered.includes(objectId)) {
     return { newState: state, success: false, message: 'این مورد قبلاً باز شده' };

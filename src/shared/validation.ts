@@ -99,8 +99,8 @@ export function validateProject(
         if (!obtainable.has(item)) at(`View of "${o.name}" requires "${item}" but nothing grants it`, 'error', top);
       }
       o.transforms?.forEach((t, i) => {
-        if (!t.requiresItem) at(`"${o.name}" transform ${i + 1} has no required item`, 'error', top);
-        else if (!obtainable.has(t.requiresItem))
+        // An empty requiresItem is valid: it means "no item required" (fires on a plain click).
+        if (t.requiresItem && !obtainable.has(t.requiresItem))
           at(`"${o.name}" transform ${i + 1} requires "${t.requiresItem}" but nothing grants it`, 'error', top);
       });
       // A sprite that requires an item / transforms should actually do something when interacted with.

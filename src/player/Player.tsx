@@ -111,25 +111,24 @@ function ObjSprite({
   const clickObject = usePlayerStore((s) => s.clickObject);
   const pickup = usePlayerStore((s) => s.pickup);
   const useItemOnObject = usePlayerStore((s) => s.useItemOnObject);
+  const say = usePlayerStore((s) => s.setToast);
 
   if (hidden) return null;
 
   const clickable = obj.digit !== undefined || !!obj.requiresItem?.length || !!obj.grantsItem || !!obj.message || !!obj.view || obj.pickupable === true || !!obj.transforms?.length;
 
+  const nextRule = obj.transforms?.[((state.transformsApplied ?? {})[obj.id] ?? -1) + 1];
+  const onlyTransform = !obj.message && obj.digit === undefined && !obj.grantsItem && !obj.requiresItem?.length;
+
   const handleClick = () => {
     if (!clickable) return;
-    if (selectedItem) {
-      useItemOnObject(selectedItem, obj.id, viewId);
-      return;
-    }
-    if (obj.view) {
-      onOpenView(obj.id);
-      return;
-    }
-    if (obj.pickupable) {
-      pickup(obj.id, viewId);
-      return;
-    }
+    if (selectedItem) { useItemOnObject(selectedItem, obj.id, viewId); return; }
+    // rule without an item: executes with a simple click
+    if (nextRule && !nextRule.requiresItem) { useItemOnObject(null, obj.id, viewId); return; }
+    if (obj.view) { onOpenView(obj.id); return; }
+    if (obj.pickupable) { pickup(obj.id, viewId); return; }
+    // transform-only object with no message: show a hint instead of staying silent
+    if (nextRule && onlyTransform) { say('برای استفاده از این مورد، آیتم مناسب را از کیف خود انتخاب کنید'); return; }
     clickObject(obj.id, viewId);
   };
 
