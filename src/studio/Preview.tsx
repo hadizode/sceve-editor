@@ -1,9 +1,9 @@
 import React, { useRef, useState } from 'react';
-import { Stage, Layer, Image as KImage, Rect } from 'react-konva';
+import { Stage, Layer, Image as KImage, Rect, Shape } from 'react-konva';
 import { useScene, useStudioStore } from '../stores/store';
 import type { Asset, BackgroundLayer, SceneObject, Sprite, View } from '../shared/types';
 import { getSprite, resolveSprite } from '../shared/types';
-import { frameNodeAttrs, imageNodeAttrs } from '../shared/geometry';
+import { frameNodeAttrs, imageNodeAttrs, polygonNodePoints, polyActive } from '../shared/geometry';
 import { Bg, useSrc } from './konva-bits';
 import { useElementSize } from './ui';
 
@@ -19,8 +19,9 @@ function PObj({ obj, found, onClick, sprites, assets }: { obj: SceneObject; foun
     if (!sp?.color) return null;
     return <Rect {...frameNodeAttrs(obj)} fill={sp.color} {...click} />;
   }
-  // image drawn at natural size x transform (same math as Studio/Player); hit area = frame (default) or image
-  const imageHit = obj.hitArea === 'image';
+  // image drawn at natural size x transform (same math as Studio/Player); hit area = polygon frame > image > frame
+  const polyHit = polyActive(obj);
+  const imageHit = !polyHit && obj.hitArea === 'image';
   return (
     <>
       <KImage
@@ -37,7 +38,27 @@ function PObj({ obj, found, onClick, sprites, assets }: { obj: SceneObject; foun
           if (c) c.style.cursor = 'default';
         }}
       />
-      {!imageHit && (
+      {polyHit ? (
+        <Shape
+          sceneFunc={(ctx, shape) => {
+            const pts = polygonNodePoints(obj);
+            ctx.beginPath();
+            for (let i = 0; i < pts.length; i += 2) (i ? ctx.lineTo : ctx.moveTo).call(ctx, pts[i], pts[i + 1]);
+            ctx.closePath();
+            ctx.fillStrokeShape(shape);
+          }}
+          fill="rgba(0,0,0,0)"
+          {...click}
+          onMouseEnter={(e) => {
+            const c = e.target.getStage()?.container();
+            if (c) c.style.cursor = 'pointer';
+          }}
+          onMouseLeave={(e) => {
+            const c = e.target.getStage()?.container();
+            if (c) c.style.cursor = 'default';
+          }}
+        />
+      ) : !imageHit && (
         <Rect
           {...frameNodeAttrs(obj)}
           fill="rgba(0,0,0,0)"

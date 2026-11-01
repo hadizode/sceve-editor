@@ -1,6 +1,6 @@
 import React, { useMemo, useRef } from 'react';
 import { useCtx, useCurrentProject, useProjectAssets, useSprites, useStudioStore } from '../stores/store';
-import { assetRef, spriteRef, blankSprite, type SceneObject } from '../shared/types';
+import { assetRef, spriteRef, blankSprite, type FramePoint, type SceneObject } from '../shared/types';
 import { obtainableItems } from '../shared/validation';
 import { fitScale } from '../shared/geometry';
 import { fileToImage } from '../shared/utils';
@@ -119,6 +119,48 @@ function ImageSection({ obj, set }: { obj: SceneObject; set: (p: Partial<SceneOb
       onChange={(n) => set({ [k]: k.startsWith('scale') && n === 0 ? d : n } as Partial<SceneObject>)}
     />
   );
+
+  // ---- polygon frame: per-side sizing / extra sides ----
+  const poly = obj.framePolygon ?? [];
+  const setPoly = (pts: FramePoint[]) => set({ framePolygon: pts.length >= 3 ? pts : undefined });
+  const rectPts = (): FramePoint[] => [
+    { x: 0, y: 0 },
+    { x: obj.width, y: 0 },
+    { x: obj.width, y: obj.height },
+    { x: 0, y: obj.height },
+  ];
+  const regularN = (n: number) =>
+    Array.from({ length: n }, (_, i) => {
+      const a = (Math.PI * 2 * i) / n - Math.PI / 2; // start at top
+      return { x: r1(obj.width / 2 + (obj.width / 2) * Math.cos(a)), y: r1(obj.height / 2 + (obj.height / 2) * Math.sin(a)) };
+    });
+  /** Insert a new vertex on the longest edge (or the given one), slightly outside → grows that side. */
+  const addSide = (edgeIdx?: number) => {
+    if (poly.length < 3) return;
+    let ei = edgeIdx ?? 0;
+    if (edgeIdx === undefined) {
+      let best = -1;
+      poly.forEach((p, i) => {
+        const q = poly[(i + 1) % poly.length];
+        const d = Math.hypot(q.x - p.x, q.y - p.y);
+        if (d > best) { best = d; ei = i; }
+      });
+    }
+    const a = poly[ei], b = poly[(ei + 1) % poly.length];
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
+    const np = { x: r1(mx + (-dy / len) * 8), y: r1(my + (dx / len) * 8) };
+    setPoly([...poly.slice(0, ei + 1), np, ...poly.slice(ei + 1)]);
+  };
+  const removeVertex = (i: number) => {
+    if (poly.length <= 3) return;
+    setPoly(poly.filter((_, j) => j !== i));
+  };
+  const moveVertex = (i: number, p: FramePoint) => setPoly(poly.map((q, j) => (j === i ? p : q)));
+  const sideLen = (i: number) => {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    return Math.round(Math.hypot(b.x - a.x, b.y - a.y) * 10) / 10;
+  };
   return (
     <Section title="🖼 Image (true size)" color="text-cyan-300">
       <p className="text-xs text-gray-500">Drawn at natural size × scale. It may extend past the frame and is never clipped.</p>
@@ -135,11 +177,99 @@ function ImageSection({ obj, set }: { obj: SceneObject; set: (p: Partial<SceneOb
         <button className={btnCls} disabled={!src} onClick={fit}>Fit to frame</button>
       </div>
       <Field label="Hit area">
-        <select className={inputCls} value={obj.hitArea ?? 'frame'} onChange={(e) => set({ hitArea: e.target.value === 'image' ? 'image' : undefined })}>
+        <select className={inputCls} value={obj.hitArea ?? 'frame'} onChange={(e) => set({ hitArea: e.target.value === 'image' ? 'image' : e.target.value === 'polygon' ? 'polygon' : undefined })}>
           <option value="frame">Frame (default)</option>
           <option value="image">Image shape</option>
+          <option value="polygon">Polygon frame</option>
         </select>
       </Field>
+    </Section>
+  );
+}
+
+/**
+ * Polygon frame editor — per-side sizing and adding sides to a sprite's frame.
+ * Points are frame-local (0..width / 0..height); the shape replaces the rectangle as the
+ * selection outline and click/hit area automatically once it has ≥3 points.
+ */
+function FramePolygonSection({ obj, set }: { obj: SceneObject; set: (p: Partial<SceneObject>, key?: string) => void }) {
+  const poly = obj.framePolygon ?? [];
+  const setPoly = (pts: FramePoint[]) => set({ framePolygon: pts.length >= 3 ? pts : undefined });
+  const rectPts = (): FramePoint[] => [
+    { x: 0, y: 0 },
+    { x: obj.width, y: 0 },
+    { x: obj.width, y: obj.height },
+    { x: 0, y: obj.height },
+  ];
+  const regularN = (n: number) =>
+    Array.from({ length: n }, (_, i) => {
+      const a = (Math.PI * 2 * i) / n - Math.PI / 2; // first vertex at top
+      return { x: r1(obj.width / 2 + (obj.width / 2) * Math.cos(a)), y: r1(obj.height / 2 + (obj.height / 2) * Math.sin(a)) };
+    });
+  /** Insert a new vertex on the longest edge (or a chosen one), pushed slightly outward → adds a side. */
+  const addSide = (edgeIdx?: number) => {
+    if (poly.length < 3) return;
+    let ei = 0;
+    if (edgeIdx === undefined) {
+      let best = -1;
+      poly.forEach((p, i) => {
+        const q = poly[(i + 1) % poly.length];
+        const d = Math.hypot(q.x - p.x, q.y - p.y);
+        if (d > best) { best = d; ei = i; }
+      });
+    } else ei = edgeIdx;
+    const a = poly[ei], b = poly[(ei + 1) % poly.length];
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
+    const np = { x: r1(mx + (-dy / len) * 8), y: r1(my + (dx / len) * 8) };
+    setPoly([...poly.slice(0, ei + 1), np, ...poly.slice(ei + 1)]);
+  };
+  const removeVertex = (i: number) => {
+    if (poly.length <= 3) return;
+    setPoly(poly.filter((_, j) => j !== i));
+  };
+  const moveVertex = (i: number, p: FramePoint) => setPoly(poly.map((q, j) => (j === i ? p : q)));
+  const sideLen = (i: number) => {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    return Math.round(Math.hypot(b.x - a.x, b.y - a.y) * 10) / 10;
+  };
+  return (
+    <Section title="📐 Polygon frame (sides)" color="text-fuchsia-300">
+      {!poly.length ? (
+        <>
+          <p className="text-xs text-gray-500">Give this sprite a custom polygon frame instead of a rectangle. Each side can be sized independently, and you can add extra sides (triangle → pentagon → …). It becomes the click/hit area automatically.</p>
+          <div className="flex flex-wrap gap-1">
+            <button className={btnCls} onClick={() => setPoly(rectPts())}>▭ From frame</button>
+            <button className={btnCls} onClick={() => setPoly(regularN(3))}>△ Triangle</button>
+            <button className={btnCls} onClick={() => setPoly(regularN(5))}>⬠ Pentagon</button>
+            <button className={btnCls} onClick={() => setPoly(regularN(6))}>⬡ Hexagon</button>
+            <button className={btnCls} onClick={() => setPoly(regularN(8))}>Octagon</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-gray-400">{poly.length} vertices · drag the cyan dots on canvas or edit below</p>
+            <button className={`${btnCls} !bg-red-900 hover:!bg-red-800`} onClick={() => set({ framePolygon: undefined })}>✕ Remove polygon</button>
+          </div>
+          <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
+            {poly.map((p, i) => (
+              <div key={i} className="flex items-center gap-1 bg-surface-light rounded px-1 py-1">
+                <span className="text-[10px] text-gray-400 w-8 shrink-0">V{i + 1}</span>
+                <NumInput value={r1(p.x)} onChange={(n) => moveVertex(i, { ...p, x: n })} />
+                <NumInput value={r1(p.y)} onChange={(n) => moveVertex(i, { ...p, y: n })} />
+                <span className="text-[10px] text-gray-500 w-12 shrink-0 text-right" title={`side V${i + 1}→V${(i % poly.length) + 1}`}>∠ {sideLen(i)}</span>
+                <button className={`${btnCls} shrink-0`} disabled={poly.length <= 3} title="Remove this vertex" onClick={() => removeVertex(i)}>−</button>
+                <button className={`${btnCls} shrink-0`} title="Add a new side after this vertex" onClick={() => addSide(i)}>+</button>
+              </div>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-1">
+            <button className={btnCls} onClick={() => addSide()}>＋ Add side (longest)</button>
+            <button className={btnCls} onClick={() => setPoly(rectPts())}>↺ Reset to frame</button>
+          </div>
+        </>
+      )}
     </Section>
   );
 }
@@ -247,6 +377,7 @@ export function PropertiesPanel() {
       </Field>
 
       <ImageSection obj={obj} set={set} />
+      <FramePolygonSection obj={obj} set={set} />
 
       <div className="grid grid-cols-2 gap-2">
         <Field label="X"><NumInput value={r1(obj.x)} onChange={(n) => set({ x: n })} /></Field>
