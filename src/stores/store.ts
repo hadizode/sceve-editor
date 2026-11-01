@@ -30,10 +30,12 @@ import { nowIso, uid, type LoadedImage } from '../shared/utils';
 import {
   allRoomsComplete,
   applyItemToObject,
+  canUseDoor,
   discoverObject,
   isRoomComplete,
   pickupObject as pickupObj,
   roomDigitTargets,
+  tryEnterDoor,
   validateFinalLock,
 } from '../shared/game-logic';
 import { createSessionState, type Player, type Session, type SessionState } from '../shared/types';
@@ -1010,6 +1012,17 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
       const scene = sceneOfCurrent();
       if (!g.session || !scene) return;
       const objs = viewId ? scene.objects.find((o) => o.id === viewId)?.view?.objects ?? [] : scene.objects;
+      const obj = objs.find((o) => o.id === objectId);
+      // Doors take the player into another room (locked doors only show a message).
+      if (obj?.door) {
+        const rooms = Object.values(g.scenes).filter((sc) => sc.projectId === g.session!.projectId);
+        const res = tryEnterDoor(g.session.state, obj, rooms);
+        if (res) {
+          if (res.message) say(res.message, 4000);
+          if (res.entered) commit(res.newState);
+          return;
+        }
+      }
       const res = discoverObject(g.session.state, viewId || scene.id, objectId, objs);
       if (res.grantsItem) say(`🎒 آیتم به دست آمد: ${itemName(objs, res.grantsItem)}`, 5000);
       else if (res.message) say(res.message);
@@ -1021,7 +1034,8 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
       const scene = sceneOfCurrent();
       if (!g.session || !scene) return;
       const objs = viewId ? scene.objects.find((o) => o.id === viewId)?.view?.objects ?? [] : scene.objects;
-      const res = pickupObj(g.session.state, viewId || scene.id, objectId, objs);
+      // Pickups can fire transition effects too (open doors, change other rooms…).
+      const res = pickupObj(g.session.state, viewId || scene.id, objectId, objs, { scenesById: g.scenes });
       if (res.message) say(res.message);
       if (res.success) commit(res.newState);
     },
@@ -1031,7 +1045,8 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
       const scene = sceneOfCurrent();
       if (!g.session || !scene) return;
       const objs = viewId ? scene.objects.find((o) => o.id === viewId)?.view?.objects ?? [] : scene.objects;
-      const res = applyItemToObject(g.session.state, viewId || scene.id, objectId, itemId, objs);
+      // Transform rules may carry effects that reach other objects/rooms — pass the whole project in.
+      const res = applyItemToObject(g.session.state, viewId || scene.id, objectId, itemId, objs, { scenesById: g.scenes });
       if (res.message) say(res.message, res.success ? 5000 : 3000);
       if (res.success) {
         commit(res.newState);
