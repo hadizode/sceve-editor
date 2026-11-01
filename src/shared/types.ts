@@ -234,7 +234,12 @@ export interface View {
   closeMessage?: string;
 }
 
-/** What counts as a click on a sprite: its logical frame (default), the rendered image's bounds, or the custom polygon. */
+/**
+ * What counts as a click on a sprite: its logical frame (default) or the rendered image's bounds.
+ * NOTE: 'polygon' is accepted when reading legacy data but is meaningless as a stored mode —
+ * a polygon frame (framePolygon, ≥3 points) always REPLACES the rect frame as the hit area
+ * automatically, so it never needs to be selected here.
+ */
 export type HitArea = 'frame' | 'image' | 'polygon';
 
 /**
@@ -605,7 +610,8 @@ export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): Scene
     scaleY: Number.isFinite(o.scaleY) && o.scaleY !== 0 && o.scaleY !== 1 ? o.scaleY : undefined,
     imageOffsetX: Number.isFinite(o.imageOffsetX) && o.imageOffsetX !== 0 ? o.imageOffsetX : undefined,
     imageOffsetY: Number.isFinite(o.imageOffsetY) && o.imageOffsetY !== 0 ? o.imageOffsetY : undefined,
-    hitArea: o.hitArea === 'image' || o.hitArea === 'polygon' ? o.hitArea : undefined,
+    // 'polygon' is legacy noise now (the polygon auto-replaces the frame) — keep only 'image'.
+    hitArea: o.hitArea === 'image' ? 'image' : undefined,
     framePolygon: normalizeFramePolygon(o.framePolygon),
     visible: o.visible !== false,
     locked: o.locked === true,
