@@ -6,7 +6,7 @@ import ProjectsView from './ProjectsView';
 import { PropertiesPanel } from './Properties';
 import { TransitionsTab } from './Transitions';
 import { AssetsPanel, BackgroundPanel, ChainPanel, ChecksPanel, LayersPanel, RoomProps, RoomsPanel, useIssues } from './Panels';
-import { inputCls, isTyping, NumInput } from './ui';
+import { btnCls, btnPrimary, Group, IconBtn, isTyping, NumInput } from './ui';
 
 type Tab = 'props' | 'transitions' | 'layers' | 'assets' | 'chain' | 'checks';
 const st = () => useStudioStore.getState();
@@ -72,39 +72,49 @@ function Editor() {
 
   if (!project) return null;
 
-  const tb = (on: boolean) => `px-2 py-1 rounded text-xs text-white ${on ? 'bg-indigo-600' : 'bg-gray-700 hover:bg-gray-600'}`;
   const tabBtn = (t: Tab, label: string, badge?: number) => (
     <button
       key={t}
-      className={`flex-1 px-1 py-2 text-xs border-b-2 ${tab === t ? 'border-indigo-500 text-white' : 'border-transparent text-gray-400 hover:text-white'}`}
+      role="tab"
+      aria-selected={tab === t}
+      title={label}
+      className={`relative flex-1 px-1 py-2.5 text-xs border-b-2 ${tab === t ? 'border-primary text-white bg-surface-light/50' : 'border-transparent text-gray-400 hover:text-white hover:bg-surface-light/30'}`}
       onClick={() => setTab(t)}
     >
       {label}
-      {!!badge && <span className="ml-1 bg-red-600 text-white rounded-full px-1.5 text-[10px]">{badge}</span>}
+      {!!badge && <span className="ml-1 bg-danger text-white rounded-full px-1.5 text-[10px]">{badge}</span>}
     </button>
   );
 
   return (
-    <div className="h-full flex flex-col bg-gray-900 text-white">
+    // dir="ltr": the page body is RTL, which would otherwise mirror the sidebar order and borders.
+    // Persian text fields set their own dir="rtl".
+    <div dir="ltr" className="h-full flex flex-col bg-gray-900 text-white">
       {/* Toolbar */}
-      <div className="bg-surface border-b border-gray-700 px-3 py-2 flex items-center gap-2 flex-wrap flex-shrink-0">
-        <button className="bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-sm" onClick={() => st().closeProject()}>← Projects</button>
+      <div className="bg-surface border-b border-line px-3 py-2 flex items-center gap-2 flex-wrap flex-shrink-0">
+        <button className={btnCls} onClick={() => st().closeProject()}>← Projects</button>
         <input
-          className="bg-transparent border border-transparent hover:border-gray-600 focus:border-indigo-500 rounded px-2 py-1 text-indigo-300 font-semibold text-sm outline-none w-56"
+          className="bg-transparent border border-transparent hover:border-gray-600 focus:border-primary rounded-lg px-2 py-1 text-indigo-300 font-semibold text-sm outline-none w-56"
           value={project.name}
+          aria-label="Project name"
           onChange={(e) => st().updateProject({ name: e.target.value })}
         />
         <div className="flex-1" />
-        <button className={tb(false)} disabled={!canUndo} onClick={() => st().undo()} title="Undo (Ctrl+Z)">↶ Undo</button>
-        <button className={tb(false)} disabled={!canRedo} onClick={() => st().redo()} title="Redo (Ctrl+Y)">↷ Redo</button>
-        <div className="h-5 w-px bg-gray-600" />
-        <button className={tb(showGrid)} onClick={() => st().toggleGrid()}>Grid</button>
-        <div className="w-14"><NumInput value={gridSize} min={5} onChange={(n) => st().setGridSize(n)} /></div>
-        <button className={tb(snap)} onClick={() => st().toggleSnap()}>Snap</button>
-        <button className={tb(labels)} onClick={() => st().toggleLabels()}>Labels</button>
-        <div className="h-5 w-px bg-gray-600" />
-        <button className={tb(false)} onClick={exportJson}>Export JSON</button>
-        <button className={`px-2 py-1 rounded text-xs text-white ${preview ? 'bg-amber-600' : 'bg-gray-700 hover:bg-gray-600'}`} onClick={() => setPreview((p) => !p)}>
+
+        <Group>
+          <IconBtn title="Undo (Ctrl+Z)" aria-label="Undo" disabled={!canUndo} onClick={() => st().undo()}>↶</IconBtn>
+          <IconBtn title="Redo (Ctrl+Y)" aria-label="Redo" disabled={!canRedo} onClick={() => st().redo()}>↷</IconBtn>
+        </Group>
+
+        <Group>
+          <IconBtn active={showGrid} onClick={() => st().toggleGrid()}>Grid</IconBtn>
+          <div className="w-14 px-0.5"><NumInput value={gridSize} min={5} onChange={(n) => st().setGridSize(n)} /></div>
+          <IconBtn active={snap} onClick={() => st().toggleSnap()}>Snap</IconBtn>
+          <IconBtn active={labels} onClick={() => st().toggleLabels()}>Labels</IconBtn>
+        </Group>
+
+        <button className={btnCls} onClick={exportJson}>Export JSON</button>
+        <button className={preview ? 'inline-flex items-center gap-1 bg-accent hover:bg-amber-500 text-black px-3 py-1.5 rounded-lg text-xs font-semibold' : btnPrimary} onClick={() => setPreview((p) => !p)}>
           {preview ? '✏️ Edit' : '▶ Preview'}
         </button>
       </div>
@@ -114,24 +124,21 @@ function Editor() {
       ) : (
         <div className="flex-1 flex min-h-0">
           {/* Left: tools */}
-          <aside className="w-52 bg-surface border-r border-gray-700 overflow-y-auto flex-shrink-0">
-            <div className="p-3 border-b border-gray-700">
-              <h3 className="text-xs font-bold text-gray-400 mb-2">{ctx?.view ? 'Add to view' : 'Add sprite'}</h3>
+          <aside className="w-52 bg-surface border-r border-line overflow-y-auto flex-shrink-0">
+            <div className="p-3 border-b border-line">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-2">{ctx?.view ? 'Add to view' : 'Add sprite'}</h3>
               {/* One unified sprite — it can be anything (image, color, invisible hotspot, pickup, transform…) */}
-              <button
-                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white px-2 py-1.5 rounded text-xs"
-                onClick={() => st().addObject()}
-              >
+              <button className={`${btnPrimary} w-full py-2`} onClick={() => st().addObject()}>
                 🧩 ＋ Add sprite
               </button>
-              <p className="text-[10px] text-gray-500 mt-1.5 leading-relaxed">
+              <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed" dir="rtl">
                 هر اسپرایت می‌تواند هر چیزی باشد: تصویر، رنگ خالص، نامرئی تا پس از ترنسفورم، قابل برداشتن، قفل‌دار و…
               </p>
             </div>
             {!ctx?.view && <RoomsPanel />}
             {!ctx?.view && <RoomProps />}
             <BackgroundPanel />
-            <div className="p-3 text-[11px] text-gray-500 space-y-0.5">
+            <div className="p-3 text-xs text-gray-400 space-y-0.5">
               <p>Ctrl+Z / Y — undo / redo</p>
               <p>Ctrl+C / V / D — copy / paste / duplicate</p>
               <p>Arrows — nudge (Shift = 10px)</p>
@@ -145,8 +152,8 @@ function Editor() {
           </main>
 
           {/* Right: tabs */}
-          <aside className="w-72 bg-surface border-l border-gray-700 flex flex-col flex-shrink-0 min-h-0">
-            <div className="flex border-b border-gray-700 flex-shrink-0">
+          <aside className="w-72 bg-surface border-l border-line flex flex-col flex-shrink-0 min-h-0">
+            <div role="tablist" className="flex border-b border-line flex-shrink-0">
               {tabBtn('props', 'Props')}
               {tabBtn('transitions', '🔄 Transitions')}
               {tabBtn('layers', 'Layers')}
@@ -154,7 +161,7 @@ function Editor() {
               {tabBtn('chain', 'Chain')}
               {tabBtn('checks', 'Checks', errors)}
             </div>
-            <div className="flex-1 overflow-y-auto min-h-0">
+            <div className="flex-1 overflow-y-auto min-h-0" role="tabpanel">
               {tab === 'props' && <PropertiesPanel />}
               {tab === 'transitions' && <TransitionsTab />}
               {tab === 'layers' && <LayersPanel />}
@@ -172,6 +179,6 @@ function Editor() {
 export default function Studio() {
   const hydrated = useStudioStore((s) => s.hydrated);
   const screen = useStudioStore((s) => s.screen);
-  if (!hydrated) return <div className="h-full flex items-center justify-center text-gray-400">Loading…</div>;
+  if (!hydrated) return <div className="h-full flex items-center justify-center text-gray-400">در حال بارگذاری…</div>;
   return screen === 'projects' ? <ProjectsView /> : <Editor />;
 }
