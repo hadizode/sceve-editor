@@ -279,3 +279,109 @@ export function getNextClue(state: SessionState, scene: Scene): SceneObject | nu
 export function allRoomsComplete(state: SessionState, scenes: Scene[]): boolean {
   return scenes.every(scene => isRoomComplete(state, scene));
 }
+
+// ============ Geometry helpers (hit areas & polygon frames) ============
+
+export interface Point { x: number; y: number }
+
+/**
+ * Compute the 4 corners (polygon) of a rotated object's bounding box.
+ * Rotation is around the object's center, matching Konva semantics.
+ */
+export function getObjectCorners(obj: {
+  x: number; y: number; width: number; height: number; rotation?: number;
+}): Point[] {
+  const cx = obj.x + obj.width / 2;
+  const cy = obj.y + obj.height / 2;
+  const rad = ((obj.rotation || 0) * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const hw = obj.width / 2;
+  const hh = obj.height / 2;
+  const local: Point[] = [
+    { x: -hw, y: -hh },
+    { x: hw, y: -hh },
+    { x: hw, y: hh },
+    { x: -hw, y: hh },
+  ];
+  return local.map(p => ({
+    x: cx + p.x * cos - p.y * sin,
+    y: cy + p.x * sin + p.y * cos,
+  }));
+}
+
+/**
+ * Flatten corners into a Konva Polygon `points` array [x1,y1,x2,y2,...].
+ */
+export function getCornersAsPoints(obj: {
+  x: number; y: number; width: number; height: number; rotation?: number;
+}): number[] {
+  return getObjectCorners(obj).flatMap(p => [p.x, p.y]);
+}
+
+/**
+ * Axis-aligned bounding box of the rotated object (used for label placement).
+ */
+export function getRotatedBounds(obj: {
+  x: number; y: number; width: number; height: number; rotation?: number;
+}): { minX: number; minY: number; maxX: number; maxY: number } {
+  const pts = getObjectCorners(obj);
+  const xs = pts.map(p => p.x);
+  const ys = pts.map(p => p.y);
+  return { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
+}
+
+/**
+ * Point-in-polygon test (ray casting). Used to build accurate hit areas
+ * so transparent image pixels don't swallow clicks on objects behind them.
+ */
+export function pointInPolygon(px: number, py: number, points: Point[]): boolean {
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const xi = points[i].x, yi = points[i].y;
+    const xj = points[j].x, yj = points[j].y;
+    const intersects = (yi > py) !== (yj > py) &&
+      px < ((xj - xi) * (py - yi)) / (yj - yi) + xi;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * Build a Konva `hitFunc` for a clickable region of an object.
+ *
+ * Konva invokes `hitFunc` with the canvas context already transformed into
+ * the shape's LOCAL coordinate space (position/rotation/scale applied), and
+ * then performs its own point-in-path containment test. Tracing the desired
+ * polygon here therefore gives an exact hit area for the object:
+ *  - no custom `hitArea`  -> full width×height rectangle
+ *  - custom `hitArea`     -> the flattened polygon [x1,y1,x2,y2,...]
+ * This fixes the previous behavior where the whole bounding box of rotated
+ * or irregularly-shaped art was clickable (and decorative overlays could
+ * swallow clicks meant for objects behind them).
+ */
+export function createObjectHitFunc(width: number, height: number, hitArea?: number[]) {
+  if (hitArea && hitArea.length >= 6) {
+    const pts = hitArea;
+    return (ctx: any) => {
+      ctx.beginPath();
+      ctx.moveTo(pts[0], pts[1]);
+      for (let i = 2; i + 1 < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]);
+      ctx.closePath();
+    };
+  }
+  return (ctx: any) => {
+    ctx.beginPath();
+    ctx.rect(0, 0, width, height);
+    ctx.closePath();
+  };
+}
+
+/**
+ * Convert a flattened [x1,y1,x2,y2,...] array into Point[].
+ */
+export function toPoints(flat: number[]): Point[] {
+  const pts: Point[] = [];
+  for (let i = 0; i + 1 < flat.length; i += 2) pts.push({ x: flat[i], y: flat[i + 1] });
+  return pts;
+}

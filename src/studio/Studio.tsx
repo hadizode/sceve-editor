@@ -1,9 +1,10 @@
 import React, { useState, useRef } from 'react';
-import { Stage, Layer, Image as KImage, Rect, Text, Transformer, Group, Line, Circle } from 'react-konva';
+import { Stage, Layer, Image as KImage, Rect, Text, Transformer, Group, Line, Circle, Shape } from 'react-konva';
 import useImage from 'use-image';
 import { useStudioStore } from '../stores/store';
 import type { SceneObject, ObjectType, View, Asset } from '../shared/types';
 import { validateScene } from '../shared/types';
+import { getObjectCorners, getRotatedBounds, createObjectHitFunc } from '../shared/game-logic';
 
 // ============ Konva Image Component ============
 function KonvaImage({ obj, isSelected, onSelect, onDragEnd, onChange }: {
@@ -13,7 +14,28 @@ function KonvaImage({ obj, isSelected, onSelect, onDragEnd, onChange }: {
   onDragEnd: (id: string, x: number, y: number) => void;
   onChange: (id: string, updates: Partial<SceneObject>) => void;
 }) {
-  const [image] = useImage(obj.imageUrl);
+  const spriteFrames = obj.sprite?.frames;
+  const [spriteFrame, setSpriteFrame] = React.useState(obj.sprite?.startFrame ?? 0);
+  React.useEffect(() => {
+    if (!spriteFrames || spriteFrames.length < 2 || !obj.sprite) return;
+    let current = Math.min(obj.sprite.startFrame ?? 0, spriteFrames.length - 1);
+    setSpriteFrame(current);
+    const interval = setInterval(() => {
+      current += 1;
+      if (current >= spriteFrames.length) {
+        if (obj.sprite!.loop) current = 0;
+        else { clearInterval(interval); return; }
+      }
+      setSpriteFrame(current);
+    }, 1000 / Math.max(1, obj.sprite.fps));
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spriteFrames?.join('|'), obj.sprite?.fps, obj.sprite?.loop]);
+
+  const displayUrl = spriteFrames && spriteFrames.length > 0
+    ? spriteFrames[Math.min(spriteFrame, spriteFrames.length - 1)]
+    : obj.imageUrl;
+  const [image] = useImage(displayUrl);
   const shapeRef = useRef<any>(null);
   const trRef = useRef<any>(null);
 
@@ -33,9 +55,10 @@ function KonvaImage({ obj, isSelected, onSelect, onDragEnd, onChange }: {
         image={image}
         x={obj.x}
         y={obj.y}
-        width={obj.width}
-        height={obj.height}
+        width={obj.sprite?.frameWidth ?? obj.width}
+        height={obj.sprite?.frameHeight ?? obj.height}
         rotation={obj.rotation}
+        hitFunc={createObjectHitFunc(obj.sprite?.frameWidth ?? obj.width, obj.sprite?.frameHeight ?? obj.height)}
         draggable
         onClick={(e) => onSelect(obj.id, e.evt.shiftKey)}
         onTap={() => onSelect(obj.id, false)}
@@ -64,39 +87,94 @@ function KonvaImage({ obj, isSelected, onSelect, onDragEnd, onChange }: {
           anchorFill="#6366f1"
         />
       )}
-      {/* Object type indicator */}
-      <Rect
-        x={obj.x}
-        y={obj.y - 18}
-        width={obj.width}
-        height={16}
-        fill={getTypeColor(obj.type)}
-        opacity={0.8}
-        cornerRadius={4}
-        listening={false}
-      />
-      <Text
-        x={obj.x}
-        y={obj.y - 18}
-        width={obj.width}
-        text={obj.name}
-        fontSize={10}
-        fill="white"
-        align="center"
-        listening={false}
-      />
-      {/* View indicator */}
-      {obj.view && (
-        <Rect
-          x={obj.x + obj.width - 16}
-          y={obj.y + obj.height - 16}
-          width={14}
-          height={14}
-          fill="#6366f1"
-          cornerRadius={3}
+      {/* Selection frame: polygon that follows the object's rotation */}
+      {isSelected && (
+        <Shape
+          sceneFunc={(ctx: any) => {
+            const corners = getObjectCorners({
+              x: obj.x - 3,
+              y: obj.y - 3,
+              width: (obj.sprite?.frameWidth ?? obj.width) + 6,
+              height: (obj.sprite?.frameHeight ?? obj.height) + 6,
+              rotation: obj.rotation,
+            });
+            ctx.beginPath();
+            ctx.moveTo(corners[0].x, corners[0].y);
+            for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y);
+            ctx.closePath();
+            ctx.strokePath();
+          }}
+          stroke="#6366f1"
+          strokeWidth={1.5}
           listening={false}
         />
       )}
+      {/* Hit-area preview: shows the custom polygonal click region when defined */}
+      {obj.hitArea && obj.hitArea.length >= 6 && (
+        <Group x={obj.x} y={obj.y} rotation={obj.rotation} listening={false}>
+          <Shape
+            sceneFunc={(ctx: any) => {
+              const pts = obj.hitArea!;
+              ctx.beginPath();
+              ctx.moveTo(pts[0], pts[1]);
+              for (let i = 2; i + 1 < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]);
+              ctx.closePath();
+              ctx.fillStrokeShape(ctx);
+            }}
+            stroke="#10b981"
+            strokeWidth={1}
+            dash={[4, 3]}
+            fill="rgba(16,185,129,0.12)"
+            listening={false}
+          />
+        </Group>
+      )}
+      {/* Object type indicator (placed at the rotated bounding box top) */}
+      {(() => {
+        const b = getRotatedBounds({
+          x: obj.x,
+          y: obj.y,
+          width: obj.sprite?.frameWidth ?? obj.width,
+          height: obj.sprite?.frameHeight ?? obj.height,
+          rotation: obj.rotation,
+        });
+        return (
+          <>
+            <Rect
+              x={b.minX}
+              y={b.minY - 18}
+              width={b.maxX - b.minX}
+              height={16}
+              fill={getTypeColor(obj.type)}
+              opacity={0.8}
+              cornerRadius={4}
+              listening={false}
+            />
+            <Text
+              x={b.minX}
+              y={b.minY - 18}
+              width={b.maxX - b.minX}
+              text={obj.name}
+              fontSize={10}
+              fill="white"
+              align="center"
+              listening={false}
+            />
+            {/* View indicator */}
+            {obj.view && (
+              <Rect
+                x={b.maxX - 16}
+                y={b.maxY - 16}
+                width={14}
+                height={14}
+                fill="#6366f1"
+                cornerRadius={3}
+                listening={false}
+              />
+            )}
+          </>
+        );
+      })()}
     </Group>
   );
 }
@@ -207,6 +285,108 @@ function PropertiesPanel() {
           <input type="number" className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
             value={Math.round(obj.height)} onChange={e => handleChange('height', Number(e.target.value))} />
         </div>
+      </div>
+
+      {/* Hit Area Section */}
+      <div className="border-t border-gray-700 pt-3 mt-3">
+        <h4 className="font-bold text-green-300 text-sm mb-2">🎯 Hit Area (polygon)</h4>
+        <p className="text-xs text-gray-500 mb-1">
+          Points [x1,y1,x2,y2,...] in local coords (relative to X/Y, before rotation).
+          Empty = full rectangle.
+        </p>
+        <textarea
+          className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white text-xs font-mono"
+          rows={2}
+          value={(obj.hitArea || []).join(', ')}
+          placeholder="e.g. 10,0 60,0 70,40 0,40"
+          onChange={e => {
+            const nums = e.target.value.split(/[\s,]+/).filter(Boolean).map(Number).filter(n => !isNaN(n));
+            handleChange('hitArea', nums.length >= 6 ? nums : undefined);
+          }}
+        />
+        {obj.hitArea && obj.hitArea.length >= 6 && (
+          <button
+            className="mt-1 bg-gray-700 hover:bg-gray-600 text-white px-2 py-0.5 rounded text-xs"
+            onClick={() => handleChange('hitArea', undefined)}
+          >
+            Reset to rectangle
+          </button>
+        )}
+      </div>
+
+      {/* Sprite Frames Section */}
+      <div className="border-t border-gray-700 pt-3 mt-3">
+        <h4 className="font-bold text-cyan-300 text-sm mb-2">✨ Sprite Frames (animation)</h4>
+        {obj.sprite ? (
+          <div className="space-y-2">
+            <div>
+              <label className="text-gray-500 text-xs">Frame URLs (one per line)</label>
+              <textarea
+                className="w-full bg-gray-800 border border-gray-600 rounded px-1 py-0.5 text-white text-xs font-mono"
+                rows={3}
+                value={obj.sprite.frames.join('\n')}
+                onChange={e => {
+                  const frames = e.target.value.split('\n').map(f => f.trim()).filter(Boolean);
+                  handleChange('sprite', { ...obj.sprite!, frames });
+                }}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-gray-500 text-xs">FPS</label>
+                <input
+                  type="number" min={1}
+                  className="w-full bg-gray-800 border border-gray-600 rounded px-1 py-0.5 text-white text-xs"
+                  value={obj.sprite.fps}
+                  onChange={e => handleChange('sprite', { ...obj.sprite!, fps: Math.max(1, Number(e.target.value) || 1) })}
+                />
+              </div>
+              <label className="flex items-center gap-1 text-gray-400 text-xs mt-4">
+                <input
+                  type="checkbox"
+                  checked={obj.sprite.loop}
+                  onChange={e => handleChange('sprite', { ...obj.sprite!, loop: e.target.checked })}
+                />
+                Loop
+              </label>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {obj.sprite.frames.map((f, i) => (
+                <img key={i} src={f} alt={`frame ${i + 1}`} className="w-10 h-10 object-contain bg-gray-800 rounded border border-gray-600" title={`Frame ${i + 1}`} />
+              ))}
+            </div>
+            <button
+              className="w-full bg-red-700 hover:bg-red-600 text-white px-2 py-1 rounded text-xs"
+              onClick={() => handleChange('sprite', undefined)}
+            >
+              Remove Sprite
+            </button>
+          </div>
+        ) : (
+          <button
+            className="w-full bg-cyan-700 hover:bg-cyan-600 text-white px-2 py-1.5 rounded text-xs"
+            onClick={() => {
+              const fileInput = document.createElement('input');
+              fileInput.type = 'file';
+              fileInput.accept = 'image/*';
+              fileInput.multiple = true;
+              fileInput.onchange = () => {
+                const files = Array.from(fileInput.files || []);
+                if (files.length === 0) return;
+                Promise.all(files.map(f => new Promise<string>(res => {
+                  const r = new FileReader();
+                  r.onload = () => res(r.result as string);
+                  r.readAsDataURL(f);
+                }))).then(urls => {
+                  handleChange('sprite', { frames: urls, fps: 8, loop: true });
+                });
+              };
+              fileInput.click();
+            }}
+          >
+            + Add Sprite Frames (upload images)
+          </button>
+        )}
       </div>
 
       <div>

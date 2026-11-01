@@ -17,6 +17,11 @@ function makeSvg(text: string, color: string, w = 100, h = 100, emoji = ''): str
   )}`;
 }
 
+// Sprite frame generator (for animated objects)
+function makeFrame(label: string, color: string, w = 40, h = 60): string {
+  return makeSvg(label, color, w, h, '🕯️');
+}
+
 export const SEED_BACKGROUND = `image/svg+xml,${encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600">
     <defs>
@@ -176,6 +181,8 @@ export const SEED_SCENE: Scene = {
       y: 440,
       width: 140,
       height: 70,
+      // Octagonal approximation of the oval rug so corner clicks don't hit empty space
+      hitArea: [35, 0, 105, 0, 140, 20, 140, 50, 105, 70, 35, 70, 0, 50, 0, 20],
       rotation: 0,
       zIndex: 1,
       layerIndex: 1,
@@ -229,6 +236,15 @@ export const SEED_SCENE: Scene = {
       y: 290,
       width: 35,
       height: 50,
+      // Flame-shaped hit area: only the candle body is clickable,
+      // so clicks near its corners pass through to objects behind it.
+      hitArea: [8, 0, 27, 0, 35, 50, 0, 50],
+      // Animated flicker: 3-frame sprite sequence at 6 fps
+      sprite: {
+        frames: [makeFrame('Flicker 1', '#f59e0b', 40, 60), makeFrame('Flicker 2', '#d97706', 40, 60), makeFrame('Flicker 3', '#fbbf24', 40, 60)],
+        fps: 6,
+        loop: true,
+      },
       rotation: 0,
       zIndex: 2,
       layerIndex: 2,
