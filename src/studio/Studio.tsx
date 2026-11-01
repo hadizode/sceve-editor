@@ -4,10 +4,11 @@ import Canvas from './Canvas';
 import Preview from './Preview';
 import ProjectsView from './ProjectsView';
 import { PropertiesPanel } from './Properties';
+import { TransitionsTab } from './Transitions';
 import { AssetsPanel, BackgroundPanel, ChainPanel, ChecksPanel, LayersPanel, RoomProps, RoomsPanel, useIssues } from './Panels';
 import { inputCls, isTyping, NumInput } from './ui';
 
-type Tab = 'props' | 'layers' | 'assets' | 'chain' | 'checks';
+type Tab = 'props' | 'transitions' | 'layers' | 'assets' | 'chain' | 'checks';
 const st = () => useStudioStore.getState();
 
 function Editor() {
@@ -147,6 +148,7 @@ function Editor() {
           <aside className="w-72 bg-surface border-l border-gray-700 flex flex-col flex-shrink-0 min-h-0">
             <div className="flex border-b border-gray-700 flex-shrink-0">
               {tabBtn('props', 'Props')}
+              {tabBtn('transitions', '🔄 Transitions')}
               {tabBtn('layers', 'Layers')}
               {tabBtn('assets', 'Assets')}
               {tabBtn('chain', 'Chain')}
@@ -154,6 +156,7 @@ function Editor() {
             </div>
             <div className="flex-1 overflow-y-auto min-h-0">
               {tab === 'props' && <PropertiesPanel />}
+              {tab === 'transitions' && <TransitionsTab />}
               {tab === 'layers' && <LayersPanel />}
               {tab === 'assets' && <AssetsPanel />}
               {tab === 'chain' && <ChainPanel />}

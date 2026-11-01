@@ -102,10 +102,14 @@ function ObjSprite({
   const tIndex = (state.transformsApplied ?? {})[obj.id] ?? -1;
   const applied = obj.transforms?.[tIndex];
   // After a transform fires, the object takes on the rule's new sprite ("بعد از ترنسفورم عکس بگیرن").
-  const ref = applied?.newSpriteId ? transformRef(applied.newSpriteId) : obj.spriteRef;
+  // Effects can also transform OTHER objects automatically — the engine records those under the same
+  // `transformsApplied` map, so we show that rule's visuals too when no direct rule has fired yet.
+  const autoRule = applied ? undefined : obj.transforms?.[Math.max(tIndex, 0)];
+  const shown = applied ?? (tIndex >= 0 ? autoRule : undefined);
+  const ref = shown?.newSpriteId ? transformRef(shown.newSpriteId) : obj.spriteRef;
   const sp = getSprite(ref, sprites);
   const url = spriteSrc(ref, sprites, assets);
-  const name = applied?.newName || obj.name;
+  const name = shown?.newName || obj.name;
   const [img] = useImage(url || '', 'anonymous');
   const selectedItem = usePlayerStore((s) => s.selectedItem);
   const clickObject = usePlayerStore((s) => s.clickObject);
@@ -115,13 +119,16 @@ function ObjSprite({
 
   if (hidden) return null;
 
-  const clickable = obj.digit !== undefined || !!obj.requiresItem?.length || !!obj.grantsItem || !!obj.message || !!obj.view || obj.pickupable === true || !!obj.transforms?.length;
+  const clickable = obj.digit !== undefined || !!obj.requiresItem?.length || !!obj.grantsItem || !!obj.message || !!obj.view || obj.pickupable === true || !!obj.transforms?.length || !!obj.door;
 
   const nextRule = obj.transforms?.[((state.transformsApplied ?? {})[obj.id] ?? -1) + 1];
   const onlyTransform = !obj.message && obj.digit === undefined && !obj.grantsItem && !obj.requiresItem?.length;
 
   const handleClick = () => {
     if (!clickable) return;
+    // Doors take the player to another room. When an item is selected we try using it first
+    // (e.g. unlocking), otherwise clicking walks straight through (clickObject handles the door).
+    if (obj.door && !selectedItem) { clickObject(obj.id, viewId); return; }
     if (selectedItem) { useItemOnObject(selectedItem, obj.id, viewId); return; }
     // rule without an item: executes with a simple click
     if (nextRule && !nextRule.requiresItem) { useItemOnObject(null, obj.id, viewId); return; }
@@ -300,7 +307,10 @@ function SceneContent({
   const W = viewId ? parent?.view?.width ?? scene.width : scene.width;
   const H = viewId ? parent?.view?.height ?? scene.height : scene.height;
   const objects = viewId ? parent?.view?.objects ?? [] : scene.objects;
-  const bgRef = viewId ? parent?.view?.backgroundUrl ?? '' : scene.backgroundUrl;
+  const baseBgRef = viewId ? parent?.view?.backgroundUrl ?? '' : scene.backgroundUrl;
+  // Effects can override a room's (or a close-up view's) background at runtime — e.g. "the lights turn on".
+  const bgOverride = state.backgrounds?.[viewId || scene.id];
+  const bgRef = bgOverride || baseBgRef;
   const bgUrl = spriteSrc(bgRef, sprites, assets);
   const bgSp = getSprite(bgRef, sprites);
   const [bg] = useImage(bgUrl || '', 'anonymous');
