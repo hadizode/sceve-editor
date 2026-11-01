@@ -5,7 +5,7 @@ import Preview from './Preview';
 import ProjectsView from './ProjectsView';
 import { PropertiesPanel } from './Properties';
 import { AssetsPanel, BackgroundPanel, ChainPanel, ChecksPanel, LayersPanel, RoomProps, RoomsPanel, useIssues } from './Panels';
-import { inputCls, isTyping } from './ui';
+import { inputCls, isTyping, NumInput } from './ui';
 
 type Tab = 'props' | 'layers' | 'assets' | 'chain' | 'checks';
 const st = () => useStudioStore.getState();
@@ -98,7 +98,7 @@ function Editor() {
         <button className={tb(false)} disabled={!canRedo} onClick={() => st().redo()} title="Redo (Ctrl+Y)">↷ Redo</button>
         <div className="h-5 w-px bg-gray-600" />
         <button className={tb(showGrid)} onClick={() => st().toggleGrid()}>Grid</button>
-        <input type="number" min={5} className={`${inputCls} !w-14 !py-0.5`} value={gridSize} onChange={(e) => st().setGridSize(Number(e.target.value) || 20)} title="Grid size" />
+        <div className="w-14"><NumInput value={gridSize} min={5} onChange={(n) => st().setGridSize(n)} /></div>
         <button className={tb(snap)} onClick={() => st().toggleSnap()}>Snap</button>
         <button className={tb(labels)} onClick={() => st().toggleLabels()}>Labels</button>
         <div className="h-5 w-px bg-gray-600" />

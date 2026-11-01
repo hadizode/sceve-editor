@@ -1,6 +1,6 @@
 import React, { useMemo, useRef } from 'react';
 import { useCtx, useCurrentProject, useProjectAssets, useSprites, useStudioStore } from '../stores/store';
-import { assetRef, spriteRef, blankSprite, type SceneObject, type TransformRule } from '../shared/types';
+import { assetRef, spriteRef, transformRef, blankSprite, type SceneObject, type TransformRule } from '../shared/types';
 import { obtainableItems } from '../shared/validation';
 import { fitScale } from '../shared/geometry';
 import { fileToImage } from '../shared/utils';
@@ -320,8 +320,8 @@ export function PropertiesPanel() {
               <div className="flex gap-1">
                 <select
                   className={inputCls}
-                  value={t.newSpriteId ? sprites[t.newSpriteId]?.assetId ?? '' : ''}
-                  onChange={(e) => setT(i, { newSpriteId: e.target.value ? st().useAssetSprite(e.target.value).slice(7) : undefined })}
+                  value={t.newSpriteId ? sprites[transformRef(t.newSpriteId).slice(7)]?.assetId ?? '' : ''}
+                  onChange={(e) => setT(i, { newSpriteId: e.target.value ? st().useAssetSprite(e.target.value) : undefined })}
                 >
                   <option value="">(unchanged)</option>
                   {assets.map((a) => <option key={a.id} value={assetRef(a.id)}>🖼 {a.name}</option>)}
@@ -334,7 +334,7 @@ export function PropertiesPanel() {
                     if (!f) return;
                     try {
                       const a = st().addAsset(await fileToImage(f));
-                      setT(i, { newSpriteId: st().useAssetSprite(assetRef(a.id), a.name).slice(7) });
+                      setT(i, { newSpriteId: st().useAssetSprite(assetRef(a.id), a.name) });
                     } catch (err) { alert((err as Error).message); }
                   };
                   inp.click();
