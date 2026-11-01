@@ -24,11 +24,13 @@ const allObjectsOf = (sc: Scene): SceneObject[] => [...sc.objects, ...sc.objects
 // A rule can carry extra gating beyond its `requiresItem`: e.g. "only fire once ALL three fuses AND
 // the connector have been transformed". Every listed prerequisite must hold (logical AND).
 
-/** True when every prerequisite of the condition is satisfied by the current session state. */
+/** True when every prerequisite of the condition is satisfied by the current session state.
+ * `depth` guards against recursive display checks on cyclic condition graphs. */
 export function checkTransformCondition(
   cond: TransformCondition | undefined,
   state: SessionState,
-  scenesById?: Record<string, Scene>
+  scenesById?: Record<string, Scene>,
+  depth = 0
 ): boolean {
   if (!cond) return true;
   for (const it of cond.itemsInInventory ?? []) {
@@ -42,8 +44,111 @@ export function checkTransformCondition(
       const sc = scenesById[req.sceneId];
       if (sc && !allObjectsOf(sc).some((o) => o.id === req.objectId)) return false;
     }
+    // autoApply conditions are checked from the LIVE game state: a prerequisite only counts when it
+    // is VISIBLY transformed right now — so instant chains never light up ahead of what the player sees.
+    if (cond.autoApply && scenesById && depth <= 24) {
+      if (!prereqVisible(req, state, scenesById, depth + 1)) return false;
+    }
   }
   return true;
+}
+
+/**
+ * Condition check used by the RENDERER / auto-apply evaluator. A prerequisite counts as fulfilled
+ * when it is VISIBLY transformed right now: recorded in `transformsApplied` AND its own shown rule
+ * passes its gating (recursively). This keeps "instant" chains consistent with what the player
+ * sees — an intermediate fuse panel that hasn't lit up yet does not light up the final panel.
+ */
+function prereqVisible(req: { sceneId?: string; objectId: string; minRule?: number }, state: SessionState, scenesById: Record<string, Scene>, depth = 0): boolean {
+  if (depth > 24) return false; // cycle guard
+  const sc = req.sceneId ? scenesById[req.sceneId] : Object.values(scenesById).find((s) => allObjectsOf(s).some((o) => o.id === req.objectId));
+  const obj = sc ? allObjectsOf(sc).find((o) => o.id === req.objectId) : undefined;
+  const applied = state.transformsApplied?.[req.objectId] ?? -1;
+  if (applied < (req.minRule ?? 0)) return false;
+  // The prerequisite's own highest fired rule must itself be showing (its conditions hold).
+  const idx = Math.min(applied, (obj?.transforms?.length ?? 1) - 1);
+  const shown = obj?.transforms?.[idx];
+  if (!shown) return true; // nothing to display-gate (e.g. discovery-only prereq) → recorded fire counts
+  return checkTransformCondition(shown.conditions, state, scenesById, depth + 1);
+}
+
+export function checkConditionForDisplay(
+  cond: TransformCondition | undefined,
+  state: SessionState,
+  scenesById: Record<string, Scene>,
+  depth = 0
+): boolean {
+  if (!cond) return true;
+  for (const it of cond.itemsInInventory ?? []) {
+    if (!state.inventory.includes(it)) return false;
+  }
+  for (const req of cond.transformedObjects ?? []) {
+    if (!prereqVisible(req, state, scenesById, depth)) return false;
+  }
+  return true;
+}
+
+/**
+ * The instant ("بدون کلیک") transform evaluator. Conditions marked `autoApply` behave like live
+ * wires: the moment their prerequisites hold, the rule fires — no click, and no effect needs to
+ * explicitly target the object. Call this after ANY state change (transform, pickup, item use, …);
+ * it loops until stable so chained auto rules cascade in one pass. Returns the same state ref
+ * when nothing new fired.
+ */
+export function evaluateAutoTransforms(
+  state: SessionState,
+  scenesById: Record<string, Scene>,
+  scopeSceneId?: string
+): { state: SessionState; messages: string[] } {
+  const candidates: { sceneId: string; obj: SceneObject }[] = [];
+  const addScene = (sc: Scene) => {
+    for (const o of allObjectsOf(sc)) if (o.transforms?.length) candidates.push({ sceneId: sc.id, obj: o });
+  };
+  if (scopeSceneId && scenesById[scopeSceneId]) addScene(scenesById[scopeSceneId]);
+  else for (const sc of Object.values(scenesById)) addScene(sc);
+  if (!candidates.length) return { state, messages: [] };
+
+  let s = state;
+  const messages: string[] = [];
+  // Loop until stable (max passes guard against pathological cycles).
+  for (let pass = 0; pass < candidates.length + 2; pass++) {
+    let changed = false;
+    for (const { sceneId, obj } of candidates) {
+      const nextIdx = (s.transformsApplied?.[obj.id] ?? -1) + 1;
+      const rule = obj.transforms![nextIdx];
+      if (!rule || !rule.conditions?.autoApply) continue;
+      // Only fire when the rule needs no item (free) — item-gated rules still need the player.
+      if (rule.requiresItem) continue;
+      // Evaluate prerequisites from the LIVE state: recorded transforms, or visibly-applied ones
+      // (an auto-firing intermediate must itself actually be showing its transformed sprite first).
+      const cond = rule.conditions;
+      let ok = true;
+      for (const it of cond.itemsInInventory ?? []) if (!s.inventory.includes(it)) { ok = false; break; }
+      if (ok) {
+        for (const req of cond.transformedObjects ?? []) {
+          if (!prereqVisible(req, s, scenesById)) { ok = false; break; }
+        }
+      }
+      if (!ok) continue;
+      // Fire the rule exactly like applyEffect would: visuals via transformsApplied + grants/discovery/effects.
+      let ns = { ...s, transformsApplied: { ...(s.transformsApplied ?? {}), [obj.id]: nextIdx } };
+      if (rule.grantsItem && !ns.inventory.includes(rule.grantsItem)) ns = { ...ns, inventory: [...ns.inventory, rule.grantsItem] };
+      if (rule.triggersDiscovery) {
+        const d = ns.discoveredObjects[sceneId] || [];
+        if (!d.includes(obj.id)) ns = { ...ns, discoveredObjects: { ...ns.discoveredObjects, [sceneId]: [...d, obj.id] } };
+      }
+      if (rule.newMessage && !messages.includes(rule.newMessage)) messages.push(rule.newMessage);
+      if (rule.effects?.length) {
+        const res = applyEffects(ns, rule.effects, sceneId, scenesById);
+        ns = res.state;
+        for (const m of res.messages) if (!messages.includes(m)) messages.push(m);
+      }
+      s = ns;
+      changed = true;
+    }
+    if (!changed) break;
+  }
+  return { state: s, messages };
 }
 
 /** Human-readable reason why the condition currently fails ('' when it holds). */
@@ -57,6 +162,17 @@ export function conditionFailMessage(cond: TransformCondition | undefined, state
     if (applied < (req.minRule ?? 0)) return '⏳ هنوز همه شرایط فراهم نشده — اول بقیه موارد را فعال کنید';
   }
   return '';
+}
+
+/**
+ * Run the instant-condition pass after any player action. When a rule's `autoApply` condition just
+ * became true (e.g. the LAST fuse/connector got transformed), its transform fires immediately —
+ * no click needed. The player store's commit() calls `evaluateAutoTransforms` on every state change,
+ * so this wrapper is kept for direct/legacy callers that hold the scene map themselves.
+ */
+export function autoApplyConditions(state: SessionState, scenesById?: Record<string, Scene>): { state: SessionState; messages: string[] } {
+  if (!scenesById || !Object.keys(scenesById).length) return { state, messages: [] };
+  return evaluateAutoTransforms(state, scenesById);
 }
 
 /** Apply one effect to the session state. Returns the updated state (same ref when nothing changed). */

@@ -208,8 +208,9 @@ function ConditionsEditor({ cond, onChange }: { cond?: TransformCondition; onCha
     if (!next.transformedObjects && !next.itemsInInventory?.length) onChange(undefined);
     else onChange(next);
   };
-  const setItems = (list: string[]) => {
-    const next: TransformCondition = { ...cond, itemsInInventory: list.length ? list : undefined };
+  const setItems = (list: string[] | undefined) => {
+    const items2 = list ?? [];
+    const next: TransformCondition = { ...cond, itemsInInventory: items2.length ? items2 : undefined };
     if (!next.transformedObjects && !next.itemsInInventory) onChange(undefined);
     else onChange(next);
   };
@@ -262,6 +263,30 @@ function ConditionsEditor({ cond, onChange }: { cond?: TransformCondition; onCha
       <Field label="…and these items must be in the inventory (comma separated)">
         <ListInput value={items} onChange={setItems} placeholder="fuse, connector" />
       </Field>
+
+      {(objs.length > 0 || items.length > 0) && (
+        <label className="flex items-start gap-2 text-[11px] cursor-pointer bg-amber-900/20 border border-amber-700/40 rounded p-2">
+          <input
+            type="checkbox"
+            className="accent-amber-400 mt-0.5"
+            checked={cond?.autoApply === true}
+            onChange={(ev) => {
+              const next: TransformCondition = { ...cond, autoApply: ev.target.checked ? true : undefined };
+              if (!next.transformedObjects && !next.itemsInInventory && !next.autoApply) onChange(undefined);
+              else onChange(next);
+            }}
+          />
+          <span>
+            ⚡ <b>Instant — apply without click</b>
+            <br />
+            <span className="text-gray-400">
+              The moment ALL conditions above become true, this transform fires automatically — no click needed and no
+              effect targeting required (e.g. the last fuse goes in → this panel lights up instantly). The rule must have
+              an empty requires item.
+            </span>
+          </span>
+        </label>
+      )}
     </div>
   );
 }

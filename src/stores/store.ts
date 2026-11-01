@@ -32,6 +32,7 @@ import {
   applyItemToObject,
   canUseDoor,
   discoverObject,
+  evaluateAutoTransforms,
   isRoomComplete,
   pickupObject as pickupObj,
   roomDigitTargets,
@@ -889,6 +890,12 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     const g = get();
     const session = g.session;
     if (!session) return;
+    // Instant-condition pass: rules whose `autoApply` condition just became true fire WITHOUT a
+    // click (e.g. the last fuse goes in → the final panel transforms right away). Loops until
+    // stable, so chained auto rules cascade in one commit.
+    const auto = evaluateAutoTransforms(state, g.scenes);
+    for (const m of auto.messages) say(m, 5000);
+    state = auto.state;
     const list = Object.values(g.scenes).filter((sc) => sc.projectId === session.projectId);
     const completed = new Set(state.completedScenes ?? session.state.completedScenes);
     for (const sc of list) {
