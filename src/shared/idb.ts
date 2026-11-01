@@ -17,8 +17,10 @@ function open(): Promise<IDBDatabase> {
 }
 
 const timers = new Map<string, number>();
+const emit = (name: 'studio-saving' | 'studio-saved') => window.dispatchEvent(new Event(name));
 
-/** Autosave storage: large projects (images) don't fit localStorage's 5MB limit. */
+/** Autosave storage: large projects (images) don't fit localStorage's 5MB limit.
+ *  Dispatches `studio-saving` / `studio-saved` window events so the UI can show save status. */
 export const idbStorage: StateStorage = {
   getItem: async (name) => {
     try {
@@ -33,13 +35,17 @@ export const idbStorage: StateStorage = {
     }
   },
   setItem: (name, value) => {
+    emit('studio-saving');
     window.clearTimeout(timers.get(name));
     timers.set(
       name,
       window.setTimeout(async () => {
         try {
           const db = await open();
-          db.transaction(STORE, 'readwrite').objectStore(STORE).put(value, name);
+          const tx = db.transaction(STORE, 'readwrite');
+          tx.objectStore(STORE).put(value, name);
+          tx.oncomplete = () => emit('studio-saved');
+          tx.onerror = () => console.warn('Autosave failed', tx.error);
         } catch (e) {
           console.warn('Autosave failed', e);
         }
