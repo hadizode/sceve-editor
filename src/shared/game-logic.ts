@@ -1,4 +1,108 @@
-import type { Scene, SceneObject, SessionState } from './types';
+import type { Scene, SceneObject, SessionState, TransformEffect } from './types';
+
+// ============ Effects / Transitions Engine ============
+// A strong, separate part of the game logic: when something happens (a transform fires, an item is
+// picked up), attached EFFECTS can reach outside the clicked object — automatically applying a
+// transform on ANOTHER object (even in another room), changing another room's BACKGROUND, or opening
+// a DOOR so the player can walk into another room.
+
+/** One entry per scene; `null` means "this scene was already visited" (so its rules run once). */
+export interface EffectCtx {
+  scenesById: Record<string, Scene>;
+  visited: Set<string>;
+  messages: string[];
+}
+
+const pushMsg = (ctx: EffectCtx, m?: string) => {
+  if (m && !ctx.messages.includes(m)) ctx.messages.push(m);
+};
+
+/** Apply one effect to the session state. Returns the updated state (same ref when nothing changed). */
+function applyEffect(state: SessionState, eff: TransformEffect, triggerSceneId: string, ctx: EffectCtx): SessionState {
+  const targetScene = eff.sceneId ? ctx.scenesById[eff.sceneId] : ctx.scenesById[triggerSceneId];
+  const scopeId = eff.sceneId || triggerSceneId;
+
+  // --- change another room's (or a close-up view's) background ---
+  if (eff.action === 'background') {
+    if (!eff.newSpriteId) return state;
+    // objectId may point at a close-up view inside the scene → override that view's background instead.
+    let key = targetScene?.id ?? scopeId;
+    if (eff.objectId) {
+      const holder = targetScene?.objects.find((o) => o.view && (o.view.id === eff.objectId || o.id === eff.objectId));
+      if (holder?.view) key = holder.view.id;
+    }
+    if (!targetScene && !state.backgrounds?.[key]) return state;
+    if (state.backgrounds?.[key] === eff.newSpriteId) return state;
+    return { ...state, backgrounds: { ...(state.backgrounds ?? {}), [key]: eff.newSpriteId } };
+  }
+
+  // --- open a door (object with `door`) so the player can enter another room ---
+  if (eff.action === 'unlockDoor') {
+    if (!eff.doorObjectId) return state;
+    const doors = state.openDoors ?? [];
+    if (doors.includes(eff.doorObjectId)) return state;
+    return { ...state, openDoors: [...doors, eff.doorObjectId] };
+  }
+
+  // --- automatically apply a transform rule on another object ---
+  if (eff.action !== 'transform' || !targetScene) return state;
+  const list = [
+    ...targetScene.objects,
+    ...targetScene.objects.flatMap((o) => (o.view ? o.view.objects : [])),
+  ];
+  const obj = list.find((o) => o.id === eff.objectId);
+  if (!obj?.transforms?.length) return state;
+  const idx = eff.ruleIndex ?? 0;
+  const rule = obj.transforms[idx];
+  if (!rule) return state;
+  // Idempotent: each (scene, object) gets its automatic chain applied once, following links forward.
+  if (ctx.visited.has(`${scopeId}|${obj.id}`)) return state;
+  ctx.visited.add(`${scopeId}|${obj.id}`);
+
+  let next = state;
+  if (rule.grantsItem && !next.inventory.includes(rule.grantsItem)) {
+    next = { ...next, inventory: [...next.inventory, rule.grantsItem] };
+  }
+  if (rule.triggersDiscovery) {
+    const d = next.discoveredObjects[scopeId] || [];
+    if (!d.includes(obj.id)) {
+      next = { ...next, discoveredObjects: { ...next.discoveredObjects, [scopeId]: [...d, obj.id] } };
+    }
+  }
+  next = { ...next, transformsApplied: { ...(next.transformsApplied ?? {}), [obj.id]: Math.max(next.transformsApplied?.[obj.id] ?? -1, idx) } };
+  pushMsg(ctx, rule.newMessage);
+  // The auto-transformed object may itself carry effects → the engine follows them recursively.
+  if (rule.effects?.length) next = applyEffects(next, rule.effects, scopeId, ctx);
+  return next;
+}
+
+/** Fire a batch of effects; returns the new state plus any toast messages they produced. */
+export function applyEffects(state: SessionState, effects: TransformEffect[], sceneId: string, scenesById: Record<string, Scene>): { state: SessionState; messages: string[] } {
+  if (!effects.length) return { state, messages: [] };
+  const ctx: EffectCtx = { scenesById, visited: new Set<string>(), messages: [] };
+  let s = state;
+  for (const eff of effects) {
+    const before = s;
+    s = applyEffect(s, eff, sceneId, ctx);
+    if (eff.message && s !== before) pushMsg(ctx, eff.message);
+  }
+  return { state: s, messages: ctx.messages };
+}
+
+/** All objects of a scene including nested close-up view objects (effect targets live anywhere). */
+const allObjectsOf = (sc: Scene): SceneObject[] => [...sc.objects, ...sc.objects.flatMap((o) => (o.view ? o.view.objects : []))];
+
+/** Every effect declared in a project's scenes — used by validation and by the Studio preview overlay. */
+export function collectProjectEffects(scenes: Scene[]): { eff: TransformEffect; fromSceneId: string; fromName: string }[] {
+  const out: { eff: TransformEffect; fromSceneId: string; fromName: string }[] = [];
+  for (const sc of scenes) {
+    for (const o of allObjectsOf(sc)) {
+      for (const t of o.transforms ?? []) for (const e of t.effects ?? []) out.push({ eff: e, fromSceneId: sc.id, fromName: `${sc.title} → ${o.name}` });
+      for (const e of o.pickupEffects ?? []) out.push({ eff: e, fromSceneId: sc.id, fromName: `${sc.title} → ${o.name} (pickup)` });
+    }
+  }
+  return out;
+}
 
 // ============ Pure Game Logic Functions ============
 
@@ -64,7 +168,8 @@ export function pickupObject(
   state: SessionState,
   sceneId: string,
   objectId: string,
-  objects: SceneObject[]
+  objects: SceneObject[],
+  ctx?: InteractionCtx
 ): { newState: SessionState; message?: string; success: boolean; itemId?: string } {
   // Find the clicked object by id (as before).
   const target = objects.find(o => o.id === objectId);
@@ -104,12 +209,27 @@ export function pickupObject(
     discoveredObjects: newDiscoveredObjects,
   };
 
+  // Picking an item up can fire transition effects too (open a door, change another room, …).
+  let finalState = newState;
+  let extraMessage: string | undefined;
+  if (obj.pickupEffects?.length && ctx?.scenesById) {
+    const res = applyEffects(newState, obj.pickupEffects, sceneId, ctx.scenesById);
+    finalState = res.state;
+    extraMessage = res.messages[0];
+  }
+
   return {
-    newState,
+    newState: finalState,
     success: true,
-    message: obj.pickupMessage || obj.message,
+    message: extraMessage ?? obj.pickupMessage ?? obj.message,
     itemId,
   };
+}
+
+/** Optional context for effect handling — without it, transforms/pickups still work (legacy callers). */
+export interface InteractionCtx {
+  /** All project scenes by id — effects may target objects/rooms other than the current one. */
+  scenesById?: Record<string, Scene>;
 }
 
 /**
@@ -130,7 +250,8 @@ export function applyItemToObject(
   sceneId: string,
   objectId: string,
   itemId: string | null, // null = click without a selected item
-  objects: SceneObject[]
+  objects: SceneObject[],
+  ctx?: InteractionCtx
 ): {
   newState: SessionState;
   success: boolean;
@@ -189,10 +310,20 @@ export function applyItemToObject(
           transformsApplied: { ...(state.transformsApplied ?? {}), [objectId]: nextTransformIndex },
         };
 
+        // Transition engine: the rule may reach outside this object — auto-transform other
+        // objects (even in other rooms), change another room's background, or open a door.
+        let finalState = newState;
+        let effectMsg: string | undefined;
+        if (rule.effects?.length && ctx?.scenesById) {
+          const res = applyEffects(newState, rule.effects, sceneId, ctx.scenesById);
+          finalState = res.state;
+          effectMsg = res.messages[0];
+        }
+
         return {
-          newState,
+          newState: finalState,
           success: true,
-          message: rule.newMessage || 'با موفقیت استفاده شد',
+          message: [rule.newMessage, effectMsg].filter(Boolean).join(' • ') || 'با موفقیت استفاده شد',
           transformed: true,
         };
       }
@@ -310,4 +441,31 @@ export function getNextClue(state: SessionState, scene: Scene): SceneObject | nu
  */
 export function allRoomsComplete(state: SessionState, scenes: Scene[]): boolean {
   return scenes.every(scene => isRoomComplete(state, scene));
+}
+
+// ============ Doors / Room transitions ============
+
+/** Is the player allowed to walk through this door right now? */
+export function canUseDoor(state: SessionState, obj: SceneObject): boolean {
+  const req = obj.door?.requiresItems ?? [];
+  const openByEffect = (state.openDoors ?? []).includes(obj.id);
+  return openByEffect || req.every((i) => state.inventory.includes(i));
+}
+
+/**
+ * Try to move to another room through a door object. Returns null when the object is not a door.
+ * `rooms` restricts navigation to the project's own scene list.
+ */
+export function tryEnterDoor(
+  state: SessionState,
+  obj: SceneObject,
+  rooms: Scene[]
+): { newState: SessionState; entered: boolean; message?: string } | null {
+  if (!obj.door?.sceneId) return null;
+  const target = rooms.find((s) => s.id === obj.door!.sceneId);
+  if (!target) return { newState: state, entered: false, message: '🚪 این در به اتاق معتبری وصل نیست (در استودیو بررسی کنید)' };
+  if (!canUseDoor(state, obj)) {
+    return { newState: state, entered: false, message: obj.door.lockedMessage || '🔒 این در قفل است — کلیدش را پیدا کنید!' };
+  }
+  return { newState: { ...state, currentSceneId: target.id }, entered: true, message: `🚪 وارد شدید: ${target.title}` };
 }

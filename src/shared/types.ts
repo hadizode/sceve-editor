@@ -45,6 +45,39 @@ export interface BackgroundLayer {
   offsetY: number;
 }
 
+/**
+ * An EFFECT is a side action attached to a transform (or to a pickup). While a transform's own
+ * fields change the clicked object only, effects reach OUT: they can transform OTHER objects
+ * automatically (even in other rooms), change another room's background, or open a door so the
+ * player can walk into another room.
+ */
+export type EffectAction = 'transform' | 'background' | 'unlockDoor';
+
+export interface TransformEffect {
+  action: EffectAction;
+  /** Target scene id. Empty/missing = the scene the trigger happens in. */
+  sceneId?: string;
+  /** Target object id (for `transform`) or view id (for `background` inside a close-up view). */
+  objectId?: string;
+  /** Which transform rule of the target object to apply automatically. Default 0 (the first one). */
+  ruleIndex?: number;
+  /** Sprite reference (`sprite:<id>`), asset ref or direct URL — used by `background`. */
+  newSpriteId?: string;
+  /** Door object that becomes clickable/enterable — used by `unlockDoor`. */
+  doorObjectId?: string;
+  /** Optional toast shown when the effect fires. */
+  message?: string;
+}
+
+/** A door is an object that takes the player to another room when clicked. */
+export interface DoorTarget {
+  sceneId: string;
+  /** Item ids the player must carry to pass; empty = open. */
+  requiresItems?: string[];
+  /** Message shown while the door is still locked. */
+  lockedMessage?: string;
+}
+
 export interface TransformRule {
   requiresItem: string;
   /** New sprite for the object after this rule fires — can be any image. */
@@ -54,6 +87,8 @@ export interface TransformRule {
   grantsItem?: string;
   consumesItem?: boolean;
   triggersDiscovery?: boolean;
+  /** Side actions fired when this rule applies (other objects / other rooms / doors). */
+  effects?: TransformEffect[];
 }
 
 /**
@@ -84,6 +119,15 @@ export const spriteRef = (id: string) => `sprite:${id}`;
 
 /** Normalize a stored sprite id/ref into a full `sprite:<id>` reference (tolerates bare ids and direct URLs). */
 export const transformRef = (id?: string) => (!id ? '' : id.startsWith('sprite:') ? id : spriteRef(id));
+
+const SPRITE_REF_RE = /^sprite:spr-[0-9a-z]+$/i;
+/**
+ * True for values that are clearly sprite refs/ids (`sprite:spr-…` / `spr-…`). Such values must NEVER be
+ * treated as image URLs: older saves stored `newSpriteId` as a raw sprite id, and registering it as a URL
+ * would import a worthless asset + sprite on every hydrate. Anything else (asset:/data:/http/#color) is
+ * passed to the registry unchanged.
+ */
+const looksLikeSpriteId = (v: string) => SPRITE_REF_RE.test(v) || /^spr-[0-9a-z]+$/i.test(v);
 
 /** Resolve a sprite/image reference to a concrete URL. */
 export function resolveSprite(ref: string, sprites: Record<string, Sprite>, assets: Record<string, Asset>): string {
@@ -129,6 +173,10 @@ export interface SessionState {
   completedScenes: string[];
   /** objectId -> index of the last applied transform rule (-1 = none) */
   transformsApplied: Record<string, number>;
+  /** sceneId/viewId -> background sprite ref overridden by an effect (e.g. "the lights turn on") */
+  backgrounds?: Record<string, string>;
+  /** Door object ids opened by effects — a door can also be gated only by items. */
+  openDoors?: string[];
 }
 
 export interface Session {
@@ -148,6 +196,8 @@ export function createSessionState(firstSceneId: string): SessionState {
     inventory: [],
     completedScenes: [],
     transformsApplied: {},
+    backgrounds: {},
+    openDoors: [],
   };
 }
 
@@ -201,6 +251,10 @@ export interface SceneObject {
   pickupItemId?: string;
   pickupMessage?: string;
   transforms?: TransformRule[];
+  /** Side effects fired when this object is picked up (transform other objects, change rooms, open doors). */
+  pickupEffects?: TransformEffect[];
+  /** Door: clicking this object takes the player to another room. */
+  door?: DoorTarget;
 }
 
 export interface Scene {
@@ -342,7 +396,7 @@ export class SpriteRegistry {
     for (let i = 0; i < url.length; i++) h = ((h << 5) + h + url.charCodeAt(i)) | 0;
     return 'u|' + h.toString(36) + '|' + url.length;
   }
-  constructor(private assets: Record<string, Asset>, private nameHint = '') {}
+  constructor(private assets: Record<string, Asset>, private nameHint = '', private knownSprites?: Record<string, Sprite>) {}
   /** Accepts an existing `sprite:` ref (kept as-is), a color value, or any image URL/asset-ref (wrapped in a new sprite). */
   register(raw: unknown): string {
     // Newer sprite payloads may carry extra props (color/overflow/fit) alongside a ref/url/color.
@@ -366,7 +420,17 @@ export class SpriteRegistry {
     }
     const v = str(raw);
     if (!v) return '';
-    if (v.startsWith('sprite:')) return v; // already migrated / authored with sprites
+    if (v.startsWith('sprite:')) {
+      // Bare sprite ids from older saves (`sprite:spr-xyz` without the sprite being registered yet)
+      // are adopted into the registry so validation and rendering can resolve them.
+      const sid = v.slice(7);
+      if (this.knownSprites && !this.knownSprites[sid] && !this.byKey.has(v) && /^spr-/.test(sid)) {
+        this.byKey.set(v, { id: sid, name: 'Image', assetId: '', createdAt: nowIso() });
+      }
+      return v; // already migrated / authored with sprites
+    }
+    // A raw sprite id stored where a ref was expected → normalize, never import as a URL.
+    if (looksLikeSpriteId(v)) return this.register(spriteRef(v));
     // Legacy solid-color "images" become color-only sprites (no asset needed).
     if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v)) {
       const k = 'c|' + v.toLowerCase();
@@ -397,19 +461,44 @@ export class SpriteRegistry {
   }
 }
 
+/** Normalize a stored transform/effect sprite value: full refs are kept, bare ids promoted, URLs imported as new sprites. */
+const normalizeSpriteValue = (v: unknown, reg: SpriteRegistry): string | undefined => {
+  if (typeof v !== 'string' || !v) return undefined;
+  return reg.register(v) || undefined;
+};
+
+function normalizeEffects(list: any, reg: SpriteRegistry): TransformEffect[] | undefined {
+  if (!Array.isArray(list) || !list.length) return undefined;
+  const out: TransformEffect[] = [];
+  for (const e of list) {
+    if (!e || typeof e !== 'object') continue;
+    const action = str(e.action) as EffectAction;
+    if (action !== 'transform' && action !== 'background' && action !== 'unlockDoor') continue;
+    out.push({
+      action,
+      sceneId: str(e.sceneId) || undefined,
+      objectId: str(e.objectId) || undefined,
+      ruleIndex: Number.isInteger(e.ruleIndex) ? Math.max(0, e.ruleIndex as number) : undefined,
+      newSpriteId: normalizeSpriteValue(e.newSpriteId ?? e.newImageUrl ?? e.backgroundUrl, reg),
+      doorObjectId: str(e.doorObjectId) || undefined,
+      message: str(e.message) || undefined,
+    });
+  }
+  return out.length ? out : undefined;
+}
+
 function normalizeTransform(r: any, reg: SpriteRegistry): TransformRule {
   // Tolerant normalization: older data may store a bare sprite id (`spr-…`) instead of a full
-  // `sprite:` ref — promote it before registering so it resolves to the right sprite.
-  const raw = r?.newSpriteId ?? r?.newImageUrl;
-  const ref = typeof raw === 'string' && raw.startsWith('spr-') ? `sprite:${raw}` : raw;
+  // `sprite:` ref — the registry promotes it and adopts the sprite so it resolves to the right image.
   return {
     requiresItem: str(r?.requiresItem),
-    newSpriteId: reg.register(ref) || undefined,
+    newSpriteId: normalizeSpriteValue(r?.newSpriteId ?? r?.newImageUrl, reg),
     newName: str(r?.newName) || undefined,
     newMessage: str(r?.newMessage) || undefined,
     grantsItem: str(r?.grantsItem) || undefined,
     consumesItem: r?.consumesItem !== false,
     triggersDiscovery: r?.triggersDiscovery === true,
+    effects: normalizeEffects(r?.effects, reg),
   };
 }
 
@@ -461,6 +550,11 @@ export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): Scene
     pickupable: o.pickupable === true || legacyType === 'inventory' ? true : undefined,
     pickupItemId: str(o.pickupItemId) || undefined,
     pickupMessage: str(o.pickupMessage) || undefined,
+    pickupEffects: normalizeEffects(o.pickupEffects, reg),
+    door:
+      o.door && typeof o.door === 'object' && str(o.door.sceneId)
+        ? { sceneId: str(o.door.sceneId), requiresItems: strList(o.door.requiresItems), lockedMessage: str(o.door.lockedMessage) || undefined }
+        : undefined,
     transforms:
       Array.isArray(o.transforms) && o.transforms.length ? o.transforms.map((t: any) => normalizeTransform(t, reg)) : undefined,
   };
@@ -523,8 +617,18 @@ export function normalizeBundle(text: string): ProjectBundle {
       assetMap[asset.id] = asset;
       return asset;
     });
+  // Sprites shipped with the bundle are known up-front so refs pointing at them resolve directly.
+  const spriteList: Sprite[] = (Array.isArray(data.sprites) ? data.sprites : [])
+    .filter((s: any) => s && str(s.id))
+    .map((s: any) => ({
+      id: str(s.id),
+      name: str(s.name) || 'sprite',
+      assetId: str(s.assetId ?? s.imageUrl),
+      color: str(s.color) || undefined,
+      createdAt: str(s.createdAt) || nowIso(),
+    }));
   // Every image used anywhere (objects, views, layers, backgrounds, transforms) becomes a sprite.
-  const reg = new SpriteRegistry(assetMap);
+  const reg = new SpriteRegistry(assetMap, '', Object.fromEntries(spriteList.map((s) => [s.id, s])));
   const scenes: Scene[] = data.scenes.map((s: any) => normalizeScene(s, pid, reg));
   const order: string[] = strList(data.project.scenes);
   const ordered = order.length
@@ -533,7 +637,8 @@ export function normalizeBundle(text: string): ProjectBundle {
         ...scenes.filter((s) => !order.includes(s.id)),
       ]
     : scenes;
-  const sprites = reg.list();
+  const byId: Record<string, Sprite> = { ...Object.fromEntries(spriteList.map((s) => [s.id, s])), ...Object.fromEntries(reg.list().map((s) => [s.id, s])) };
+  const sprites = Object.values(byId);
   // The registry may have created NEW assets while normalizing (direct data/external URLs are
   // imported into the asset library). Return those too, otherwise imported bundles lose images.
   const allAssets = Object.values(assetMap);
