@@ -4,7 +4,7 @@ import useImage from 'use-image';
 import { itemName, usePlayerStore } from '../stores/store';
 import type { Asset, Scene, SceneObject, SessionState, Sprite, View } from '../shared/types';
 import { getSprite, resolveSprite, transformRef } from '../shared/types';
-import { cssMatrix, frameMatrix, imageMatrix } from '../shared/geometry';
+import { cssMatrix, frameMatrix, imageMatrix, polyPts } from '../shared/geometry';
 
 /** Resolve a sprite/image ref to the concrete image URL ('' when the sprite has no image). */
 const spriteSrc = (ref: string | undefined, sprites: Record<string, Sprite>, assets: Record<string, Asset>) =>
@@ -152,8 +152,12 @@ function ObjSprite({
   const nw = img?.naturalWidth ?? 0;
   const nh = img?.naturalHeight ?? 0;
   const nat = img && nw > 0 && nh > 0 ? { width: nw, height: nh } : null;
-  // hit area: 'frame' (default) or the rendered image's rotated bounds
-  const imageHit = obj.hitArea === 'image' && !!nat;
+  // hit area: polygon frame (auto-active, ≥3 points) > rendered image ('image') > rectangular frame.
+  const poly = polyPts(obj);
+  const clipStyle = poly
+    ? { clipPath: `polygon(${poly.map((p) => `${(p.x / obj.width) * 100}% ${(p.y / obj.height) * 100}%`).join(', ')})` }
+    : undefined;
+  const imageHit = !poly && obj.hitArea === 'image' && !!nat;
   const pointerCls = clickable ? 'cursor-pointer' : 'pointer-events-none';
   const fm = cssMatrix(frameMatrix(obj));
 
@@ -162,7 +166,7 @@ function ObjSprite({
       {sp?.color && (
         <div
           className="absolute pointer-events-none"
-          style={{ left: 0, top: 0, width: obj.width, height: obj.height, transform: fm, transformOrigin: '0 0', background: sp.color }}
+          style={{ left: 0, top: 0, width: obj.width, height: obj.height, transform: fm, transformOrigin: '0 0', background: sp.color, ...clipStyle }}
         />
       )}
       {nat && (
@@ -182,13 +186,15 @@ function ObjSprite({
             maxWidth: 'none', // Tailwind preflight sets img { max-width: 100% }, which would shrink overflowing images
             transform: cssMatrix(imageMatrix(obj, nat)),
             transformOrigin: '0 0',
+            ...(poly ? { clipPath: `polygon(${poly.map((p) => `${(p.x / nw) * 100}% ${(p.y / nh) * 100}%`).join(', ')})` } : {}),
           }}
         />
       )}
-      {/* frame: default hit area + digit badge */}
+      {/* frame: default hit area + digit badge. With a polygon frame, THIS shape is the hit area —
+          clicks outside the polygon (but inside the old rectangle) no longer register. */}
       <div
         className={`absolute rounded ${imageHit ? 'pointer-events-none' : `${pointerCls} ${hasVisual && clickable ? 'hover:ring-2 hover:ring-amber-400/70' : ''}`}`}
-        style={{ left: 0, top: 0, width: obj.width, height: obj.height, transform: fm, transformOrigin: '0 0' }}
+        style={{ left: 0, top: 0, width: obj.width, height: obj.height, transform: fm, transformOrigin: '0 0', ...clipStyle }}
         onClick={imageHit ? undefined : handleClick}
         title={name}
       >

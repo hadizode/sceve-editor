@@ -174,7 +174,7 @@ export function konvaHitFunc(o: Xf, nat: Size | null) {
   const pts = polyPts(o);
   if (pts) {
     const fm = frameMatrix(o);
-    return (ctx: any) => {
+    return function (this: any, ctx: any) {
       ctx.beginPath();
       pts.forEach((p, i) => { const q = apply(fm, { x: p.x, y: p.y }); (i ? ctx.lineTo : ctx.moveTo).call(ctx, q.x, q.y); });
       ctx.closePath();
@@ -184,7 +184,7 @@ export function konvaHitFunc(o: Xf, nat: Size | null) {
   if (o.hitArea === 'image' && nat) {
     const im = imageMatrix(o, nat);
     const n = natural(o, nat);
-    return (ctx: any) => {
+    return function (this: any, ctx: any) {
       ctx.setTransform?.(im[0], im[1], im[2], im[3], im[4], im[5]);
       ctx.beginPath();
       ctx.rect(0, 0, n.width, n.height);
