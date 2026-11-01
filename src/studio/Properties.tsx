@@ -1,8 +1,8 @@
 import React, { useMemo, useRef } from 'react';
 import { useCtx, useCurrentProject, useProjectAssets, useSprites, useStudioStore } from '../stores/store';
-import { assetRef, spriteRef, blankSprite, type FramePoint, type SceneObject } from '../shared/types';
+import { assetRef, spriteRef, blankSprite, type Pt, type SceneObject } from '../shared/types';
 import { obtainableItems } from '../shared/validation';
-import { fitScale, polyActive } from '../shared/geometry';
+import { fitBox, regularPolygon } from '../shared/geometry';
 import { fileToImage } from '../shared/utils';
 import { btnCls, Field, inputCls, ListInput, NumInput, Section } from './ui';
 import { useResolved } from './konva-bits';
@@ -10,6 +10,9 @@ import { TransitionsPanel } from './Transitions';
 
 const st = () => useStudioStore.getState();
 const r1 = (n: number) => Math.round(n * 10) / 10;
+const r3 = (n: number) => Math.round(n * 1000) / 1000;
+
+type SetFn = (p: Partial<SceneObject>, key?: string) => void;
 
 function Check({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -39,7 +42,6 @@ function SpritePicker({ value, onPick }: { value: string; onPick: (ref: string) 
   const sprites = useSprites();
   const file = useRef<HTMLInputElement>(null);
   const current = value.startsWith('sprite:') ? sprites[value.slice(7)] : undefined;
-  // The dropdown shows what is CURRENTLY selected (it used to be bound to the sprite ref, which never matched an option).
   const selectValue = !value ? '' : current ? (current.assetId ? current.assetId : '__blank__') : value;
 
   const upload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -102,174 +104,84 @@ function SpritePicker({ value, onPick }: { value: string; onPick: (ref: string) 
 }
 
 /**
- * Image transform: the image is drawn at its NATURAL size x these values, independent of the frame
- * (it may extend past the frame and is never clipped). Also the hit-area mode for the Player.
+ * Geometry: ONE box. The image always fills it, so resizing the box resizes the sprite.
+ * Rotation pivots on the box centre; flips mirror around it.
  */
-function ImageSection({ obj, set }: { obj: SceneObject; set: (p: Partial<SceneObject>, key?: string) => void }) {
+function TransformSection({ obj, set }: { obj: SceneObject; set: SetFn }) {
   const src = useResolved(obj.spriteRef);
-  const polyActiveObj = polyActive(obj); // polygon frame auto-replaces the rect as hit area
   const fit = () => {
     const i = new Image();
-    i.onload = () => i.naturalWidth && set(fitScale(obj, { width: i.naturalWidth, height: i.naturalHeight }));
+    i.onload = () => i.naturalWidth && set(fitBox(obj, { width: i.naturalWidth, height: i.naturalHeight }), `${obj.id}:fit`);
     i.src = src;
   };
-  const num = (k: 'scaleX' | 'scaleY' | 'imageOffsetX' | 'imageOffsetY', d: number) => (
-    <NumInput
-      value={r1(obj[k] ?? d)}
-      step={k.startsWith('scale') ? 0.05 : 1}
-      onChange={(n) => set({ [k]: k.startsWith('scale') && n === 0 ? d : n } as Partial<SceneObject>)}
-    />
-  );
-
-  // ---- polygon frame: per-side sizing / extra sides ----
-  const poly = obj.framePolygon ?? [];
-  const setPoly = (pts: FramePoint[]) => set({ framePolygon: pts.length >= 3 ? pts : undefined });
-  const rectPts = (): FramePoint[] => [
-    { x: 0, y: 0 },
-    { x: obj.width, y: 0 },
-    { x: obj.width, y: obj.height },
-    { x: 0, y: obj.height },
-  ];
-  const regularN = (n: number) =>
-    Array.from({ length: n }, (_, i) => {
-      const a = (Math.PI * 2 * i) / n - Math.PI / 2; // start at top
-      return { x: r1(obj.width / 2 + (obj.width / 2) * Math.cos(a)), y: r1(obj.height / 2 + (obj.height / 2) * Math.sin(a)) };
-    });
-  /** Insert a new vertex on the longest edge (or the given one), slightly outside → grows that side. */
-  const addSide = (edgeIdx?: number) => {
-    if (poly.length < 3) return;
-    let ei = edgeIdx ?? 0;
-    if (edgeIdx === undefined) {
-      let best = -1;
-      poly.forEach((p, i) => {
-        const q = poly[(i + 1) % poly.length];
-        const d = Math.hypot(q.x - p.x, q.y - p.y);
-        if (d > best) { best = d; ei = i; }
-      });
-    }
-    const a = poly[ei], b = poly[(ei + 1) % poly.length];
-    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-    const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
-    const np = { x: r1(mx + (-dy / len) * 8), y: r1(my + (dx / len) * 8) };
-    setPoly([...poly.slice(0, ei + 1), np, ...poly.slice(ei + 1)]);
-  };
-  const removeVertex = (i: number) => {
-    if (poly.length <= 3) return;
-    setPoly(poly.filter((_, j) => j !== i));
-  };
-  const moveVertex = (i: number, p: FramePoint) => setPoly(poly.map((q, j) => (j === i ? p : q)));
-  const sideLen = (i: number) => {
-    const a = poly[i], b = poly[(i + 1) % poly.length];
-    return Math.round(Math.hypot(b.x - a.x, b.y - a.y) * 10) / 10;
-  };
   return (
-    <Section title="🖼 Image (true size)" color="text-cyan-300">
-      <p className="text-xs text-gray-500">Drawn at natural size × scale. It may extend past the frame and is never clipped.</p>
+    <Section title="📐 Transform" color="text-cyan-300">
       <div className="grid grid-cols-2 gap-2">
-        <Field label="Scale X">{num('scaleX', 1)}</Field>
-        <Field label="Scale Y">{num('scaleY', 1)}</Field>
-        <Field label="Offset X">{num('imageOffsetX', 0)}</Field>
-        <Field label="Offset Y">{num('imageOffsetY', 0)}</Field>
+        <Field label="X"><NumInput value={r1(obj.x)} onChange={(n) => set({ x: n })} /></Field>
+        <Field label="Y"><NumInput value={r1(obj.y)} onChange={(n) => set({ y: n })} /></Field>
+        <Field label="Width"><NumInput value={r1(obj.width)} min={1} onChange={(n) => set({ width: Math.max(1, n) })} /></Field>
+        <Field label="Height"><NumInput value={r1(obj.height)} min={1} onChange={(n) => set({ height: Math.max(1, n) })} /></Field>
       </div>
+      <Field label="Rotation (deg)"><NumInput value={r1(obj.rotation)} onChange={(n) => set({ rotation: n })} /></Field>
       <div className="flex flex-wrap gap-1">
-        <button className={btnCls} onClick={() => set({ scaleX: -(obj.scaleX ?? 1) })}>⇋ Flip H</button>
-        <button className={btnCls} onClick={() => set({ scaleY: -(obj.scaleY ?? 1) })}>⇅ Flip V</button>
-        <button className={btnCls} onClick={() => set({ scaleX: undefined, scaleY: undefined, imageOffsetX: undefined, imageOffsetY: undefined })}>Natural size</button>
-        <button className={btnCls} disabled={!src} onClick={fit}>Fit to frame</button>
+        <button className={`${btnCls} ${obj.flipX ? '!bg-primary text-white' : ''}`} onClick={() => set({ flipX: obj.flipX ? undefined : true })}>⇋ Flip H</button>
+        <button className={`${btnCls} ${obj.flipY ? '!bg-primary text-white' : ''}`} onClick={() => set({ flipY: obj.flipY ? undefined : true })}>⇅ Flip V</button>
+        <button className={btnCls} disabled={!src} title="Resize the box to the image's natural size (centre stays)" onClick={fit}>Image size</button>
       </div>
-      <Field label="Hit area">
-        {/* Polygon frame is NOT a selectable mode: when framePolygon has ≥3 points it automatically
-            REPLACES the rect frame as the hit area (see FramePolygonSection below). */}
-        <select className={inputCls} value={obj.hitArea ?? 'frame'} onChange={(e) => set({ hitArea: e.target.value === 'image' ? 'image' : undefined })}>
-          <option value="frame">{polyActiveObj ? 'Polygon frame (auto)' : 'Frame (default)'}</option>
-          <option value="image">Image shape</option>
-        </select>
-        {polyActiveObj && <p className="text-[10px] text-fuchsia-400 mt-1">📐 polygon active — it replaces the frame as the click area automatically</p>}
-      </Field>
     </Section>
   );
 }
 
 /**
- * Polygon frame editor — per-side sizing and adding sides to a sprite's frame.
- * Points are frame-local (0..width / 0..height); the shape replaces the rectangle as the
- * selection outline and click/hit area automatically once it has ≥3 points.
+ * Hit shape: what counts as a click. Always relative to the box (percent), so it keeps its shape
+ * when the box is resized, rotated or flipped.
  */
-function FramePolygonSection({ obj, set }: { obj: SceneObject; set: (p: Partial<SceneObject>, key?: string) => void }) {
-  const poly = obj.framePolygon ?? [];
-  const setPoly = (pts: FramePoint[]) => set({ framePolygon: pts.length >= 3 ? pts : undefined });
-  const rectPts = (): FramePoint[] => [
-    { x: 0, y: 0 },
-    { x: obj.width, y: 0 },
-    { x: obj.width, y: obj.height },
-    { x: 0, y: obj.height },
-  ];
-  const regularN = (n: number) =>
-    Array.from({ length: n }, (_, i) => {
-      const a = (Math.PI * 2 * i) / n - Math.PI / 2; // first vertex at top
-      return { x: r1(obj.width / 2 + (obj.width / 2) * Math.cos(a)), y: r1(obj.height / 2 + (obj.height / 2) * Math.sin(a)) };
-    });
-  /** Insert a new vertex on the longest edge (or a chosen one), pushed slightly outward → adds a side. */
-  const addSide = (edgeIdx?: number) => {
-    if (poly.length < 3) return;
-    let ei = 0;
-    if (edgeIdx === undefined) {
-      let best = -1;
-      poly.forEach((p, i) => {
-        const q = poly[(i + 1) % poly.length];
-        const d = Math.hypot(q.x - p.x, q.y - p.y);
-        if (d > best) { best = d; ei = i; }
-      });
-    } else ei = edgeIdx;
-    const a = poly[ei], b = poly[(ei + 1) % poly.length];
-    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-    const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
-    const np = { x: r1(mx + (-dy / len) * 8), y: r1(my + (dx / len) * 8) };
-    setPoly([...poly.slice(0, ei + 1), np, ...poly.slice(ei + 1)]);
+function HitSection({ obj, set }: { obj: SceneObject; set: SetFn }) {
+  const pts = obj.hit?.kind === 'polygon' ? obj.hit.points : null;
+  const setPts = (next: Pt[] | null) =>
+    set({ hit: next && next.length >= 3 ? { kind: 'polygon', points: next } : undefined }, `${obj.id}:hit`);
+  const movePt = (i: number, p: Pt) => setPts((pts ?? []).map((q, j) => (j === i ? p : q)));
+  const addAfter = (i: number) => {
+    if (!pts) return;
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    setPts([...pts.slice(0, i + 1), { x: r3((a.x + b.x) / 2), y: r3((a.y + b.y) / 2) }, ...pts.slice(i + 1)]);
   };
-  const removeVertex = (i: number) => {
-    if (poly.length <= 3) return;
-    setPoly(poly.filter((_, j) => j !== i));
-  };
-  const moveVertex = (i: number, p: FramePoint) => setPoly(poly.map((q, j) => (j === i ? p : q)));
-  const sideLen = (i: number) => {
-    const a = poly[i], b = poly[(i + 1) % poly.length];
-    return Math.round(Math.hypot(b.x - a.x, b.y - a.y) * 10) / 10;
-  };
+  const removeAt = (i: number) => pts && pts.length > 3 && setPts(pts.filter((_, j) => j !== i));
+  const pct = (n: number) => Math.min(100, Math.max(0, n)) / 100;
   return (
-    <Section title="📐 Polygon frame (sides)" color="text-fuchsia-300">
-      {!poly.length ? (
-        <>
-          <p className="text-xs text-gray-500">Give this sprite a custom polygon frame instead of a rectangle. Each side can be sized independently, and you can add extra sides (triangle → pentagon → …). It becomes the click/hit area automatically.</p>
-          <div className="flex flex-wrap gap-1">
-            <button className={btnCls} onClick={() => setPoly(rectPts())}>▭ From frame</button>
-            <button className={btnCls} onClick={() => setPoly(regularN(3))}>△ Triangle</button>
-            <button className={btnCls} onClick={() => setPoly(regularN(5))}>⬠ Pentagon</button>
-            <button className={btnCls} onClick={() => setPoly(regularN(6))}>⬡ Hexagon</button>
-            <button className={btnCls} onClick={() => setPoly(regularN(8))}>Octagon</button>
-          </div>
-        </>
+    <Section title="🎯 Hit shape (click area)" color="text-fuchsia-300">
+      <Field label="Shape">
+        <select
+          className={inputCls}
+          value={pts ? 'polygon' : 'box'}
+          onChange={(e) => setPts(e.target.value === 'polygon' ? regularPolygon(4) : null)}
+        >
+          <option value="box">Box (whole sprite)</option>
+          <option value="polygon">Polygon</option>
+        </select>
+      </Field>
+      {!pts ? (
+        <p className="text-xs text-gray-500">The whole box is clickable. Choose Polygon to cut the click area to a custom shape.</p>
       ) : (
         <>
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-gray-400">{poly.length} vertices · drag the cyan dots on canvas or edit below</p>
-            <button className={`${btnCls} !bg-red-900 hover:!bg-red-800`} onClick={() => set({ framePolygon: undefined })}>✕ Remove polygon</button>
+          <div className="flex flex-wrap gap-1">
+            <button className={btnCls} onClick={() => setPts([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }])}>▭ Box</button>
+            <button className={btnCls} onClick={() => setPts(regularPolygon(3))}>△ Triangle</button>
+            <button className={btnCls} onClick={() => setPts(regularPolygon(5))}>⬠ Pentagon</button>
+            <button className={btnCls} onClick={() => setPts(regularPolygon(6))}>⬡ Hexagon</button>
+            <button className={btnCls} onClick={() => setPts(regularPolygon(8))}>Octagon</button>
           </div>
+          <p className="text-xs text-gray-400">{pts.length} points · drag the cyan dots on the canvas or edit below (% of the box)</p>
           <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
-            {poly.map((p, i) => (
+            {pts.map((p, i) => (
               <div key={i} className="flex items-center gap-1 bg-surface-light rounded px-1 py-1">
-                <span className="text-[10px] text-gray-400 w-8 shrink-0">V{i + 1}</span>
-                <NumInput value={r1(p.x)} onChange={(n) => moveVertex(i, { ...p, x: n })} />
-                <NumInput value={r1(p.y)} onChange={(n) => moveVertex(i, { ...p, y: n })} />
-                <span className="text-[10px] text-gray-500 w-12 shrink-0 text-right" title={`side V${i + 1}→V${(i % poly.length) + 1}`}>∠ {sideLen(i)}</span>
-                <button className={`${btnCls} shrink-0`} disabled={poly.length <= 3} title="Remove this vertex" onClick={() => removeVertex(i)}>−</button>
-                <button className={`${btnCls} shrink-0`} title="Add a new side after this vertex" onClick={() => addSide(i)}>+</button>
+                <span className="text-[10px] text-gray-400 w-6 shrink-0">P{i + 1}</span>
+                <NumInput value={r1(p.x * 100)} min={0} max={100} onChange={(n) => movePt(i, { ...p, x: r3(pct(n)) })} />
+                <NumInput value={r1(p.y * 100)} min={0} max={100} onChange={(n) => movePt(i, { ...p, y: r3(pct(n)) })} />
+                <button className={`${btnCls} shrink-0`} disabled={pts.length <= 3} title="Remove point" onClick={() => removeAt(i)}>−</button>
+                <button className={`${btnCls} shrink-0`} title="Add a point after this one" onClick={() => addAfter(i)}>+</button>
               </div>
             ))}
-          </div>
-          <div className="flex flex-wrap gap-1">
-            <button className={btnCls} onClick={() => addSide()}>＋ Add side (longest)</button>
-            <button className={btnCls} onClick={() => setPoly(rectPts())}>↺ Reset to frame</button>
           </div>
         </>
       )}
@@ -352,8 +264,6 @@ export function PropertiesPanel() {
   const viewOf = useStudioStore((s) => s.editingViewOf);
   const project = useCurrentProject();
   const scenes = useStudioStore((s) => s.scenes);
-  const assets = useProjectAssets();
-  const sprites = useSprites();
 
   const selected = useMemo(() => (ctx ? ctx.objects.filter((o) => ids.includes(o.id)) : []), [ctx, ids]);
   const items = useMemo(
@@ -365,7 +275,7 @@ export function PropertiesPanel() {
   if (selected.length > 1) return <MultiPanel objs={selected} />;
 
   const obj = selected[0];
-  const set = (patch: Partial<SceneObject>, key?: string) => st().updateObject(obj.id, patch, key ?? `${obj.id}:${Object.keys(patch).join()}`);
+  const set: SetFn = (patch, key) => st().updateObject(obj.id, patch, key ?? `${obj.id}:${Object.keys(patch).join()}`);
 
   return (
     <div className="p-3 space-y-3 text-sm">
@@ -379,16 +289,8 @@ export function PropertiesPanel() {
         <SpritePicker value={obj.spriteRef} onPick={(ref) => set({ spriteRef: ref }, `${obj.id}:sprite`)} />
       </Field>
 
-      <ImageSection obj={obj} set={set} />
-      <FramePolygonSection obj={obj} set={set} />
-
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="X"><NumInput value={r1(obj.x)} onChange={(n) => set({ x: n })} /></Field>
-        <Field label="Y"><NumInput value={r1(obj.y)} onChange={(n) => set({ y: n })} /></Field>
-        <Field label="Frame width"><NumInput value={r1(obj.width)} min={1} onChange={(n) => set({ width: Math.max(1, n) })} /></Field>
-        <Field label="Frame height"><NumInput value={r1(obj.height)} min={1} onChange={(n) => set({ height: Math.max(1, n) })} /></Field>
-      </div>
-      <Field label="Rotation (deg)"><NumInput value={r1(obj.rotation)} onChange={(n) => set({ rotation: n })} /></Field>
+      <TransformSection obj={obj} set={set} />
+      <HitSection obj={obj} set={set} />
 
       <Field label="Message (shown on click)">
         <textarea className={inputCls} dir="rtl" lang="fa" rows={2} value={obj.message ?? ''} onChange={(e) => set({ message: e.target.value || undefined })} />
