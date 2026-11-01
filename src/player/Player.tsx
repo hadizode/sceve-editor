@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Stage, Layer, Image as KImage, Rect, Circle, Group } from 'react-konva';
+import { Stage, Layer, Image as KImage, Rect, Circle, Group, Shape } from 'react-konva';
 import useImage from 'use-image';
 import { usePlayerStore } from '../stores/store';
 import { SEED_SESSION, SEED_SCENE, SEED_SCENE_2 } from '../shared/seed-data';
-import { isRoomComplete, allRoomsComplete } from '../shared/game-logic';
+import { isRoomComplete, allRoomsComplete, createObjectHitFunc, getRotatedBounds, getObjectCorners } from '../shared/game-logic';
 import type { SceneObject, View } from '../shared/types';
 
 // ============ Lobby Component ============
@@ -82,6 +82,28 @@ function Lobby() {
   );
 }
 
+// ============ Sprite Player (animated frame sequence) ============
+function useSpriteFrame(sprite: NonNullable<SceneObject['sprite']>) {
+  const frames = sprite.frames;
+  const [frame, setFrame] = useState(sprite.startFrame ?? 0);
+  useEffect(() => {
+    if (!frames || frames.length < 2) return;
+    const start = Math.min(sprite.startFrame ?? 0, frames.length - 1);
+    setFrame(start);
+    let current = start;
+    const interval = setInterval(() => {
+      current += 1;
+      if (current >= frames.length) {
+        if (sprite.loop) current = 0;
+        else { clearInterval(interval); return; }
+      }
+      setFrame(current);
+    }, 1000 / Math.max(1, sprite.fps));
+    return () => clearInterval(interval);
+  }, [frames.join('|'), sprite.fps, sprite.loop, sprite.startFrame]);
+  return frames && frames.length > 0 ? frames[Math.min(frame, frames.length - 1)] : null;
+}
+
 // ============ Game Object Component ============
 function GameObject({ obj, discovered, isHighlighted, onClick }: {
   obj: SceneObject;
@@ -89,11 +111,15 @@ function GameObject({ obj, discovered, isHighlighted, onClick }: {
   isHighlighted: boolean;
   onClick: () => void;
 }) {
-  const [image] = useImage(obj.imageUrl);
-  
+  const spriteUrl = obj.sprite ? useSpriteFrame(obj.sprite) : null;
+  const [image] = useImage(spriteUrl || obj.imageUrl);
+
   if (!obj.visible) return null;
   if (discovered && obj.oneTimeUse) return null;
 
+  // Hit area: custom polygon (local coords) when defined, otherwise the
+  // image's own rectangle via an explicit hit path. All decorations are
+  // non-interactive so they can never enlarge or block the click target.
   return (
     <Group>
       <KImage
@@ -103,6 +129,7 @@ function GameObject({ obj, discovered, isHighlighted, onClick }: {
         width={obj.width}
         height={obj.height}
         rotation={obj.rotation}
+        hitFunc={createObjectHitFunc(obj.width, obj.height, obj.hitArea)}
         onClick={onClick}
         onTap={onClick}
         cursor="pointer"
@@ -115,6 +142,7 @@ function GameObject({ obj, discovered, isHighlighted, onClick }: {
           fill="#6366f1"
           stroke="white"
           strokeWidth={1}
+          listening={false}
         />
       )}
       {discovered && (
@@ -125,18 +153,23 @@ function GameObject({ obj, discovered, isHighlighted, onClick }: {
           fill="#10b981"
           stroke="white"
           strokeWidth={1}
+          listening={false}
         />
       )}
       {isHighlighted && (
-        <Rect
-          x={obj.x - 3}
-          y={obj.y - 3}
-          width={obj.width + 6}
-          height={obj.height + 6}
+        <Shape
+          sceneFunc={(ctx: any) => {
+            const corners = getObjectCorners(obj);
+            ctx.beginPath();
+            ctx.moveTo(corners[0].x, corners[0].y);
+            for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y);
+            ctx.closePath();
+            ctx.fillStrokeShape(ctx);
+          }}
           stroke="#f59e0b"
           strokeWidth={2}
           dash={[5, 3]}
-          cornerRadius={4}
+          listening={false}
         />
       )}
     </Group>

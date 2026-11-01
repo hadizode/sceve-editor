@@ -48,6 +48,16 @@ export interface TransformRule {
   triggersDiscovery?: boolean; // whether this counts as discovering the object
 }
 
+// ============ Sprite Animation (frame sequence) ============
+export interface SpriteAnimation {
+  frames: string[];              // image URLs, one per frame
+  frameWidth?: number;           // display width override (defaults to object width)
+  frameHeight?: number;          // display height override (defaults to object height)
+  fps: number;                   // frames per second (default 8)
+  loop: boolean;                 // loop the animation (default true)
+  startFrame?: number;           // initial frame index (default 0)
+}
+
 // ============ SceneObject ============
 export interface SceneObject {
   id: string;
@@ -58,6 +68,8 @@ export interface SceneObject {
   y: number;
   width: number;
   height: number;
+  hitArea?: number[];            // polygon points [x1,y1,...] in LOCAL coords (relative to x,y, unrotated). Undefined = full rect.
+  sprite?: SpriteAnimation;      // animated frame sequence (overrides static imageUrl while playing)
   rotation: number;
   zIndex: number;
   layerIndex: number;          // global layer index for z-ordering
@@ -98,6 +110,15 @@ export const BackgroundLayerSchema: z.ZodType<BackgroundLayer> = z.object({
   offsetY: z.number().optional(),
 });
 
+export const SpriteAnimationSchema: z.ZodType<SpriteAnimation> = z.object({
+  frames: z.array(z.string()),
+  frameWidth: z.number().optional(),
+  frameHeight: z.number().optional(),
+  fps: z.number().positive(),
+  loop: z.boolean(),
+  startFrame: z.number().int().min(0).optional(),
+});
+
 export const SceneObjectSchema: z.ZodType<SceneObject> = z.object({
   id: z.string(),
   name: z.string(),
@@ -107,6 +128,8 @@ export const SceneObjectSchema: z.ZodType<SceneObject> = z.object({
   y: z.number(),
   width: z.number(),
   height: z.number(),
+  hitArea: z.array(z.number()).optional(),
+  sprite: SpriteAnimationSchema.optional(),
   rotation: z.number().default(0),
   zIndex: z.number().default(0),
   layerIndex: z.number().default(0),
