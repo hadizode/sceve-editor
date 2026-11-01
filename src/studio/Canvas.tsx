@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Konva from 'konva';
 import { Stage, Layer, Image as KImage, Rect, Text, Transformer, Shape, Circle } from 'react-konva';
-import { frameNodeAttrs, imageNodeAttrs, patchFromFrameNode, patchFromImageNode, visualBounds, polygonNodePoints, polygonCorners, boundsOf, polyActive, konvaHitFunc, frameMatrix, invert, apply, type Pt } from '../shared/geometry';
+import { apply, boxBounds, boxMatrix, invert, konvaHitFunc, konvaNodeAttrs, patchFromNode, polygonScene, type Pt } from '../shared/geometry';
 import { useCtx, useScene, useStudioStore } from '../stores/store';
 import { type SceneObject } from '../shared/types';
 import { clamp, fileToImage } from '../shared/utils';
@@ -10,40 +10,34 @@ import { isTyping, useElementSize } from './ui';
 
 const st = () => useStudioStore.getState();
 
-type Kind = 'image' | 'frame';
-
 interface NodeProps {
   obj: SceneObject;
   zoom: number;
-  register: (id: string, node: Konva.Node | null, kind: Kind) => void;
+  register: (id: string, node: Konva.Node | null) => void;
   onSelect: (id: string, multi: boolean) => void;
   onDragStart: (id: string) => void;
   onDragMove: (id: string) => void;
   onDragEnd: () => void;
 }
 
-function useNat(ref: string) {
-  const img = useSrc(ref);
-  const nat = img && img.naturalWidth > 0 ? { width: img.naturalWidth, height: img.naturalHeight } : null;
-  return { img, nat };
-}
-
 /**
- * Image sprites: the interactive node IS the image, drawn at natural size x transform
- * (never fitted to the frame, never clipped). Image-less sprites (colour / invisible hotspot):
- * the interactive node is the frame itself.
+ * One object = ONE interactive Konva node whose transform is exactly boxMatrix(obj).
+ * Image sprites render as a KImage stretched to the box; image-less sprites (colour / invisible
+ * hotspot) render as a Rect with the same attrs. A polygon hit shape is just a hitFunc on that node.
  */
 function ObjNode({ obj, zoom, register, onSelect, onDragStart, onDragMove, onDragEnd }: NodeProps) {
-  const { img, nat } = useNat(obj.spriteRef);
+  const img = useSrc(obj.spriteRef);
   const sp = useSpriteOf(obj.spriteRef);
-  const imgRef = useRef<Konva.Image>(null);
-  const frameRef = useRef<Konva.Rect>(null);
-  const hasImage = !!img && !!nat;
+  const nodeRef = useRef<any>(null);
+  const hasImage = !!img && img.naturalWidth > 0;
+
   useEffect(() => {
-    register(obj.id, hasImage ? imgRef.current : frameRef.current, hasImage ? 'image' : 'frame');
-    return () => register(obj.id, null, 'frame');
+    register(obj.id, nodeRef.current);
+    return () => register(obj.id, null);
   }, [obj.id, hasImage, register]);
 
+  const attrs = konvaNodeAttrs(obj);
+  const hitFunc = konvaHitFunc(obj);
   const common = {
     id: obj.id,
     opacity: obj.visible ? 1 : 0.4,
@@ -63,51 +57,20 @@ function ObjNode({ obj, zoom, register, onSelect, onDragStart, onDragMove, onDra
     },
   };
 
-  // Polygon frame REPLACES the rect frame as the interactive/hit shape: when a polygon is set,
-  // the draggable node becomes an invisible Konva Shape over the polygon's bounding box whose
-  // hit region is exactly the polygon (clicks/drag outside it don't register). The image and the
-  // color fill are still rendered underneath (non-interactive), clipped to the same polygon.
-  const poly = polyActive(obj);
-  const hitFunc = konvaHitFunc(obj, nat);
-  const pb = poly ? boundsOf(polygonCorners(obj)) : null;
-  const polyShape =
-    poly && pb ? (
-      <Shape
-        ref={frameRef as any}
-        x={pb.x}
-        y={pb.y}
-        width={Math.max(1, pb.width)}
-        height={Math.max(1, pb.height)}
-        hitFunc={hitFunc}
-        {...common}
-      />
-    ) : null;
-
   if (hasImage) {
-    if (poly) {
-      return (
-        <>
-          {sp?.color && (
-            <Rect {...frameNodeAttrs(obj)} fill={sp.color} opacity={obj.visible ? 1 : 0.4} listening={false} clip={{ points: polygonNodePoints(obj) }} />
-          )}
-          <KImage image={img} {...imageNodeAttrs(obj, nat!)} listening={false} clip={{ points: polygonNodePoints(obj) }} />
-          {polyShape}
-        </>
-      );
-    }
     return (
       <>
-        {sp?.color && <Rect {...frameNodeAttrs(obj)} fill={sp.color} opacity={obj.visible ? 1 : 0.4} listening={false} />}
-        <KImage ref={imgRef} image={img} {...imageNodeAttrs(obj, nat!)} {...common} />
+        {sp?.color && <Rect {...attrs} fill={sp.color} opacity={obj.visible ? 1 : 0.4} listening={false} />}
+        <KImage ref={nodeRef} image={img} {...attrs} hitFunc={hitFunc} {...common} />
       </>
     );
   }
-  if (poly && pb) return polyShape;
   return (
     <Rect
-      ref={frameRef}
-      {...frameNodeAttrs(obj)}
+      ref={nodeRef}
+      {...attrs}
       {...common}
+      hitFunc={hitFunc}
       fill={sp?.color ?? 'rgba(99,102,241,0.08)'}
       stroke={sp?.color ? undefined : '#64748b'}
       dash={sp?.color ? undefined : [4, 3]}
@@ -116,21 +79,20 @@ function ObjNode({ obj, zoom, register, onSelect, onDragStart, onDragMove, onDra
   );
 }
 
-/** Non-interactive extras (frame outline + label) live in their own layer above the sprites. */
+/** Non-interactive extras (selection outline, hit-shape outline, label) in their own layer above the sprites. */
 function ObjOverlay({ obj, zoom, selected, showLabel }: { obj: SceneObject; zoom: number; selected: boolean; showLabel: boolean }) {
-  const { nat } = useNat(obj.spriteRef);
-  const vb = visualBounds(obj, nat);
+  const poly = polygonScene(obj);
+  const vb = boxBounds(obj);
   return (
     <>
-      {selected && nat && (
-        <Rect {...frameNodeAttrs(obj)} stroke="#f59e0b" strokeWidth={1 / zoom} dash={[4 / zoom, 3 / zoom]} listening={false} />
+      {selected && obj.locked && (
+        <Rect {...konvaNodeAttrs(obj)} stroke="#f59e0b" strokeWidth={1 / zoom} dash={[4 / zoom, 3 / zoom]} listening={false} />
       )}
-      {polyActive(obj) && (
+      {poly.length >= 3 && (
         <Shape
           sceneFunc={(ctx, shape) => {
-            const pts = polygonNodePoints(obj);
             ctx.beginPath();
-            for (let i = 0; i < pts.length; i += 2) (i ? ctx.lineTo : ctx.moveTo).call(ctx, pts[i], pts[i + 1]);
+            poly.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
             ctx.closePath();
             ctx.fillStrokeShape(shape);
           }}
@@ -156,22 +118,24 @@ function ObjOverlay({ obj, zoom, selected, showLabel }: { obj: SceneObject; zoom
   );
 }
 
-/** Draggable vertex handles for the selected object's polygon frame (edit mode). */
+/** Draggable vertex handles for the selected object's hit polygon (points are normalized to the box). */
 function PolyHandles({ obj, zoom }: { obj: SceneObject; zoom: number }) {
-  const pts = obj.framePolygon;
-  if (!pts || pts.length < 3) return null;
-  const m = frameMatrix(obj);
+  if (obj.hit?.kind !== 'polygon' || obj.hit.points.length < 3) return null;
+  const pts = obj.hit.points;
+  const m = boxMatrix(obj);
   const move = (i: number, scenePt: Pt) => {
     const inv = invert(m);
     if (!inv) return;
-    const local = apply(inv, scenePt);
-    const next = pts.map((q, j) => (j === i ? { x: Math.round(local.x), y: Math.round(local.y) } : q));
-    st().updateObject(obj.id, { framePolygon: next });
+    const l = apply(inv, scenePt);
+    const next = pts.map((q, j) =>
+      j === i ? { x: Math.round(clamp(l.x / obj.width, 0, 1) * 1000) / 1000, y: Math.round(clamp(l.y / obj.height, 0, 1) * 1000) / 1000 } : q
+    );
+    st().updateObject(obj.id, { hit: { kind: 'polygon', points: next } }, `${obj.id}:hit-v${i}`);
   };
   return (
     <>
       {pts.map((p, i) => {
-        const q = apply(m, { x: p.x, y: p.y });
+        const q = apply(m, { x: p.x * obj.width, y: p.y * obj.height });
         return (
           <Circle
             key={i}
@@ -212,7 +176,6 @@ export default function Canvas() {
   const stageRef = useRef<Konva.Stage>(null);
   const trRef = useRef<Konva.Transformer>(null);
   const nodes = useRef(new Map<string, Konva.Node>());
-  const kinds = useRef(new Map<string, Kind>());
   const dragRef = useRef<{ pos: Map<string, { x: number; y: number; ox: number; oy: number }> } | null>(null);
   const panRef = useRef<{ x: number; y: number } | null>(null);
   const marqueeAdditive = useRef(false);
@@ -280,18 +243,13 @@ export default function Canvas() {
     };
   }, []);
 
-  const register = useCallback((id: string, node: Konva.Node | null, kind: Kind) => {
-    if (node) {
-      nodes.current.set(id, node);
-      kinds.current.set(id, kind);
-    } else {
-      nodes.current.delete(id);
-      kinds.current.delete(id);
-    }
+  const register = useCallback((id: string, node: Konva.Node | null) => {
+    if (node) nodes.current.set(id, node);
+    else nodes.current.delete(id);
     setNodeVer((v) => v + 1);
   }, []);
 
-  // bind the single shared Transformer to selected, unlocked nodes (image nodes wrap the rendered image)
+  // bind the single shared Transformer to selected, unlocked nodes
   useEffect(() => {
     const tr = trRef.current;
     if (!tr || !ctx) return;
@@ -323,7 +281,7 @@ export default function Canvas() {
     setDragging(true);
   }, [ctx]);
 
-  // Drags move the FRAME by a delta; the dragged node (image or frame) simply follows that delta.
+  // Drags move the box by a delta; every dragged node simply follows that delta.
   const onDragMove = useCallback(
     (id: string) => {
       const d = dragRef.current;
@@ -357,6 +315,7 @@ export default function Canvas() {
     st().updateObjects(patches);
   }, []);
 
+  // Transformer result → box patch (scale is folded into width/height; a negative scale is a flip).
   const onTransformEnd = () => {
     const tr = trRef.current;
     if (!tr || !ctx) return;
@@ -364,21 +323,16 @@ export default function Canvas() {
     tr.nodes().forEach((n) => {
       const o = ctx.objects.find((q) => q.id === n.id());
       if (!o) return;
-      const attrs = { x: n.x(), y: n.y(), rotation: n.rotation(), scaleX: n.scaleX(), scaleY: n.scaleY() };
-      if (polyActive(o)) {
-        // polygon hit-shape node sits at the polygon's bounding box — don't treat it as a frame Rect.
-        // Resizing it would desync frame↔polygon-local coords; dragging (delta-based) still works.
-        n.getLayer()?.batchDraw();
-        return;
-      }
-      if (kinds.current.get(o.id) === 'image') {
-        // image scale / rotation / offset change; the logical frame size stays untouched
-        patches[o.id] = patchFromImageNode(o, attrs);
-      } else {
-        patches[o.id] = patchFromFrameNode({ ...attrs, width: n.width(), height: n.height() });
-        n.scaleX(1);
-        n.scaleY(1);
-      }
+      const p = patchFromNode({
+        x: n.x(), y: n.y(), rotation: n.rotation(), scaleX: n.scaleX(), scaleY: n.scaleY(), width: n.width(), height: n.height(),
+      });
+      patches[o.id] = p;
+      // bake the scale into the node right away so it matches the committed box
+      n.scaleX(p.flipX ? -1 : 1);
+      n.scaleY(p.flipY ? -1 : 1);
+      n.width(p.width);
+      n.height(p.height);
+      n.offset({ x: p.width / 2, y: p.height / 2 });
     });
     st().updateObjects(patches);
   };
@@ -559,10 +513,10 @@ export default function Canvas() {
                 onDragEnd={onDragEnd}
               />
             ))}
-            {/* polygon-frame vertex handles for the single selected object */}
+            {/* hit-polygon vertex handles for the single selected object */}
             {selected.length === 1 && (() => {
               const o = ctx.objects.find((x) => x.id === selected[0]);
-              return o && polyActive(o) ? <PolyHandles obj={o} zoom={cam.zoom} /> : null;
+              return o && o.hit?.kind === 'polygon' ? <PolyHandles obj={o} zoom={cam.zoom} /> : null;
             })()}
             <Transformer
               ref={trRef}
