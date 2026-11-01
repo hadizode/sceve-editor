@@ -1,12 +1,49 @@
 import React, { useEffect, useState } from 'react';
 
+// ---------- shared class tokens (one place to restyle the whole studio) ----------
 export const inputCls =
-  'w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white text-sm outline-none focus:border-indigo-500';
-export const btnCls = 'bg-gray-700 hover:bg-gray-600 text-white px-2 py-1 rounded text-xs transition-colors disabled:opacity-40';
+  'w-full bg-surface-light border border-line rounded-lg px-2.5 py-1.5 text-sm text-white placeholder:text-gray-500 ' +
+  'outline-none transition-colors hover:border-gray-500 focus:border-primary focus:ring-1 focus:ring-primary/40';
+
+export const btnCls =
+  'inline-flex items-center justify-center gap-1 bg-surface-lighter hover:bg-surface-hover border border-line ' +
+  'text-gray-100 px-2.5 py-1.5 rounded-lg text-xs font-medium disabled:opacity-40 disabled:hover:bg-surface-lighter';
+
+/** The single primary action of a screen/toolbar. */
+export const btnPrimary =
+  'inline-flex items-center justify-center gap-1 bg-primary hover:bg-primary-dark text-white px-3 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-40';
+
+/** Destructive actions. */
+export const btnDanger =
+  'inline-flex items-center justify-center gap-1 bg-danger/15 hover:bg-danger/25 text-red-300 border border-danger/30 px-2.5 py-1.5 rounded-lg text-xs disabled:opacity-40';
 
 export function isTyping(e: Event): boolean {
   const t = e.target as HTMLElement | null;
   return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+}
+
+// ---------- toolbar building blocks ----------
+/** A pill that groups related toolbar buttons. */
+export function Group({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-0.5 bg-surface-light/60 border border-line rounded-lg p-0.5">{children}</div>
+  );
+}
+
+/** Compact toolbar button; `active` renders the toggled-on state. */
+export function IconBtn({
+  active,
+  className = '',
+  ...p
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { active?: boolean }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      {...p}
+      className={`h-7 min-w-7 px-2 rounded-md text-xs ${active ? 'bg-primary text-white' : 'text-gray-300 hover:bg-surface-hover'} disabled:opacity-35 ${className}`}
+    />
+  );
 }
 
 export function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -18,11 +55,31 @@ export function Field({ label, children }: { label: string; children: React.Reac
   );
 }
 
-export function Section({ title, color = 'text-indigo-300', children }: { title: string; color?: string; children: React.ReactNode }) {
+/** Collapsible inspector section (accordion). Open by default; pass defaultOpen={false} for rarely used ones. */
+export function Section({
+  title,
+  color = 'text-indigo-300',
+  defaultOpen = true,
+  children,
+}: {
+  title: string;
+  color?: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="border-t border-gray-700 pt-3 mt-3 space-y-2">
-      <h4 className={`font-bold text-sm ${color}`}>{title}</h4>
-      {children}
+    <div className="border-t border-gray-700 pt-2 mt-3">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        className={`w-full flex items-center justify-between font-bold text-sm ${color}`}
+      >
+        <span>{title}</span>
+        <span className="text-gray-500 text-xs" aria-hidden>{open ? '▾' : '▸'}</span>
+      </button>
+      {open && <div className="space-y-2 mt-2">{children}</div>}
     </div>
   );
 }
