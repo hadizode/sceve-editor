@@ -88,6 +88,13 @@ export interface TransformCondition {
   transformedObjects?: { sceneId?: string; objectId: string; minRule?: number }[];
   /** All of these item ids must currently be in the inventory (duplicates are not required). */
   itemsInInventory?: string[];
+  /**
+   * When true, this condition is NOT gated by `transformsApplied` — it is evaluated purely from the
+   * live game state (which transforms are VISIBLY applied / which items are held). That makes a rule
+   * fire INSTANTLY the moment its prerequisites complete (e.g. the last fuse goes in → the panel
+   * lights up immediately), with no extra click and no effect explicitly targeting this object.
+   */
+  autoApply?: boolean;
 }
 
 export interface TransformRule {
@@ -495,7 +502,11 @@ function normalizeConditions(raw: any): TransformCondition | undefined {
     : [];
   const items = strList(raw.itemsInInventory);
   if (!objs.length && !items.length) return undefined;
-  return { transformedObjects: objs.length ? objs : undefined, itemsInInventory: items.length ? items : undefined };
+  return {
+    transformedObjects: objs.length ? objs : undefined,
+    itemsInInventory: items.length ? items : undefined,
+    autoApply: raw.autoApply === true ? true : undefined,
+  };
 }
 
 function normalizeEffects(list: any, reg: SpriteRegistry): TransformEffect[] | undefined {

@@ -105,11 +105,13 @@ function ObjSprite({
   // Effects can also transform OTHER objects automatically — the engine records those under the same
   // `transformsApplied` map, so we show that rule's visuals too when no direct rule has fired yet.
   const autoRule = applied ? undefined : obj.transforms?.[Math.max(tIndex, 0)];
+  const shown = applied ?? (tIndex >= 0 ? autoRule : undefined);
+  // Live scene map — condition checks (incl. chained/auto-applied prerequisites) are evaluated against it.
+  const scenesById = usePlayerStore((s) => s.scenes);
   // Rules gated by conditions only take visual effect once their prerequisites hold (e.g. "the panel
   // lights up as soon as ALL three fuses + the connector are transformed") — even when the engine
   // already recorded the automatic application for this object.
-  const shown = applied ?? (tIndex >= 0 ? autoRule : undefined);
-  const shownOk = !!shown && checkTransformCondition(shown.conditions, state);
+  const shownOk = !!shown && checkTransformCondition(shown.conditions, state, scenesById);
   const ref = shownOk && shown?.newSpriteId ? transformRef(shown.newSpriteId) : obj.spriteRef;
   const sp = getSprite(ref, sprites);
   const url = spriteSrc(ref, sprites, assets);
