@@ -1,268 +1,462 @@
-import React, { useRef } from 'react';
-import { useStudioStore } from '../stores/store';
-import type { TransformRule, TransformEffect } from '../shared/types';
+import React, { useMemo, useRef } from 'react';
+import { useCtx, useCurrentProject, useProjectAssets, useSprites, useStudioStore } from '../stores/store';
+import { assetRef, spriteRef, transformRef, blankSprite, type SceneObject, type Sprite, type TransformCondition, type TransformEffect, type TransformRule } from '../shared/types';
+import { btnCls, Field, inputCls, ListInput, NumInput, Section } from './ui';
+import { useResolved } from './konva-bits';
+import { fileToImage } from '../shared/utils';
 import { Icon, IconButton } from './icons';
 
-// ============ Small UI primitives (local copy) ============
-const inputCls =
-  'bg-[#2a2a2a] border border-white/10 rounded px-1.5 py-1 text-[12px] text-gray-200 ' +
-  'focus:outline-none focus:border-indigo-400/60 w-full';
+const st = () => useStudioStore.getState();
 
-const btnCls =
-  'inline-flex items-center justify-center gap-1 rounded bg-[#3a3a3a] border border-white/10 ' +
-  'px-2 py-1 text-[11px] text-gray-200 hover:bg-[#4a4a4a] disabled:opacity-40 disabled:pointer-events-none';
+/**
+ * The Transitions section is a strong, SEPARATE part of the studio: transforms are not just
+ * "this object changes" — each rule (and each pickup) can fire EFFECTS that reach outside:
+ *  - automatically apply a transform on ANOTHER object (even in another room)
+ *  - change another room's (or a close-up view's) BACKGROUND
+ *  - open a DOOR so the player can walk into another room
+ * Doors themselves are configured here too: an object with a `door` target takes the player
+ * to another room when clicked (optionally gated by items or opened by an effect).
+ */
 
-function Section({
-  title,
-  badge,
-  right,
-  children,
-}: {
-  title: string;
-  badge?: number;
-  right?: React.ReactNode;
-  children?: React.ReactNode;
-}) {
+// ---------- small helpers ----------
+function shortName(s?: string) {
+  return (s || '').length > 26 ? s!.slice(0, 24) + '…' : s || '';
+}
+
+/** Every object in every scene of the project, addressable as `sceneId|objectId`. */
+function useProjectObjects(): { key: string; sceneTitle: string; objTitle: string; obj: SceneObject }[] {
+  const project = useCurrentProject();
+  const scenes = useStudioStore((s) => s.scenes);
+  return useMemo(() => {
+    const out: { key: string; sceneTitle: string; objTitle: string; obj: SceneObject }[] = [];
+    for (const sc of (project?.scenes ?? []).map((id) => scenes[id]).filter(Boolean)) {
+      const walk = (objs: SceneObject[], prefix = '') => {
+        for (const o of objs) {
+          out.push({ key: `${sc.id}|${o.id}`, sceneTitle: sc.title, objTitle: prefix + o.name, obj: o });
+          if (o.view) walk(o.view.objects, `${prefix}${o.name} › `);
+        }
+      };
+      walk(sc.objects);
+    }
+    return out;
+  }, [project, scenes]);
+}
+
+/** Image picker for effect backgrounds / post-transform sprites. Stores FULL `sprite:` refs. */
+function ImgPick({ value, onChange }: { value?: string; onChange: (ref: string | undefined) => void }) {
+  const assets = useProjectAssets();
+  const sprites = useSprites();
+  const file = useRef<HTMLInputElement>(null);
+  const current = value ? sprites[transformRef(value).slice(7)] : undefined;
+  const selectValue = !value ? '' : current ? current.assetId || '__blank__' : value;
+  const src = useResolved(value ? transformRef(value) : '');
   return (
-    <div className="border-t border-white/5 pt-2">
-      <div className="flex items-center gap-1 mb-1.5">
-        <h4 className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">{title}</h4>
-        {badge !== undefined && (
-          <span className="rounded-full bg-white/10 px-1.5 text-[10px] leading-4 text-gray-300">{badge}</span>
-        )}
-        <div className="flex-1" />
-        {right}
+    <div className="space-y-1">
+      <input ref={file} type="file" accept="image/*" className="hidden" onChange={async (e) => {
+        const f = e.target.files?.[0];
+        e.target.value = '';
+        if (!f) return;
+        try {
+          const a = st().addAsset(await fileToImage(f));
+          onChange(st().useAssetSprite(assetRef(a.id), a.name));
+        } catch (err) { alert((err as Error).message); }
+      }} />
+      <div className="flex gap-1">
+        <IconButton icon="upload" solid title="Upload image" onClick={() => file.current?.click()} />
+        <select
+          className={`${inputCls} flex-1`}
+          value={selectValue}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === '__blank__') onChange(spriteRef(st().addSprite(blankSprite('Blank')).id));
+            else if (v === '') onChange(undefined);
+            else if (v.startsWith('asset:')) onChange(st().useAssetSprite(v));
+            else onChange(v);
+          }}
+        >
+          <option value="">— none —</option>
+          <option value="__blank__">■ Color only</option>
+          {assets.map((a) => <option key={a.id} value={assetRef(a.id)}>{a.name}</option>)}
+        </select>
+        {src && <img src={src} alt="" className="w-8 h-8 rounded object-contain bg-gray-800 shrink-0" />}
       </div>
-      <div className="space-y-2">{children}</div>
     </div>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block space-y-0.5">
-      <span className="text-[10px] uppercase tracking-wide text-gray-500">{label}</span>
-      {children}
-    </label>
-  );
-}
+/** Sprite color fallback for previews. */
+const spColor = (sprites: Record<string, Sprite>, ref?: string) =>
+  ref ? sprites[transformRef(ref).slice(7)]?.color : undefined;
 
-// ============ Image picker (text field + upload button) ============
-function ImgPick({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
+// ---------- Effects editor (shared by transform rules and pickups) ----------
+const ACTIONS: { v: TransformEffect['action']; label: string }[] = [
+  { v: 'transform', label: 'Transform another object' },
+  { v: 'background', label: 'Change background' },
+  { v: 'unlockDoor', label: 'Open a door' },
+];
+
+function EffectCard({ eff, idx, onChange, onRemove }: {
+  eff: TransformEffect;
+  idx: number;
+  onChange: (patch: Partial<TransformEffect>) => void;
+  onRemove: () => void;
 }) {
-  const file = useRef<HTMLInputElement>(null);
-  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    const r = new FileReader();
-    r.onload = () => onChange(String(r.result));
-    r.readAsDataURL(f);
-    e.target.value = '';
-  };
+  const project = useCurrentProject();
+  const scenes = useStudioStore((s) => s.scenes);
+  const allObjs = useProjectObjects();
+  const sceneList = (project?.scenes ?? []).map((id) => scenes[id]).filter(Boolean);
+  const scope = eff.sceneId || '';
+  // Objects to target: inside the chosen scene (empty sceneId = current room is handled by the caller's default).
+  const targets = allObjs.filter((t) => (scope ? t.key.startsWith(`${scope}|`) : true));
+  const doorTargets = allObjs.filter((t) => t.obj.door && (scope ? t.key.startsWith(`${scope}|`) : true));
+
   return (
-    <Field label={label}>
-      <div className="flex items-center gap-1">
-        <input className={inputCls} value={value} placeholder="URL or data URI" onChange={(e) => onChange(e.target.value)} />
-        <IconButton icon="upload" solid title="Upload image" onClick={() => file.current?.click()} />
-        <input ref={file} type="file" accept="image/*" className="hidden" onChange={onFile} />
+    <div className="bg-surface rounded p-2 space-y-2 border border-purple-800/50">
+      <div className="flex justify-between items-center text-xs">
+        <span className="text-purple-300 font-bold">Effect {idx + 1}</span>
+        <IconButton icon="x" compact danger title="Remove effect" onClick={onRemove} />
       </div>
-      {value && (
-        <img src={value} alt="" className="mt-1 max-h-16 rounded border border-white/10 object-contain" />
+      <Field label="Action">
+        <select className={inputCls} value={eff.action} onChange={(e) => onChange({ action: e.target.value as TransformEffect['action'] })}>
+          {ACTIONS.map((a) => <option key={a.v} value={a.v}>{a.label}</option>)}
+        </select>
+      </Field>
+      {eff.action !== 'background' && (
+        <Field label="Target room (empty = same room)">
+          <select className={inputCls} value={scope} onChange={(e) => onChange({ sceneId: e.target.value || undefined, objectId: undefined, doorObjectId: undefined })}>
+            <option value="">(same room)</option>
+            {sceneList.map((sc) => <option key={sc.id} value={sc.id}>{sc.title}</option>)}
+          </select>
+        </Field>
       )}
-    </Field>
+      {eff.action === 'transform' && (
+        <>
+          <Field label="Object to transform automatically">
+            <select className={inputCls} value={eff.objectId ?? ''} onChange={(e) => onChange({ objectId: e.target.value || undefined })}>
+              <option value="">— choose —</option>
+              {targets.map((t) => <option key={t.key} value={t.obj.id}>{shortName(t.sceneTitle)} › {shortName(t.objTitle)}{t.obj.transforms?.length ? ` (${t.obj.transforms.length} rule)` : ' — no rules'}</option>)}
+            </select>
+          </Field>
+          <Field label="Which rule of that object">
+            <NumInput
+              value={eff.ruleIndex ?? 0}
+              min={0}
+              onChange={(n) => onChange({ ruleIndex: Math.max(0, Math.floor(n)) })}
+            />
+          </Field>
+        </>
+      )}
+      {eff.action === 'background' && (
+        <>
+          <Field label="Room whose background changes">
+            <select className={inputCls} value={eff.sceneId ?? ''} onChange={(e) => onChange({ sceneId: e.target.value || undefined })}>
+              <option value="">(same room)</option>
+              {sceneList.map((sc) => <option key={sc.id} value={sc.id}>{sc.title}</option>)}
+            </select>
+          </Field>
+          <Field label="New background image">
+            <ImgPick value={eff.newSpriteId} onChange={(ref) => onChange({ newSpriteId: ref })} />
+          </Field>
+        </>
+      )}
+      {eff.action === 'unlockDoor' && (
+        <Field label="Door to open">
+          <select className={inputCls} value={eff.doorObjectId ?? ''} onChange={(e) => onChange({ doorObjectId: e.target.value || undefined })}>
+            <option value="">— choose —</option>
+            {allObjs.filter((t) => t.obj.door).map((t) => <option key={t.key} value={t.obj.id}>{shortName(t.sceneTitle)} › {shortName(t.objTitle)}</option>)}
+          </select>
+          {!doorTargets.length && eff.sceneId && <p className="text-[10px] text-orange-400 mt-1">این اتاق در را تعریف نکرده است.</p>}
+        </Field>
+      )}
+      <Field label="Message when it fires (optional)">
+        <input className={inputCls} dir="rtl" lang="fa" value={eff.message ?? ''} onChange={(e) => onChange({ message: e.target.value || undefined })} />
+      </Field>
+    </div>
   );
 }
 
-// ============ Transitions panel ============
-export function TransitionsPanel() {
-  const scenes = useStudioStore((s) => s.scenes);
-  const currentSceneId = useStudioStore((s) => s.currentSceneId);
-  const selectedObjectIds = useStudioStore((s) => s.selectedObjectIds);
-  const updateObject = useStudioStore((s) => s.updateObject);
-  const scene = currentSceneId ? scenes[currentSceneId] : null;
-  const obj = scene?.objects.find((o) => o.id === selectedObjectIds[0]);
-  if (!obj) return null;
+function EffectsEditor({ effects, onChange }: { effects: TransformEffect[]; onChange: (next: TransformEffect[]) => void }) {
+  const upd = (i: number, patch: Partial<TransformEffect>) => onChange(effects.map((e, j) => (j === i ? { ...e, ...patch } : e)));
+  return (
+    <div className="space-y-2">
+      {effects.map((e, i) => (
+        <EffectCard key={i} eff={e} idx={i} onChange={(p) => upd(i, p)} onRemove={() => onChange(effects.filter((_, j) => j !== i))} />
+      ))}
+      <button
+        className={`${btnCls} w-full border border-purple-700 text-purple-200`}
+        onClick={() => onChange([...effects, { action: 'transform' }])}
+      >
+        <Icon name="plus" size={12} /> Add effect
+      </button>
+      {effects.length === 0 && <p className="text-[11px] text-gray-500">No effects yet — add one to reach other objects/rooms.</p>}
+    </div>
+  );
+}
 
-  const rules = obj.transforms ?? [];
-  const setRules = (next: TransformRule[]) =>
-    updateObject(obj.id, { transforms: next.length > 0 ? next : undefined });
+// ---------- Conditions editor (rule gating: "only when ALL of these are transformed / held") ----------
+/**
+ * A condition is a logical AND of prerequisites that must hold before a transform rule may fire.
+ * The classic case: "if all three fuses AND the connector have been transformed → transform this
+ * panel's sprite". Prerequisites can point at objects in ANY room of the project.
+ */
+function ConditionsEditor({ cond, onChange }: { cond?: TransformCondition; onChange: (next: TransformCondition | undefined) => void }) {
+  const allObjs = useProjectObjects();
+  const objs = cond?.transformedObjects ?? [];
+  const items = cond?.itemsInInventory ?? [];
 
-  const updateRule = (i: number, patch: Partial<TransformRule>) =>
-    setRules(rules.map((r, j) => (j === i ? { ...r, ...patch } : r)));
-  const removeRule = (i: number) => setRules(rules.filter((_, j) => j !== i));
-  const addRule = () =>
-    setRules([...rules, { requiresItem: '', newMessage: '', consumesItem: true }]);
-
-  // Effects applied after the transform fires (per rule)
-  const setRuleEffects = (i: number, next: TransformEffect[]) =>
-    updateRule(i, { effects: next.length > 0 ? next : undefined });
-  const addEffect = (i: number) =>
-    setRuleEffects(i, [...(rules[i].effects ?? []), { type: 'fadeIn', durationMs: 500 }]);
+  const setObjs = (list: TransformCondition['transformedObjects']) => {
+    const next: TransformCondition = { ...cond, transformedObjects: list?.length ? list : undefined };
+    if (!next.transformedObjects && !next.itemsInInventory?.length) onChange(undefined);
+    else onChange(next);
+  };
+  const setItems = (list: string[] | undefined) => {
+    const items2 = list ?? [];
+    const next: TransformCondition = { ...cond, itemsInInventory: items2.length ? items2 : undefined };
+    if (!next.transformedObjects && !next.itemsInInventory) onChange(undefined);
+    else onChange(next);
+  };
+  // Don't offer the same object twice.
+  const usedIds = new Set(objs.map((e) => `${e.sceneId ?? ''}|${e.objectId}`));
 
   return (
-    <Section
-      title="Transforms"
-      badge={rules.length || undefined}
-      right={<IconButton icon="plus" compact title="Add transform rule" onClick={addRule} />}
-    >
-      {rules.length === 0 && (
-        <p className="text-[11px] text-gray-600">No transforms defined</p>
-      )}
+    <div className="space-y-2 bg-surface rounded p-2 border border-amber-700/40">
+      <p className="text-[11px] font-bold text-amber-300">Condition — only fire when ALL of these hold (empty = always)</p>
 
-      {rules.map((rule, i) => {
-        const objs = rule.requiresItems ?? (rule.requiresItem ? [rule.requiresItem] : []);
-        const instant = !!rule.instant;
-        const effects = rule.effects ?? [];
+      {objs.map((e, i) => {
+        const key = `${e.sceneId ?? ''}|${e.objectId}`;
         return (
-          <div key={i} className="space-y-1.5 rounded bg-black/20 p-2">
-            <div className="flex items-center justify-between gap-1">
-              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-purple-300">
-                <Icon name="pencil" size={12} /> Transform {i + 1}
-              </span>
-              <IconButton icon="trash" title="Remove rule" compact danger onClick={() => removeRule(i)} />
-            </div>
-
-            {/* Conditions: objects/items that must be present */}
-            <Field label="Object must be transformed / required items">
-              <div className="space-y-1">
-                {objs.map((_o, j) => (
-                  <div key={j} className="flex items-center gap-1">
-                    <input
-                      className={inputCls}
-                      value={_o}
-                      onChange={(e) => {
-                        const next = objs.map((v, k) => (k === j ? e.target.value : v));
-                        updateRule(i, { requiresItems: next, requiresItem: next[0] ?? '' });
-                      }}
-                    />
-                    <IconButton icon="x" compact danger title="Remove" onClick={() => setObjs(objs.filter((_, k) => k !== j))} />
-                  </div>
+          <div key={i} className="flex gap-1 items-center">
+            <select
+              className={`${inputCls} flex-1`}
+              value={key}
+              onChange={(ev) => {
+                const [sid, oid] = ev.target.value.split('|');
+                setObjs(objs.map((x, j) => (j === i ? { sceneId: sid || undefined, objectId: oid, minRule: x.minRule } : x)));
+              }}
+            >
+              <option value="">— choose object —</option>
+              {allObjs
+                .filter((t) => t.obj.transforms?.length && (!usedIds.has(t.key) || t.key === key))
+                .map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {shortName(t.sceneTitle)} › {shortName(t.objTitle)} ({t.obj.transforms!.length} rule{t.obj.transforms!.length > 1 ? 's' : ''})
+                  </option>
                 ))}
-                <button className={`${btnCls} w-full`} onClick={() => setObjs([...objs, ''])}>
-                  <Icon name="plus" size={12} /> Object must be transformed
-                </button>
-              </div>
-            </Field>
-
-            <ImgPick
-              label="New image"
-              value={rule.newImageUrl ?? ''}
-              onChange={(v) => updateRule(i, { newImageUrl: v || undefined })}
-            />
-
-            <Field label="New name">
-              <input
-                className={inputCls}
-                value={rule.newName ?? ''}
-                onChange={(e) => updateRule(i, { newName: e.target.value || undefined })}
-              />
-            </Field>
-
-            <Field label="New message">
-              <input
-                dir="rtl"
-                lang="fa"
-                className={inputCls}
-                value={rule.newMessage ?? ''}
-                onChange={(e) => updateRule(i, { newMessage: e.target.value || undefined })}
-              />
-            </Field>
-
-            <Field label="Grants item">
-              <input
-                className={inputCls}
-                value={rule.grantsItem ?? ''}
-                onChange={(e) => updateRule(i, { grantsItem: e.target.value || undefined })}
-              />
-            </Field>
-
-            <label className="flex items-center gap-2 text-[11px] text-gray-400">
-              <input
-                type="checkbox"
-                checked={rule.consumesItem !== false}
-                onChange={(e) => updateRule(i, { consumesItem: e.target.checked })}
-              />
-              Consumes item
-            </label>
-
-            <label className="flex items-center gap-2 text-[11px] text-gray-400">
-              <input
-                type="checkbox"
-                checked={!!rule.triggersDiscovery}
-                onChange={(e) => updateRule(i, { triggersDiscovery: e.target.checked || undefined })}
-              />
-              Triggers discovery
-            </label>
-
-            <label className="flex items-center gap-2 text-[11px] text-gray-400">
-              <input
-                type="checkbox"
-                checked={instant}
-                onChange={(e) => updateRule(i, { instant: e.target.checked || undefined })}
-              />
-              <span className="inline-flex items-center gap-1">
-                <Icon name="bolt" size={11} className="text-amber-400" /> Instant — apply without click
-              </span>
-            </label>
-
-            {/* Effects for this rule */}
-            <div className="space-y-1 pt-1">
-              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-sky-300">
-                <Icon name="bolt" size={12} /> Effects
-                {effects.length > 0 && (
-                  <span className="rounded-full bg-white/10 px-1.5 text-[10px] leading-4 text-gray-300">{effects.length}</span>
-                )}
-              </span>
-              {effects.map((fx, j) => (
-                <div key={j} className="flex items-center gap-1">
-                  <select
-                    className={`${inputCls} !w-auto`}
-                    value={fx.type}
-                    onChange={(e) =>
-                      setRuleEffects(i, effects.map((v, k) => (k === j ? { ...v, type: e.target.value as TransformEffect['type'] } : v)))
-                    }
-                  >
-                    <option value="fadeIn">Fade in</option>
-                    <option value="pop">Pop</option>
-                    <option value="shake">Shake</option>
-                    <option value="flash">Flash</option>
-                  </select>
-                  <input
-                    className={`${inputCls} !w-16`}
-                    type="number"
-                    value={fx.durationMs}
-                    onChange={(e) =>
-                      setRuleEffects(i, effects.map((v, k) => (k === j ? { ...v, durationMs: Number(e.target.value) || 0 } : v)))
-                    }
-                  />
-                  <IconButton icon="x" compact danger title="Remove" onClick={() => setRuleEffects(i, effects.filter((_, k) => k !== j))} />
-                </div>
-              ))}
-              <button className={`${btnCls} w-full`} onClick={() => addEffect(i)}>
-                <Icon name="plus" size={12} /> Add effect
-              </button>
+            </select>
+            <span className="text-[10px] text-gray-400 shrink-0" title="Which rule of that object must already be applied (0 = first rule)">rule≥</span>
+            <div className="w-14 shrink-0">
+              <NumInput value={(e.minRule ?? 0) + 1} min={1} onChange={(n) => setObjs(objs.map((x, j) => (j === i ? { ...x, minRule: Math.max(0, Math.floor(n)) - 1 } : x)))} />
             </div>
+            <IconButton icon="x" compact danger title="Remove" onClick={() => setObjs(objs.filter((_, j) => j !== i))} />
           </div>
         );
-
-        function setObjs(next: string[]) {
-          updateRule(i, {
-            requiresItems: next.length > 0 ? next : undefined,
-            requiresItem: next[0] ?? '',
-          });
-        }
       })}
-
-      <button className={`${btnCls} w-full`} onClick={addRule}>
-        <Icon name="plus" size={12} /> Add transform rule
+      {objs.some((e) => e.objectId && !allObjs.some((t) => t.obj.id === e.objectId)) && (
+        <p className="text-[10px] text-orange-400">Some prerequisite objects no longer exist — re-select them.</p>
+      )}
+      <button
+        className={`${btnCls} w-full border border-amber-700/60 text-amber-200 text-[11px]`}
+        onClick={() => setObjs([...objs, { objectId: '', minRule: 0 }])}
+      >
+        <Icon name="plus" size={12} /> Object must be transformed
       </button>
+
+      <Field label="…and these items must be in the inventory (comma separated)">
+        <ListInput value={items} onChange={setItems} placeholder="fuse, connector" />
+      </Field>
+
+      {(objs.length > 0 || items.length > 0) && (
+        <label className="flex items-start gap-2 text-[11px] cursor-pointer bg-amber-900/20 border border-amber-700/40 rounded p-2">
+          <input
+            type="checkbox"
+            className="accent-amber-400 mt-0.5"
+            checked={cond?.autoApply === true}
+            onChange={(ev) => {
+              const next: TransformCondition = { ...cond, autoApply: ev.target.checked ? true : undefined };
+              if (!next.transformedObjects && !next.itemsInInventory && !next.autoApply) onChange(undefined);
+              else onChange(next);
+            }}
+          />
+          <span>
+            <span className="inline-flex items-center gap-1">
+              <Icon name="bolt" size={11} className="text-amber-400" /> Instant — apply without click
+            </span>
+            <br />
+            <span className="text-gray-400">
+              The moment ALL conditions above become true, this transform fires automatically — no click needed and no
+              effect targeting required (e.g. the last fuse goes in → this panel lights up instantly). The rule must have
+              an empty requires item.
+            </span>
+          </span>
+        </label>
+      )}
+    </div>
+  );
+}
+
+// ---------- Door editor ----------
+function DoorSection({ obj, set }: { obj: SceneObject; set: (p: Partial<SceneObject>, key?: string) => void }) {
+  const project = useCurrentProject();
+  const scenes = useStudioStore((s) => s.scenes);
+  const sceneList = (project?.scenes ?? []).map((id) => scenes[id]).filter(Boolean);
+  const door = obj.door;
+  return (
+    <Section title="Door (room transition)" color="text-sky-300">
+      <label className="flex items-center gap-2 text-gray-300 text-sm">
+        <input
+          type="checkbox"
+          checked={!!door}
+          onChange={(e) => set({ door: e.target.checked ? { sceneId: sceneList.find((s2) => s2.id !== objId(obj))?.id ?? sceneList[0]?.id ?? '', requiresItems: [] } : undefined }, `${obj.id}:door`)}
+        />
+        This object is a door — clicking it walks the player into another room
+      </label>
+      {door && (
+        <>
+          <Field label="Goes to room">
+            <select className={inputCls} value={door.sceneId} onChange={(e) => set({ door: { ...door, sceneId: e.target.value } }, `${obj.id}:door`)}>
+              <option value="">— choose —</option>
+              {sceneList.map((sc) => <option key={sc.id} value={sc.id}>{sc.title}</option>)}
+            </select>
+          </Field>
+          <Field label="Items required to pass (comma separated, empty = always open)">
+            <ListInput value={door.requiresItems} onChange={(v) => set({ door: { ...door, requiresItems: v } }, `${obj.id}:doorreq`)} placeholder="key-gold, fuse" />
+          </Field>
+          <Field label="Locked message">
+            <input className={inputCls} dir="rtl" lang="fa" value={door.lockedMessage ?? ''} onChange={(e) => set({ door: { ...door, lockedMessage: e.target.value || undefined } }, `${obj.id}:doorlock`)} />
+          </Field>
+          <p className="text-[11px] text-gray-500">An «Open a door» effect from any transform/pickup can also unlock this door at runtime.</p>
+        </>
+      )}
     </Section>
+  );
+}
+const objId = (o: SceneObject) => o.id;
+
+// ---------- Main panel (embedded in the Props tab below the basic properties) ----------
+function TransitionsEditor({ obj, set }: { obj: SceneObject; set: (p: Partial<SceneObject>, key?: string) => void }) {
+  const sprites = useSprites();
+  const ts = obj.transforms ?? [];
+  const setT = (i: number, patch: Partial<TransformRule>) =>
+    set({ transforms: ts.map((t, j) => (j === i ? { ...t, ...patch } : t)) }, `${obj.id}:tf${i}:${Object.keys(patch)[0]}`);
+  const nextSpriteOf = (t: TransformRule) => (t.newSpriteId ? transformRef(t.newSpriteId) : obj.spriteRef);
+  const addRule = () => set({ transforms: [...ts, { requiresItem: '', consumesItem: true }] }, `${obj.id}:tf-add`);
+
+  return (
+    <div className="space-y-3">
+      {/* -------- Transform rules -------- */}
+      <Section
+        title="Transforms"
+        color="text-purple-300"
+        right={<IconButton icon="plus" compact title="Add transform rule" onClick={addRule} />}
+      >
+        <p className="text-xs text-gray-500">
+          Rules run in order (rule 2 only after rule 1). An <b>empty “Requires item” means no item is needed</b> — the rule fires with a plain click.
+        </p>
+        {ts.map((t, i) => {
+          const ref = nextSpriteOf(t);
+          return (
+            <div key={i} className="bg-surface-light rounded p-2 space-y-2">
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-purple-300 font-bold">Rule {i + 1}</span>
+                <IconButton
+                  icon="x"
+                  compact
+                  danger
+                  title="Remove rule"
+                  onClick={() => set({ transforms: ts.length > 1 ? ts.filter((_, j) => j !== i) : undefined }, `${obj.id}:tf-del-${i}`)}
+                />
+              </div>
+              <Field label="Requires item (empty = no item needed, fires on click)">
+                <input className={inputCls} list="item-ids" value={t.requiresItem} onChange={(e) => setT(i, { requiresItem: e.target.value })} placeholder="e.g. wire-cutter" />
+              </Field>
+              <div className="flex items-center gap-2">
+                <Field label="New image (after transform)">
+                  <ImgPick value={t.newSpriteId} onChange={(r) => setT(i, { newSpriteId: r })} />
+                </Field>
+              </div>
+              {(t.newSpriteId || t.newName) && (
+                <div className="flex items-center gap-2 text-[11px] text-gray-400">
+                  <span>This object becomes:</span>
+                  <span className="text-purple-200">{t.newName || obj.name}</span>
+                  {ref && (sprites[ref.slice(7)]?.assetId || spColor(sprites, ref)) && <span className="text-gray-500">(new look)</span>}
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="New name">
+                  <input className={inputCls} dir="rtl" lang="fa" value={t.newName ?? ''} onChange={(e) => setT(i, { newName: e.target.value || undefined })} />
+                </Field>
+                <Field label="Grants item">
+                  <input className={inputCls} list="item-ids" value={t.grantsItem ?? ''} onChange={(e) => setT(i, { grantsItem: e.target.value || undefined })} />
+                </Field>
+              </div>
+              <Field label="New message">
+                <input className={inputCls} dir="rtl" lang="fa" value={t.newMessage ?? ''} onChange={(e) => setT(i, { newMessage: e.target.value || undefined })} />
+              </Field>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-300">
+                <label className="flex items-center gap-2"><input type="checkbox" checked={t.consumesItem !== false} onChange={(e) => setT(i, { consumesItem: e.target.checked })} />Consumes item</label>
+                <label className="flex items-center gap-2"><input type="checkbox" checked={!!t.triggersDiscovery} onChange={(e) => setT(i, { triggersDiscovery: e.target.checked })} />Counts as discovery</label>
+              </div>
+
+              {/* per-rule CONDITIONS — gate the rule behind other objects' transforms / inventory */}
+              <div className="border-t border-amber-900/50 pt-2">
+                <ConditionsEditor cond={t.conditions} onChange={(next) => setT(i, { conditions: next })} />
+              </div>
+
+              {/* per-rule TRANSITION EFFECTS — the heart of the separate transitions engine */}
+              <div className="border-t border-purple-900/60 pt-2">
+                <p className="text-[11px] font-bold text-purple-300 mb-1">When this rule fires, also…</p>
+                <EffectsEditor effects={t.effects ?? []} onChange={(next) => setT(i, { effects: next.length ? next : undefined })} />
+              </div>
+            </div>
+          );
+        })}
+        <button className={`${btnCls} w-full bg-purple-700 hover:bg-purple-600 text-white px-2 py-1.5 rounded text-xs`} onClick={addRule}>
+          <Icon name="plus" size={12} /> Add transform rule
+        </button>
+      </Section>
+
+      {/* -------- Pickup effects -------- */}
+      {obj.pickupable && (
+        <Section title="Pickup transitions — when this item is picked up…" color="text-green-300">
+          <EffectsEditor effects={obj.pickupEffects ?? []} onChange={(next) => set({ pickupEffects: next.length ? next : undefined }, `${obj.id}:pk-eff`)} />
+        </Section>
+      )}
+
+      {/* -------- Door -------- */}
+      <DoorSection obj={obj} set={set} />
+    </div>
+  );
+}
+
+// ---------- Public wrappers ----------
+/** Embedded in the Props tab (below the basic properties) so editing stays one continuous flow. */
+export function TransitionsPanel({ obj, set }: { obj: SceneObject; set: (p: Partial<SceneObject>, key?: string) => void }) {
+  return <TransitionsEditor obj={obj} set={set} />;
+}
+
+/** Dedicated "Transitions" tab in the Studio sidebar — edits the selected object's transitions. */
+export function TransitionsTab() {
+  const ctx = useCtx();
+  const ids = useStudioStore((s) => s.selectedObjectIds);
+  const selected = useMemo(() => (ctx ? ctx.objects.filter((o) => ids.includes(o.id)) : []), [ctx, ids]);
+  if (selected.length === 0) {
+    return (
+      <div className="p-4 text-gray-400 text-sm space-y-2" dir="ltr">
+        <p>Select an object on the canvas to edit its transitions.</p>
+        <p className="text-xs text-gray-500">
+          Here you can define transform rules, chain effects that fire on OTHER objects (even in other rooms),
+          change another room&apos;s background, open doors remotely — and turn any sprite into a door to another room.
+        </p>
+      </div>
+    );
+  }
+  if (selected.length > 1) return <div className="p-4 text-gray-400 text-sm">Select a single object to edit its transitions.</div>;
+  const obj = selected[0];
+  const set = (patch: Partial<SceneObject>, key?: string) => st().updateObject(obj.id, patch, key ?? `${obj.id}:${Object.keys(patch).join()}`);
+  return (
+    <div className="p-3 space-y-3 text-sm">
+      <h3 className="font-bold text-purple-300 text-base">Transitions — {obj.name}</h3>
+      <TransitionsEditor obj={obj} set={set} />
+    </div>
   );
 }

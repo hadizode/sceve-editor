@@ -73,7 +73,7 @@ export function Splitter({
 /** Small uppercase title strip at the top of a dock. */
 export function PanelHead({ title, right }: { title: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <div className="h-8 shrink-0 flex items-center justify-between gap-2 px-3 bg-dock-head border-b border-black/60 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+    <div className="h-7 shrink-0 flex items-center justify-between gap-2 px-3 bg-dock-head border-b border-black/60 text-[11px] font-medium text-gray-300">
       <span>{title}</span>
       {right}
     </div>
@@ -102,7 +102,7 @@ export function DockTabs<T extends string>({
             role="tab"
             aria-selected={active}
             onClick={() => onChange(t.id)}
-            className={`h-7 px-3 text-xs rounded-t-md border-t-2 ${
+            className={`h-7 px-3 text-[11px] rounded-t-[3px] border-t-2 ${
               active ? 'bg-surface border-primary text-white' : 'border-transparent text-gray-400 hover:text-gray-200 hover:bg-white/5'
             }`}
           >

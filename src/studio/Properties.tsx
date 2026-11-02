@@ -3,7 +3,6 @@ import { useStudioStore } from '../stores/store';
 import type { SceneObject } from '../shared/types';
 import { Icon, IconButton } from './icons';
 import type { IconName } from './icons';
-import { TransitionsPanel } from './Transitions';
 // ============ Small UI primitives ============
 const inputCls =
   'bg-[#2a2a2a] border border-white/10 rounded px-1.5 py-1 text-[12px] text-gray-200 ' +
@@ -99,16 +98,14 @@ export function PropertiesPanel() {
   const ctx: Ctx = {
     set: patch => updateObject(obj.id, patch),
     setPts: pts => updateObject(obj.id, { hitArea: pts.flatMap(p => [p.x * obj.width, p.y * obj.height]) }),
-    src: undefined,
-    fit: () => {},
+    src: obj.sprite?.frames?.[0] ?? obj.imageUrl,
+    fit: () => {
+            if (!src) return;
+      const im = new window.Image();
+      im.onload = () => updateObject(obj.id, { width: im.naturalWidth, height: im.naturalHeight });
+      im.src = src;
+    },
     st,
-  };
-  ctx.src = obj.sprite?.frames?.[0] ?? obj.imageUrl;
-  ctx.fit = () => {
-    if (!ctx.src) return;
-    const im = new window.Image();
-    im.onload = () => updateObject(obj.id, { width: im.naturalWidth, height: im.naturalHeight });
-    im.src = ctx.src;
   };
 
   return (
@@ -116,7 +113,7 @@ export function PropertiesPanel() {
       {/* ── object header ── */}
       <div className="-mx-3 -mt-3 px-3 py-2 bg-[#414141] border-b border-black/60 space-y-1.5">
         <div className="flex items-center gap-2">
-          <Thumb url={obj.spriteRef ?? obj.imageUrl} className="w-9 h-9" />
+          <Thumb url={obj.spriteRef} className="w-9 h-9" />
           <input className={`${inputCls} !font-semibold`} aria-label="Name" value={obj.name} onChange={(e) => ctx.set({ name: e.target.value })} />
         </div>
         <div className="flex items-center gap-0.5">
@@ -152,7 +149,6 @@ export function PropertiesPanel() {
       <HitSection obj={obj} ctx={ctx} />
       <InteractionSection obj={obj} ctx={ctx} />
       <PickupSection obj={obj} ctx={ctx} />
-      <TransitionsPanel />
 
       {obj.view && (
         <Section
@@ -328,6 +324,7 @@ function InteractionSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
         <input className={inputCls} value={obj.grantsItem ?? ''} onChange={e => set({ grantsItem: e.target.value || undefined })} />
       </Field>
       <label className="flex items-center gap-2 text-gray-300">
+        <Icon name="check" size={12} />
         <input type="checkbox" checked={!!obj.view} onChange={() => (obj.view ? ctx.st().removeView(obj.id) : ctx.st().addView(obj.id))} />
         Has interactive view
       </label>
@@ -341,6 +338,7 @@ function PickupSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
   return (
     <Section title="Pickup">
       <label className="flex items-center gap-2 text-gray-300">
+        <Icon name="check" size={12} />
         <input type="checkbox" checked={!!obj.pickupable} onChange={e => set({ pickupable: e.target.checked })} />
         Pickupable (can be added to inventory)
       </label>
@@ -358,8 +356,6 @@ function PickupSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
   );
 }
 
-// ============ Transform rules: rendered by TransitionsPanel (see ./Transitions) ============
-
 // ============ Multi-selection panel ============
 export function MultiPanel() {
   const st = useStudioStore;
@@ -371,7 +367,7 @@ export function MultiPanel() {
   const sel = scene?.objects.filter(o => selectedObjectIds.includes(o.id)) ?? [];
   if (sel.length < 2) return null;
 
-  const align = (m: St['alignObjects'] extends (mode: infer M) => any ? M : never, icon: IconName, title: string) => (
+  const align = (m: Parameters<ReturnType<typeof st>['alignObjects']>[0], icon: IconName, title: string) => (
     <IconButton key={m} solid icon={icon} title={title} onClick={() => st().alignObjects(m)} />
   );
 
@@ -417,3 +413,4 @@ export function MultiPanel() {
     </div>
   );
 }
+

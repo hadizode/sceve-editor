@@ -11,6 +11,7 @@ import { validateProject, type Issue } from '../shared/validation';
 import { fileToImage, uid } from '../shared/utils';
 import { btnCls, Field, inputCls, NumInput } from './ui';
 import { useResolved } from './konva-bits';
+import { Icon, IconButton } from './icons';
 
 const st = () => useStudioStore.getState();
 
@@ -59,7 +60,9 @@ export function RoomsPanel() {
     <div className="p-3 border-b border-gray-700">
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-xs font-bold text-gray-400">Rooms</h3>
-        <span className="text-xs text-amber-300 font-mono" title="Final lock code (from each room's exit digit)">🔐 {project.finalLockDigits}</span>
+        <span className="inline-flex items-center gap-1 text-xs text-amber-300 font-mono" title="Final lock code (from each room's exit digit)">
+          <Icon name="lock" size={11} /> {project.finalLockDigits}
+        </span>
       </div>
       <div className="space-y-1">
         {project.scenes.map((id, i) => {
@@ -72,10 +75,10 @@ export function RoomsPanel() {
               onClick={() => st().selectScene(id)}
             >
               <span className="flex-1 truncate">{i + 1}. {s.title}</span>
-              <button className="px-1 opacity-70 hover:opacity-100 disabled:opacity-20" disabled={i === 0} title="Move up" onClick={(e) => { e.stopPropagation(); st().moveScene(id, -1); }}>↑</button>
-              <button className="px-1 opacity-70 hover:opacity-100 disabled:opacity-20" disabled={i === project.scenes.length - 1} title="Move down" onClick={(e) => { e.stopPropagation(); st().moveScene(id, 1); }}>↓</button>
-              <button className="px-1 opacity-70 hover:opacity-100" title="Duplicate" onClick={(e) => { e.stopPropagation(); st().duplicateScene(id); }}>⧉</button>
-              <button className="px-1 text-red-300 opacity-70 hover:opacity-100" title="Delete" onClick={(e) => { e.stopPropagation(); if (confirm(`Delete room "${s.title}"?`)) st().deleteScene(id); }}>✕</button>
+              <IconButton compact icon="arrowUp" title="Move up" disabled={i === 0} onClick={(e) => { e.stopPropagation(); st().moveScene(id, -1); }} />
+              <IconButton compact icon="arrowDown" title="Move down" disabled={i === project.scenes.length - 1} onClick={(e) => { e.stopPropagation(); st().moveScene(id, 1); }} />
+              <IconButton compact icon="copy" title="Duplicate" onClick={(e) => { e.stopPropagation(); st().duplicateScene(id); }} />
+              <IconButton compact danger icon="trash" title="Delete" onClick={(e) => { e.stopPropagation(); if (confirm(`Delete room "${s.title}"?`)) st().deleteScene(id); }} />
             </div>
           );
         })}
@@ -134,7 +137,6 @@ export function BackgroundPanel() {
     const a = st().addAsset(img);
     st().setBackground(assetRef(a.id), img.width, img.height);
   };
-  // Show the CURRENT background in the dropdown (it used to be hard-wired to "" so it always looked empty).
   const bg = ctx?.backgroundUrl ?? '';
   const bgAsset = bg.startsWith('sprite:') ? sprites[bg.slice(7)]?.assetId ?? '' : bg;
   const current = bgAsset.startsWith('asset:') ? bgAsset.slice(6) : '';
@@ -142,7 +144,9 @@ export function BackgroundPanel() {
     <div className="p-3 border-b border-gray-700 space-y-2">
       <h3 className="text-xs font-bold text-gray-400">{label}</h3>
       <input ref={file} type="file" accept="image/*" className="hidden" onChange={upload} />
-      <button className={`${btnCls} w-full`} onClick={() => file.current?.click()}>📁 Upload image (sets size)</button>
+      <button className={`${btnCls} w-full inline-flex items-center justify-center gap-1`} onClick={() => file.current?.click()}>
+        <Icon name="upload" size={12} /> Upload image (sets size)
+      </button>
       <select
         className={inputCls}
         value={current}
@@ -192,10 +196,10 @@ function BackgroundLayers() {
             <div className="flex items-center gap-1">
               <Thumb url={l.spriteRef} className="w-8 h-8 rounded" />
               <input className={`${inputCls} flex-1`} value={l.name} onChange={(e) => patch(l.id, { name: e.target.value }, `bg-${l.id}-n`)} />
-              <button className="px-1" title="Toggle" onClick={() => patch(l.id, { visible: !l.visible })}>{l.visible ? '👁' : '🚫'}</button>
-              <button className="px-1" onClick={() => move(i, -1)}>↑</button>
-              <button className="px-1" onClick={() => move(i, 1)}>↓</button>
-              <button className="px-1 text-red-400" onClick={() => save(layers.filter((x) => x.id !== l.id))}>✕</button>
+              <IconButton compact icon={l.visible ? 'eye' : 'eyeOff'} title="Toggle" onClick={() => patch(l.id, { visible: !l.visible })} />
+              <IconButton compact icon="arrowUp" title="Move up" disabled={i === 0} onClick={() => move(i, -1)} />
+              <IconButton compact icon="arrowDown" title="Move down" disabled={i === layers.length - 1} onClick={() => move(i, 1)} />
+              <IconButton compact danger icon="x" title="Remove" onClick={() => save(layers.filter((x) => x.id !== l.id))} />
             </div>
             <div className="flex items-center gap-2 text-xs text-gray-400">
               Opacity
@@ -225,7 +229,7 @@ export function LayersPanel() {
   const ctx = useCtx();
   const selected = useStudioStore((s) => s.selectedObjectIds);
   if (!ctx) return null;
-  const rows = [...ctx.objects].reverse(); // top of list = front
+  const rows = [...ctx.objects].reverse();
   return (
     <div className="p-3">
       <h3 className="font-bold text-indigo-300 mb-2 text-sm">Layers <span className="text-xs text-gray-500">(top = front)</span></h3>
@@ -239,11 +243,12 @@ export function LayersPanel() {
             <div className="w-2.5 h-2.5 rounded" style={{ background: TYPE_COLORS[o.type ?? 'sprite'] ?? TYPE_COLORS.sprite }} />
             <span className={`truncate flex-1 ${o.visible ? '' : 'opacity-40'}`}>{o.name}</span>
             {o.digit !== undefined && <span className="text-amber-400">{o.digit}</span>}
-            {o.view && <span title="Has view">🔍</span>}
-            <button title="Show/hide" onClick={(e) => { e.stopPropagation(); st().updateObject(o.id, { visible: !o.visible }); }}>{o.visible ? '👁' : '🚫'}</button>
-            <button title="Lock/unlock" onClick={(e) => { e.stopPropagation(); st().updateObject(o.id, { locked: !o.locked }); }}>{o.locked ? '🔒' : '🔓'}</button>
-            <button className="px-0.5" onClick={(e) => { e.stopPropagation(); st().orderObjects([o.id], 'up'); }}>↑</button>
-            <button className="px-0.5" onClick={(e) => { e.stopPropagation(); st().orderObjects([o.id], 'down'); }}>↓</button>
+            {o.view && <Icon name="search" size={11} className="text-gray-400" />}
+            {o.door && <Icon name="door" size={11} className="text-sky-400" />}
+            <IconButton compact icon={o.visible ? 'eye' : 'eyeOff'} title="Show/hide" onClick={(e) => { e.stopPropagation(); st().updateObject(o.id, { visible: !o.visible }); }} />
+            <IconButton compact icon={o.locked ? 'lock' : 'unlock'} active={o.locked} title="Lock/unlock" onClick={(e) => { e.stopPropagation(); st().updateObject(o.id, { locked: !o.locked }); }} />
+            <IconButton compact icon="arrowUp" title="Forward" onClick={(e) => { e.stopPropagation(); st().orderObjects([o.id], 'up'); }} />
+            <IconButton compact icon="arrowDown" title="Backward" onClick={(e) => { e.stopPropagation(); st().orderObjects([o.id], 'down'); }} />
           </div>
         ))}
         {rows.length === 0 && <p className="text-xs text-gray-500">No objects yet</p>}
@@ -264,8 +269,10 @@ export function AssetsPanel() {
   return (
     <div className="p-3">
       <div className="flex items-center justify-between mb-2">
-        <h3 className="font-bold text-cyan-300 text-sm">📁 Assets ({assets.length})</h3>
-        <button className="bg-cyan-700 hover:bg-cyan-600 text-white px-2 py-0.5 rounded text-xs" onClick={() => file.current?.click()}>+ Upload</button>
+        <h3 className="font-bold text-cyan-300 text-sm">Assets ({assets.length})</h3>
+        <button className="inline-flex items-center gap-1 bg-cyan-700 hover:bg-cyan-600 text-white px-2 py-0.5 rounded text-xs" onClick={() => file.current?.click()}>
+          <Icon name="upload" size={11} /> Upload
+        </button>
         <input ref={file} type="file" accept="image/*" multiple className="hidden" onChange={upload} />
       </div>
       <p className="text-xs text-gray-500 mb-2">Drag an asset onto the canvas, or use the buttons. Images dropped on the canvas are added automatically.</p>
@@ -275,10 +282,10 @@ export function AssetsPanel() {
             <Thumb url={assetRef(a.id)} className="w-full h-16 rounded" />
             <div className="text-[11px] text-gray-300 truncate mt-1" title={a.name}>{a.name}</div>
             <div className="flex gap-0.5 mt-1">
-              <button className={`${btnCls} flex-1 px-0`} title="Add to room" onClick={() => st().addObjectFromAsset(a.id)}>＋</button>
-              <button className={`${btnCls} flex-1 px-0`} title="Use on selected object" disabled={selected.length === 0} onClick={() => st().updateObjects(Object.fromEntries(selected.map((i) => [i, { spriteRef: st().useAssetSprite(assetRef(a.id), a.name) }])))}>🖼</button>
+              <IconButton solid icon="plus" title="Add to room" className="!w-auto flex-1" onClick={() => st().addObjectFromAsset(a.id)} />
+              <IconButton solid icon="image" title="Use on selected object" disabled={selected.length === 0} className="!w-auto flex-1" onClick={() => st().updateObjects(Object.fromEntries(selected.map((i) => [i, { spriteRef: st().useAssetSprite(assetRef(a.id), a.name) }])))} />
               <button className={`${btnCls} flex-1 px-0`} title="Use as background" onClick={() => void applyBackground(a)}>BG</button>
-              <button className={`${btnCls} flex-1 px-0 text-red-300`} title="Delete" onClick={() => { if (!st().deleteAsset(a.id)) alert('This asset is still used in the project.'); }}>🗑</button>
+              <IconButton solid danger icon="trash" title="Delete asset" className="!w-auto flex-1" onClick={() => { if (!st().deleteAsset(a.id)) alert('This asset is still used in the project.'); }} />
             </div>
           </div>
         ))}
@@ -314,9 +321,9 @@ export function ChainPanel() {
               <span className="text-gray-500 w-5">{i + 1}.</span>
               <button className="flex-1 truncate text-left hover:text-indigo-300" onClick={() => o && st().selectObjects([id])}>{o ? o.name : `⚠ missing: ${id}`}</button>
               {o?.digit !== undefined && <span className="text-amber-400">{o.digit}</span>}
-              <button className="px-1" disabled={i === 0} onClick={() => move(i, -1)}>↑</button>
-              <button className="px-1" disabled={i === chain.length - 1} onClick={() => move(i, 1)}>↓</button>
-              <button className="px-1 text-red-400" onClick={() => save(chain.filter((_, j) => j !== i))}>×</button>
+              <IconButton compact icon="arrowUp" title="Move up" disabled={i === 0} onClick={() => move(i, -1)} />
+              <IconButton compact icon="arrowDown" title="Move down" disabled={i === chain.length - 1} onClick={() => move(i, 1)} />
+              <IconButton compact danger icon="x" title="Remove" onClick={() => save(chain.filter((_, j) => j !== i))} />
             </div>
           );
         })}
@@ -341,7 +348,6 @@ export function useIssues(): Issue[] {
   const scenes = useStudioStore((s) => s.scenes);
   const assets = useStudioStore((s) => s.assets);
   const sprites = useStudioStore((s) => s.sprites);
-  // sprites MUST be passed, otherwise every `sprite:` ref is reported as missing
   return useMemo(() => (project ? validateProject(project, scenes, assets, sprites) : []), [project, scenes, assets, sprites]);
 }
 
