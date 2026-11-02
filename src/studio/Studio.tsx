@@ -2,9 +2,168 @@ import React, { useState, useRef } from 'react';
 import { Stage, Layer, Image as KImage, Rect, Text, Transformer, Group, Line, Circle, Shape } from 'react-konva';
 import useImage from 'use-image';
 import { useStudioStore } from '../stores/store';
-import type { SceneObject, ObjectType, View, Asset } from '../shared/types';
+import type { SceneObject, ObjectType, View, Asset, Scene } from '../shared/types';
 import { validateScene } from '../shared/types';
 import { getObjectCorners, getRotatedBounds, createObjectHitFunc } from '../shared/game-logic';
+import { AxisNum, btnCls, Field, Hint, inputCls, NumInput, Section, checker, pickImages, assetRef } from './ui';
+
+// Room size presets ("W×H")
+const PRESETS = ['1280×720', '1920×1080', '1024×768', '800×600', '900×1600'];
+
+// ============ Inspector helpers (adapted to the current store API) ============
+/** The room currently being edited in the inspector. */
+export function useScene(): Scene | null {
+  return useStudioStore((s) => (s.currentSceneId ? s.scenes[s.currentSceneId] ?? null : null));
+}
+
+/** Store handle used by panels: `st().updateScene(patch, key)` etc. */
+function st() {
+  const s = useStudioStore.getState();
+  return {
+    updateScene: (patch: Partial<Scene>, _undoLabel?: string) => {
+      const cur = s.currentSceneId ? s.scenes[s.currentSceneId] : null;
+      if (cur) s.updateScene({ ...cur, ...patch });
+    },
+    addAsset: (img: HTMLImageElement): Asset => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth || img.width;
+      canvas.height = img.naturalHeight || img.height;
+      canvas.getContext('2d')!.drawImage(img, 0, 0);
+      const asset: Asset = {
+        id: `asset-${Date.now()}-${Math.floor(Math.random() * 1e4)}`,
+        name: `Image ${Object.keys(s.assets).length + 1}`,
+        url: canvas.toDataURL('image/png'),
+        tags: [],
+        createdAt: new Date().toISOString(),
+      };
+      s.addAsset(asset);
+      return asset;
+    },
+    setBackground: (url: string, width?: number, height?: number) => {
+      const cur = s.currentSceneId ? s.scenes[s.currentSceneId] : null;
+      if (!cur) return;
+      const patch: Partial<Scene> = { backgroundUrl: url };
+      if (width != null) patch.width = width;
+      if (height != null) patch.height = height;
+      s.updateScene({ ...cur, ...patch });
+    },
+  };
+}
+
+/** Editor context: the room (or view) whose background/size is being inspected. */
+export function useCtx() {
+  const scene = useScene();
+  return scene ? { ...scene, view: null as View | null } : null;
+}
+
+/** All assets in the project library. */
+export function useProjectAssets(): Asset[] {
+  return useStudioStore((s) => Object.values(s.assets));
+}
+
+/** Apply an asset as the room background, sized to the image's real dimensions. */
+export async function applyBackground(a: Asset): Promise<void> {
+  const img = new Image();
+  await new Promise<void>((resolve) => {
+    img.onload = () => resolve();
+    img.onerror = () => resolve();
+    img.src = a.url;
+  });
+  const w = img.naturalWidth || img.width || 800;
+  const h = img.naturalHeight || img.height || 600;
+  st().setBackground(assetRef(a.id), w, h);
+}
+
+/** Small preview thumbnail that understands "asset:<id>" references and plain URLs. */
+export function Thumb({ url, className }: { url: string; className?: string }) {
+  const src = url.startsWith('asset:') ? (useStudioStore.getState().assets[url.slice(6)]?.url ?? '') : url;
+  if (!src) return null;
+  return <img src={src} alt="" className={className} style={{ objectFit: 'contain' }} />;
+}
+
+export function RoomProps() {
+  const scene = useScene();
+  if (!scene) return null;
+  const upd = (patch: Partial<typeof scene>, key: string) => st().updateScene(patch, `room-${key}`);
+  return (
+    <div className="px-3 text-xs">
+      <Section title="Room">
+        <Field label="Title">
+          <input className={inputCls} value={scene.title} onChange={(e) => upd({ title: e.target.value }, 'title')} />
+        </Field>
+        <Field label="Exit digit" hint="This room's digit in the final lock code">
+          <select className={inputCls} value={scene.exitNumber} onChange={(e) => upd({ exitNumber: Number(e.target.value) }, 'exit')}>
+            {Array.from({ length: 10 }, (_, i) => <option key={i} value={i}>{i}</option>)}
+          </select>
+        </Field>
+      </Section>
+      <Section title="Canvas Size">
+        <Field label="Size">
+          <div className="flex gap-1">
+            <AxisNum label="W" color="#6a9fd4" value={scene.width} min={100} onChange={(n) => upd({ width: Math.max(100, Math.round(n)) }, 'w')} />
+            <AxisNum label="H" color="#6a9fd4" value={scene.height} min={100} onChange={(n) => upd({ height: Math.max(100, Math.round(n)) }, 'h')} />
+          </div>
+        </Field>
+        <Field label="Preset">
+          <select
+            className={inputCls}
+            value=""
+            onChange={(e) => {
+              const [w, h] = e.target.value.split('×').map(Number);
+              if (w && h) st().updateScene({ width: w, height: h });
+            }}
+          >
+            <option value="">Choose…</option>
+            {PRESETS.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </Field>
+      </Section>
+    </div>
+  );
+}
+
+export function BackgroundPanel() {
+  const ctx = useCtx();
+  const assets = useProjectAssets();
+  const file = useRef<HTMLInputElement>(null);
+  const label = ctx?.view ? 'View Background' : 'Background';
+  const upload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const [img] = await pickImages(e);
+    if (!img) return;
+    const a = st().addAsset(img);
+    st().setBackground(assetRef(a.id), img.width, img.height);
+  };
+  const bg = ctx?.backgroundUrl ?? '';
+  const current = bg.startsWith('asset:') ? bg.slice(6) : '';
+  return (
+    <div className="px-3 text-xs">
+      <Section title={label}>
+        <input ref={file} type="file" accept="image/*" className="hidden" onChange={upload} />
+        <div className="w-full h-24 rounded-[3px] border border-black/60 overflow-hidden flex items-center justify-center" style={checker}>
+          {bg ? <Thumb url={bg} className="w-full h-full" /> : <span className="text-[10px] text-gray-500">No background</span>}
+        </div>
+        <Field label="Asset">
+          <select
+            className={inputCls}
+            value={current}
+            onChange={(e) => {
+              const a = assets.find((x) => x.id === e.target.value);
+              if (a) void applyBackground(a);
+            }}
+          >
+            <option value="">{bg ? '(current)' : 'Pick from assets…'}</option>
+            {assets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+        </Field>
+        <div className="flex gap-1">
+          <button className={`${btnCls} flex-1`} onClick={() => file.current?.click()}>📁 Upload (sets size)</button>
+          {bg && <button className={btnCls} onClick={() => ctx && st().setBackground('', ctx.width, ctx.height)}>Clear</button>}
+        </div>
+        <Hint>Uploading resizes the room to the image's real dimensions.</Hint>
+      </Section>
+    </div>
+  );
+}
 
 // ============ Konva Image Component ============
 function KonvaImage({ obj, isSelected, onSelect, onDragEnd, onChange }: {
@@ -1404,53 +1563,19 @@ export default function Studio() {
             </div>
           </div>
 
-          {/* Background Upload */}
-          <div className="p-3 border-b border-gray-700">
-            <h3 className="text-xs font-bold text-gray-400 mb-2">Background</h3>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={handleBackgroundUpload}
-            />
-            <button
-              className="w-full bg-gray-700 hover:bg-gray-600 text-white px-2 py-1.5 rounded text-xs"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              📁 Upload Image
-            </button>
-          </div>
+          {/* Background */}
+          <BackgroundPanel />
 
           {/* Scene Properties */}
           {currentScene && (
             <div className="p-3 border-b border-gray-700">
-              <h3 className="text-xs font-bold text-gray-400 mb-2">Room Properties</h3>
-              <div className="space-y-2 text-xs">
-                <div>
-                  <label className="text-gray-400">Title</label>
-                  <input
-                    className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white mt-1"
-                    value={currentScene.title}
-                    onChange={e => updateScene({ ...currentScene, title: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="text-gray-400">Exit Number</label>
-                  <input
-                    type="number" min={0} max={9}
-                    className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white mt-1"
-                    value={currentScene.exitNumber}
-                    onChange={e => updateScene({ ...currentScene, exitNumber: Number(e.target.value) })}
-                  />
-                </div>
-                <button
-                  className="w-full bg-gray-700 hover:bg-gray-600 text-white px-2 py-1 rounded"
-                  onClick={() => duplicateScene(currentScene.id)}
-                >
-                  📋 Duplicate Room
-                </button>
-              </div>
+              <RoomProps />
+              <button
+                className={`${btnCls} w-full mt-2`}
+                onClick={() => duplicateScene(currentScene.id)}
+              >
+                📋 Duplicate Room
+              </button>
             </div>
           )}
 
