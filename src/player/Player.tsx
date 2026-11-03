@@ -4,7 +4,8 @@ import useImage from 'use-image';
 import { itemName, usePlayerStore } from '../stores/store';
 import type { Asset, Scene, SceneObject, SessionState, Sprite, View } from '../shared/types';
 import { getSprite, resolveSprite, transformRef } from '../shared/types';
-import { boxMatrix, cssMatrix, hitClipPath, placementMatrix } from '../shared/geometry';
+import { boxMatrix, cssMatrix, hitClipPath, motionAngle, pivotScene, placementMatrix } from '../shared/geometry';
+import { spriteFilterCss } from '../shared/types';
 import { allRoomsComplete, checkTransformCondition } from '../shared/game-logic';
 
 /** Resolve a sprite/image ref to the concrete image URL ('' when the sprite has no image). */
@@ -148,7 +149,15 @@ function ObjSprite({
   const clickObject = usePlayerStore((s) => s.clickObject);
   const pickup = usePlayerStore((s) => s.pickup);
   const useItemOnObject = usePlayerStore((s) => s.useItemOnObject);
+  const rotateObject = usePlayerStore((s) => s.rotateObject);
   const say = usePlayerStore((s) => s.setToast);
+
+  // Click-to-rotate motion: the accumulated step counter drives the angle around the motion pivot.
+  const steps = state.motionSteps?.[obj.id] ?? 0;
+  const rot = obj.motion ? motionAngle(obj.motion, steps) : 0;
+  const pv = obj.motion ? pivotScene(obj, obj.motion.pivot) : { x: 0, y: 0 };
+  // The shown transform rule may tint the sprite with a CSS filter (invert / hue-rotate / …).
+  const filterCss = shownOk ? spriteFilterCss(shown?.filter) : undefined;
 
   if (hidden) return null;
 
@@ -160,6 +169,7 @@ function ObjSprite({
     !!obj.view ||
     obj.pickupable === true ||
     !!obj.transforms?.length ||
+    !!obj.motion ||
     !!obj.door;
 
   const nextRule = obj.transforms?.[((state.transformsApplied ?? {})[obj.id] ?? -1) + 1];
@@ -181,9 +191,17 @@ function ObjSprite({
       return;
     }
 
+    // Motion objects rotate one step per click. When the click does nothing else (no message,
+    // digit, item grant, pickup, view or transform rule waiting), stop here after rotating.
+    if (obj.motion) {
+      rotateObject(obj.id, viewId);
+      const onlyMotion = !obj.message && obj.digit === undefined && !obj.grantsItem && !obj.pickupable && !obj.view && !nextRule;
+      if (onlyMotion) return;
+    }
+
     // rule without an item: executes with a simple click — but only when its conditions hold;
     // unmet conditions fall through to useItemOnObject(null, …) which shows the "still missing" hint.
-    if (nextRule && !nextRule.requiresItem && checkTransformCondition(nextRule.conditions, state)) {
+    if (nextRule && !nextRule.requiresItem && checkTransformCondition(nextRule.conditions, state, scenesById)) {
       useItemOnObject(null, obj.id, viewId);
       return;
     }
@@ -223,9 +241,26 @@ function ObjSprite({
   };
 
   return (
-    <>
+    // Motion wrapper: rotate() around a transform-origin placed exactly at the pivot. Using a plain
+    // rotation (instead of animating the full matrix) lets CSS interpolate along the ARC the object
+    // actually travels — a matrix tween would cut straight across the chord.
+    <div
+      className="absolute pointer-events-none"
+      style={{
+        left: 0,
+        top: 0,
+        width: 0,
+        height: 0,
+        transformOrigin: `${pv.x}px ${pv.y}px`,
+        transform: `rotate(${rot}deg)`,
+        transition: obj.motion ? `transform ${obj.motion.duration ?? 600}ms ease-in-out` : undefined,
+      }}
+    >
       {/* the box: colour fill + image stretched to it + click area (clip-path = hit polygon). Mirrors with flipX/flipY. */}
-      <div className="absolute pointer-events-none" style={boxStyle}>
+      <div
+        className="absolute pointer-events-none"
+        style={{ ...boxStyle, filter: filterCss, transition: 'filter .4s' }}
+      >
         {sp?.color && <div className="absolute inset-0" style={{ background: sp.color }} />}
 
         {url && (
@@ -259,7 +294,7 @@ function ObjSprite({
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }
 

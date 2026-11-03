@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Konva from 'konva';
 import { Stage, Layer, Image as KImage, Rect, Text, Transformer, Shape, Circle } from 'react-konva';
-import { apply, boxBounds, boxMatrix, invert, konvaHitFunc, konvaNodeAttrs, patchFromNode, polygonScene, type Pt } from '../shared/geometry';
+import { apply, boxBounds, boxMatrix, invert, konvaHitFunc, konvaNodeAttrs, patchFromNode, pivotScene, polygonScene, type Pt } from '../shared/geometry';
 import { useCtx, useScene, useStudioStore } from '../stores/store';
 import { type SceneObject } from '../shared/types';
 import { clamp, fileToImage } from '../shared/utils';
@@ -159,6 +159,44 @@ function PolyHandles({ obj, zoom }: { obj: SceneObject; zoom: number }) {
         );
       })}
     </>
+  );
+}
+
+/**
+ * Draggable orange handle at the object's motion pivot (normalized to the box, may sit outside it).
+ * Dragging maps the scene point back through invert(boxMatrix) into local px → normalized pivot.
+ */
+function PivotHandle({ obj, zoom }: { obj: SceneObject; zoom: number }) {
+  const m = obj.motion;
+  if (!m) return null;
+  const q = pivotScene(obj, m.pivot);
+  const move = (scenePt: Pt) => {
+    const inv = invert(boxMatrix(obj));
+    if (!inv) return;
+    const l = apply(inv, scenePt);
+    const r3 = (n: number) => Math.round(n * 1000) / 1000;
+    const pivot = { x: r3(l.x / obj.width), y: r3(l.y / obj.height) };
+    st().updateObject(obj.id, { motion: { ...obj.motion!, pivot } }, `${obj.id}:pivot`);
+  };
+  return (
+    <Circle
+      x={q.x}
+      y={q.y}
+      radius={6 / zoom}
+      fill="#f59e0b"
+      stroke="#b45309"
+      strokeWidth={1.5 / zoom}
+      draggable
+      onDragMove={(e) => move({ x: e.target.x(), y: e.target.y() })}
+      onMouseEnter={(e) => {
+        const c = e.target.getStage()?.container();
+        if (c) c.style.cursor = 'pointer';
+      }}
+      onMouseLeave={(e) => {
+        const c = e.target.getStage()?.container();
+        if (c) c.style.cursor = 'default';
+      }}
+    />
   );
 }
 
@@ -513,10 +551,16 @@ export default function Canvas() {
                 onDragEnd={onDragEnd}
               />
             ))}
-            {/* hit-polygon vertex handles for the single selected object */}
+            {/* hit-polygon vertex handles + motion pivot handle for the single selected object */}
             {selected.length === 1 && (() => {
               const o = ctx.objects.find((x) => x.id === selected[0]);
-              return o && o.hit?.kind === 'polygon' ? <PolyHandles obj={o} zoom={cam.zoom} /> : null;
+              if (!o) return null;
+              return (
+                <>
+                  {o.hit?.kind === 'polygon' ? <PolyHandles obj={o} zoom={cam.zoom} /> : null}
+                  {o.motion ? <PivotHandle obj={o} zoom={cam.zoom} /> : null}
+                </>
+              );
             })()}
             <Transformer
               ref={trRef}

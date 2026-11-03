@@ -1,10 +1,11 @@
 import React, { useRef } from 'react';
 import { useCtx, useSpriteSrc, useStudioStore } from '../stores/store';
-import { assetRef, type SceneObject } from '../shared/types';
+import { assetRef, type RotateMotion, type SceneObject } from '../shared/types';
 import { fileToImage } from '../shared/utils';
 import { Icon, IconButton } from './icons';
 import type { IconName } from './icons';
 import { DoorSection } from './Transitions';
+import { NumInput } from './ui';
 
 // ============ Small UI primitives ============
 const inputCls =
@@ -158,6 +159,7 @@ export function PropertiesPanel() {
       <SpritePicker src={src} file={file} />
       <TransformSection obj={obj} ctx={ctx} />
       <HitSection obj={obj} ctx={ctx} />
+      {!isDoor && <MotionSection obj={obj} ctx={ctx} />}
 
       {isDoor ? (
         // A door only has door settings.
@@ -289,6 +291,79 @@ function HitSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
         </div>
       ) : (
         <p className="text-[11px] text-gray-500">No custom hit polygon — the full rectangle is clickable.</p>
+      )}
+    </Section>
+  );
+}
+
+// ============ Motion (click-to-rotate) ============
+/**
+ * A motion rotates the sprite around a pivot on every click (lever, door hinge, clock hand…).
+ * The pivot is normalized to the object's box and may lie outside 0..1 (a hinge at x=0);
+ * drag it directly on the canvas with the orange PivotHandle.
+ */
+function MotionSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
+  const { set } = ctx;
+  const m = obj.motion;
+  const patchMotion = (p: Partial<RotateMotion>) =>
+    m && set({ motion: { ...m, ...p } }, `${obj.id}:motion`);
+
+  return (
+    <Section title="Motion">
+      <label className="flex items-center gap-2 text-gray-300">
+        <input
+          type="checkbox"
+          checked={!!m}
+          onChange={(e) =>
+            set(
+              {
+                motion: e.target.checked
+                  ? { kind: 'rotate', pivot: { x: 0.5, y: 0.5 }, angle: 90, duration: 600 }
+                  : undefined,
+              },
+              `${obj.id}:motion`
+            )
+          }
+        />
+        Rotate around a pivot when clicked
+      </label>
+      {m && (
+        <>
+          <div className="grid grid-cols-2 gap-1.5">
+            <Field label="Pivot X (0..1)">
+              <NumInput value={m.pivot.x} step={0.05} onChange={(n) => patchMotion({ pivot: { ...m.pivot, x: n } })} />
+            </Field>
+            <Field label="Pivot Y (0..1)">
+              <NumInput value={m.pivot.y} step={0.05} onChange={(n) => patchMotion({ pivot: { ...m.pivot, y: n } })} />
+            </Field>
+            <Field label="Angle / click (°)">
+              <NumInput value={m.angle} step={5} onChange={(n) => patchMotion({ angle: n })} />
+            </Field>
+            <Field label="Duration (ms)">
+              <NumInput value={m.duration ?? 600} min={0} step={50} onChange={(n) => patchMotion({ duration: Math.max(0, n) })} />
+            </Field>
+            <Field label="Max clicks (0 = unlimited)">
+              <NumInput value={m.maxSteps ?? 0} min={0} onChange={(n) => patchMotion({ maxSteps: Math.floor(n) > 0 ? Math.floor(n) : undefined })} />
+            </Field>
+          </div>
+          <label className="flex items-center gap-2 text-gray-300">
+            <input type="checkbox" checked={!!m.toggle} onChange={(e) => patchMotion({ toggle: e.target.checked ? true : undefined })} />
+            Toggle (even clicks return to the start position)
+          </label>
+          <Field label="Message per rotation (optional)">
+            <input dir="rtl" lang="fa" className={inputCls} value={m.message ?? ''} onChange={(e) => patchMotion({ message: e.target.value || undefined })} />
+          </Field>
+          <button
+            className={`${btnCls} w-full`}
+            title="A clock hand: 30° per click, pivot at the bottom-centre of the box"
+            onClick={() =>
+              set({ motion: { kind: 'rotate', pivot: { x: 0.5, y: 1 }, angle: 30, duration: 400, toggle: undefined } }, `${obj.id}:motion`)
+            }
+          >
+            Clock hand (30°, pivot bottom-center)
+          </button>
+          <p className="text-[10px] text-gray-500">Tip: drag the orange pivot dot on the canvas to move the rotation centre.</p>
+        </>
       )}
     </Section>
   );
