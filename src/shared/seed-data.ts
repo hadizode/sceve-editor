@@ -78,6 +78,20 @@ const CLOCK_VIEW_BG = svgDataUrl(
   </svg>`
 );
 
+// Motion demo room: lever + power panel + clock (rotate motions, position conditions, rule filters)
+const MOTION_BG = svgDataUrl(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600">
+    <defs><linearGradient id="bg3" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0d1b2a"/><stop offset="100%" style="stop-color:#1b263b"/>
+    </linearGradient></defs>
+    <rect width="100%" height="100%" fill="url(#bg3)"/>
+    <rect x="0" y="470" width="800" height="130" fill="#14181f"/>
+    <rect x="60" y="150" width="180" height="330" fill="#243447" stroke="#3b556e" stroke-width="3" rx="8"/>
+    <text x="150" y="135" text-anchor="middle" fill="#5b7a99" font-size="14" font-family="Vazirmatn">تابلو برق</text>
+    <text x="400" y="585" text-anchor="middle" fill="#3b556e" font-size="11" font-family="Vazirmatn">اتاق آزمایش حرکت</text>
+  </svg>`
+);
+
 // ---------- Sprite library (each sprite = one reusable image of ANY kind) ----------
 const SPRAW: Record<string, { name: string; url: string }> = {
   rug: { name: 'فرش', url: placeholderSprite('🟫', '#92400e') },
@@ -96,6 +110,12 @@ const SPRAW: Record<string, { name: string; url: string }> = {
   libraryBg: { name: 'پس‌زمینه کتابخانه', url: SEED_BACKGROUND },
   basementBg: { name: 'پس‌زمینه زیرزمین', url: BASEMENT_BG },
   clockFace: { name: 'مواجه ساعت', url: CLOCK_VIEW_BG },
+  motionBg: { name: 'پس‌زمینه آزمایش حرکت', url: MOTION_BG },
+  lever: { name: 'اهرم', url: placeholderSprite('🕹️', '#b45309') },
+  panelOff: { name: 'پنل خاموش', url: placeholderSprite('⬛', '#1f2937') },
+  panelOn: { name: 'پنل روشن', url: placeholderSprite('💡', '#059669') },
+  clockBody: { name: 'بدنه ساعت', url: placeholderSprite('🕐', '#475569') },
+  clockHand: { name: 'عقربه', url: placeholderSprite('↑', '#eab308') },
 };
 
 export const SEED_SPRITES: Sprite[] = Object.entries(SPRAW).map(([k, v]) => createSprite(v.name, assetRef(`asset-seed-${k}`)));
@@ -128,7 +148,7 @@ export const SEED_PROJECT: Project = {
   id: 'proj-seed-001',
   name: 'Escape Room: Old Library',
   description: 'A classic escape room with chained clues in an old library.',
-  scenes: ['scene-room-001', 'scene-room-002'],
+  scenes: ['scene-room-001', 'scene-room-002', 'scene-room-003'],
   finalLockDigits: '73',
   assets: SEED_ASSETS.map((a) => a.id),
   sprites: SEED_SPRITES.map((s) => s.id),
@@ -219,4 +239,76 @@ export const SEED_SCENE_2: Scene = {
   ],
 };
 
-export const SEED_SCENES: Scene[] = [SEED_SCENE, SEED_SCENE_2];
+/**
+ * Motion demo room (scene 3). Geometry is hand-checked so the position conditions really fire:
+ *
+ * LEVER — box x=120,y=350,w=40,h=200, pivot bottom-centre {0.5,1} → scene point (140,550),
+ * toggle 90°. Tip anchor {0.5,0} starts at (140,350); after ONE click (90° clockwise) it lands at
+ * (340,550): y=550 > 300 → condition NOT met; after a second click the lever returns upright and
+ * y=350 ≤ 300+tolerance(60) → the power panel lights up (autoApply + invert filter on the rule).
+ *
+ * CLOCK — hand box x=470,y=180,w=20,h=120, pivot {0.5,1} → centre (480,300), angle 30°/click,
+ * maxSteps 12 → 12 clicks = one full turn. The clock-face panel transforms when
+ * (steps mod 12) === 3, i.e. exactly on the 3rd click (and again on the 15th).
+ */
+export const SEED_SCENE_3: Scene = {
+  id: 'scene-room-003',
+  projectId: 'proj-seed-001',
+  title: 'Motion Lab',
+  width: 800,
+  height: 600,
+  backgroundUrl: S('motionBg'),
+  backgroundLayers: [],
+  exitNumber: 5,
+  clueChain: ['obj3-lever', 'obj3-panel'],
+  objects: [
+    mk('obj3-lever', 'اهرم برق', 'decoration', S('lever'), 120, 350, 40, 200, {
+      message: '🕹️ اهرم را تکان دادید.',
+      motion: { kind: 'rotate', pivot: { x: 0.5, y: 1 }, angle: 90, duration: 500, toggle: true },
+    }),
+    mk('obj3-panel', 'تابلو برق', 'decoration', S('panelOff'), 60, 150, 180, 120, {
+      message: '⬛ تابلو برق خاموش است. اول اهرم را در وضعیت درست بگذارید.',
+      transforms: [
+        {
+          // no item needed — fires automatically the moment the lever tip is high enough
+          requiresItem: '',
+          newSpriteId: S('panelOn'),
+          newName: 'تابلو برق روشن',
+          newMessage: '💡 برق وصل شد! عقربه‌ها به حرکت درآمده‌اند.',
+          consumesItem: false,
+          triggersDiscovery: true,
+          conditions: {
+            autoApply: true,
+            positions: [{ objectId: 'obj3-lever', anchor: { x: 0.5, y: 0 }, y: 300, op: 'lte', tolerance: 60 }],
+          },
+          filter: { invert: 1 },
+        },
+      ],
+    }),
+    mk('obj3-clock', 'ساعت کوکی', 'decoration', S('clockBody'), 420, 240, 120, 120, {
+      message: '🕐 ساعتی که با هر کلیک، عقربه‌اش ۳۰ درجه می‌چرخد.',
+    }),
+    mk('obj3-hand', 'عقربه ساعت', 'decoration', S('clockHand'), 470, 180, 20, 120, {
+      motion: { kind: 'rotate', pivot: { x: 0.5, y: 1 }, angle: 30, duration: 300, maxSteps: 12 },
+    }),
+    mk('obj3-clockpanel', 'پنل ساعت', 'decoration', S('panelOff'), 600, 300, 90, 70, {
+      message: '⏳ پنل ساعت قفل است — عقربه باید ساعت ۳ را نشان دهد.',
+      digit: 5,
+      transforms: [
+        {
+          requiresItem: '',
+          newSpriteId: S('panelOn'),
+          newName: 'پنل ساعت باز',
+          newMessage: '🔓 عقربه روی ساعت ۳ قرار گرفت و پنل باز شد!',
+          consumesItem: false,
+          conditions: {
+            autoApply: true,
+            positions: [{ objectId: 'obj3-hand', stepsMod: 12, stepsEq: 3 }],
+          },
+        },
+      ],
+    }),
+  ],
+};
+
+export const SEED_SCENES: Scene[] = [SEED_SCENE, SEED_SCENE_2, SEED_SCENE_3];
