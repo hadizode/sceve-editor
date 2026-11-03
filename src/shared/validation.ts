@@ -119,6 +119,15 @@ export function validateProject(
           if (!obtainable.has(item))
             at(`"${o.name}" transform ${i + 1} condition needs item "${item}" in the inventory but nothing grants it`, 'error', top);
         });
+        // Position requirements must point at a real object that can actually move (or be clicked).
+        t.conditions?.positions?.forEach((c, ci) => {
+          const host = c.sceneId ? list.find((s2) => s2.id === c.sceneId) : scene;
+          const target = host ? flattenObjects(host).find((x) => x.id === c.objectId) : undefined;
+          if (!target)
+            at(`"${o.name}" transform ${i + 1} position condition #${ci + 1} points at object "${c.objectId || '?'}" that does not exist`, 'error', top);
+          else if (!target.motion)
+            at(`"${o.name}" transform ${i + 1} waits for "${target.name}" to reach a position/click step, but it has no motion — it never moves`, 'warning', top);
+        });
       });
       // A sprite that requires an item / transforms should actually do something when interacted with.
       if ((o.requiresItem?.length || o.transforms?.length) && !o.grantsItem && o.digit === undefined && !o.view && !o.message && !o.pickupable)

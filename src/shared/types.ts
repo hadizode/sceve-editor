@@ -80,6 +80,43 @@ export interface DoorTarget {
 }
 
 /**
+ * A visual filter attached to a transform rule — e.g. "invert the colors" when the rule fires.
+ * Values follow the CSS filter functions (see `spriteFilterCss`). Missing/empty = no filter.
+ */
+export interface SpriteFilter {
+  invert?: number;      // 0..1
+  grayscale?: number;   // 0..1
+  hueRotate?: number;   // degrees
+  brightness?: number;  // 0..3 (1 = unchanged)
+}
+
+const r3n = (n: number) => Math.round(n * 1000) / 1000;
+
+/** Build the CSS `filter` value for a sprite filter; undefined when empty / all defaults. */
+export function spriteFilterCss(f?: SpriteFilter): string | undefined {
+  if (!f) return undefined;
+  const parts: string[] = [];
+  if (Number.isFinite(f.invert) && f.invert !== 0) parts.push(`invert(${r3n(f.invert)})`);
+  if (Number.isFinite(f.grayscale) && f.grayscale !== 0) parts.push(`grayscale(${r3n(f.grayscale)})`);
+  if (Number.isFinite(f.hueRotate) && f.hueRotate !== 0) parts.push(`hue-rotate(${r3n(f.hueRotate)}deg)`);
+  if (Number.isFinite(f.brightness) && f.brightness !== 1) parts.push(`brightness(${r3n(f.brightness)})`);
+  return parts.length ? parts.join(' ') : undefined;
+}
+
+/** Position/motion requirement — "a point of object A (after its motion) reached X/Y" or "A is on click N (mod M)". */
+export interface PositionReq {
+  sceneId?: string;
+  objectId: string;
+  /** Point on the object (normalized 0..1 of its box); default = centre. */
+  anchor?: Pt;
+  x?: number; y?: number;      // each defined axis is checked separately
+  op?: 'eq' | 'gte' | 'lte';   // default eq
+  tolerance?: number;          // px, default 2
+  stepsEq?: number;            // (steps mod stepsMod) === stepsEq
+  stepsMod?: number;           // e.g. 12 for a clock face
+}
+
+/**
  * A CONDITION that must hold before a transform rule may fire. The classic use case is an AND over
  * several prerequisites: "if all three fuses AND the connector are transformed → transform another
  * sprite". Every non-empty list must be satisfied; empty/missing conditions = always true.
@@ -89,6 +126,8 @@ export interface TransformCondition {
   transformedObjects?: { sceneId?: string; objectId: string; minRule?: number }[];
   /** All of these item ids must currently be in the inventory (duplicates are not required). */
   itemsInInventory?: string[];
+  /** Coordinate-aware gating: every listed position/click-count requirement must hold (logical AND). */
+  positions?: PositionReq[];
   /**
    * When true, this condition is NOT gated by `transformsApplied` — it is evaluated purely from the
    * live game state (which transforms are VISIBLY applied / which items are held). That makes a rule
@@ -111,6 +150,28 @@ export interface TransformRule {
   conditions?: TransformCondition;
   /** Side actions fired when this rule applies (other objects / other rooms / doors). */
   effects?: TransformEffect[];
+  /** Visual filter applied while this rule is the shown one (e.g. invert the colors). */
+  filter?: SpriteFilter;
+}
+
+/**
+ * A MOTION attached to an object: every click rotates it around a pivot by `angle` degrees
+ * (positive = clockwise). Classic uses: a door hinge, a lever, a clock hand (angle=30, maxSteps=12).
+ */
+export interface RotateMotion {
+  kind: 'rotate';
+  /** Pivot normalized to the object's box — may lie outside 0..1 (e.g. a hinge at x=0). */
+  pivot: Pt;
+  /** Degrees per click (positive = clockwise). */
+  angle: number;
+  /** Animation length in ms. Default 600. */
+  duration?: number;
+  /** Stop after this many clicks. Empty/missing = unlimited. */
+  maxSteps?: number;
+  /** Even clicks return the object to its start position (toggle switch / lever). */
+  toggle?: boolean;
+  /** Optional toast shown on each rotation click. */
+  message?: string;
 }
 
 /**
@@ -198,6 +259,8 @@ export interface SessionState {
   backgrounds?: Record<string, string>;
   /** Door object ids opened by effects — a door can also be gated only by items. */
   openDoors?: string[];
+  /** objectId -> number of motion (rotation) clicks performed so far. */
+  motionSteps?: Record<string, number>;
 }
 
 export interface Session {
@@ -219,6 +282,7 @@ export function createSessionState(firstSceneId: string): SessionState {
     transformsApplied: {},
     backgrounds: {},
     openDoors: [],
+    motionSteps: {},
   };
 }
 
@@ -282,6 +346,8 @@ export interface SceneObject {
   pickupItemId?: string;
   pickupMessage?: string;
   transforms?: TransformRule[];
+  /** Click-to-rotate motion (door hinge, lever, clock hand…). Missing = static object. */
+  motion?: RotateMotion;
   /** Side effects fired when this object is picked up (transform other objects, change rooms, open doors). */
   pickupEffects?: TransformEffect[];
   /** Door: clicking this object takes the player to another room. */
@@ -502,13 +568,72 @@ export class SpriteRegistry {
   }
 }
 
-/** Normalize a stored transform/effect sprite value: full refs are kept, bare ids promoted, URLs imported as new sprites. */
+/** Normalize a stored sprite/image reference into a full `sprite:<id>` value (URLs become new sprites). */
 const normalizeSpriteValue = (v: unknown, reg: SpriteRegistry): string | undefined => {
   if (typeof v !== 'string' || !v) return undefined;
   return reg.register(v) || undefined;
 };
 
-/** Normalize the extra gating condition of a rule ("only when ALL these objects are transformed / items held"). */
+/** Rotate motion: only `kind:'rotate'` with a non-zero angle is valid; everything else falls back to defaults. */
+function normalizeMotion(raw: any): RotateMotion | undefined {
+  if (!raw || typeof raw !== 'object' || raw.kind !== 'rotate') return undefined;
+  const angle = num(raw.angle, NaN);
+  if (!Number.isFinite(angle) || angle === 0) return undefined;
+  return {
+    kind: 'rotate',
+    pivot: { x: num(raw.pivot?.x, 0.5), y: num(raw.pivot?.y, 0.5) },
+    angle,
+    duration: Number.isFinite(raw.duration) ? clamp(raw.duration as number, 0, 10000) : undefined,
+    maxSteps: Number.isInteger(raw.maxSteps) && (raw.maxSteps as number) > 0 ? (raw.maxSteps as number) : undefined,
+    toggle: raw.toggle === true ? true : undefined,
+    message: str(raw.message) || undefined,
+  };
+}
+
+/** Visual filter of a transform rule — clamped per channel; undefined when nothing is set. */
+function normalizeFilter(raw: any): SpriteFilter | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const invert = Number.isFinite(raw.invert) ? clamp(raw.invert as number, 0, 1) : undefined;
+  const grayscale = Number.isFinite(raw.grayscale) ? clamp(raw.grayscale as number, 0, 1) : undefined;
+  const hueRotate = Number.isFinite(raw.hueRotate) ? (raw.hueRotate as number) : undefined;
+  const brightness = Number.isFinite(raw.brightness) ? clamp(raw.brightness as number, 0, 3) : undefined;
+  if (invert === undefined && grayscale === undefined && hueRotate === undefined && brightness === undefined) return undefined;
+  return { invert, grayscale, hueRotate, brightness };
+}
+
+/** Position requirements must name an object AND check something real (x/y/steps — 0 counts!). */
+function normalizePositions(list: any): PositionReq[] | undefined {
+  if (!Array.isArray(list) || !list.length) return undefined;
+  const out: PositionReq[] = [];
+  for (const r of list) {
+    if (!r || typeof r !== 'object' || !str(r.objectId)) continue;
+    const hasX = Number.isFinite(r.x);
+    const hasY = Number.isFinite(r.y);
+    const stepsMod = Number.isInteger(r.stepsMod) && (r.stepsMod as number) > 0 ? (r.stepsMod as number) : undefined;
+    const stepsEq = Number.isInteger(r.stepsEq) && (r.stepsEq as number) >= 0 ? (r.stepsEq as number) : undefined;
+    const hasSteps = stepsMod !== undefined && stepsEq !== undefined && stepsEq < stepsMod;
+    if (!hasX && !hasY && !hasSteps) continue;
+    const op = r.op === 'gte' || r.op === 'lte' ? r.op : r.op === 'eq' ? 'eq' : undefined;
+    const anchor =
+      r.anchor && typeof r.anchor === 'object' && Number.isFinite(r.anchor.x) && Number.isFinite(r.anchor.y)
+        ? { x: r.anchor.x as number, y: r.anchor.y as number }
+        : undefined;
+    out.push({
+      sceneId: str(r.sceneId) || undefined,
+      objectId: str(r.objectId),
+      anchor,
+      x: hasX ? (r.x as number) : undefined,
+      y: hasY ? (r.y as number) : undefined,
+      op,
+      tolerance: Number.isFinite(r.tolerance) ? Math.max(0, r.tolerance as number) : undefined,
+      stepsEq: hasSteps ? stepsEq : undefined,
+      stepsMod: hasSteps ? stepsMod : undefined,
+    });
+  }
+  return out.length ? out : undefined;
+}
+
+/** Normalize the extra gating condition of a rule ("only when ALL these objects are transformed / items held / positions reached"). */
 function normalizeConditions(raw: any): TransformCondition | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const objs = Array.isArray(raw.transformedObjects)
@@ -521,10 +646,12 @@ function normalizeConditions(raw: any): TransformCondition | undefined {
         }))
     : [];
   const items = strList(raw.itemsInInventory);
-  if (!objs.length && !items.length) return undefined;
+  const positions = normalizePositions(raw.positions);
+  if (!objs.length && !items.length && !positions?.length) return undefined;
   return {
     transformedObjects: objs.length ? objs : undefined,
     itemsInInventory: items.length ? items : undefined,
+    positions,
     autoApply: raw.autoApply === true ? true : undefined,
   };
 }
@@ -562,6 +689,7 @@ function normalizeTransform(r: any, reg: SpriteRegistry): TransformRule {
     triggersDiscovery: r?.triggersDiscovery === true,
     conditions: normalizeConditions(r?.conditions),
     effects: normalizeEffects(r?.effects, reg),
+    filter: normalizeFilter(r?.filter),
   };
 }
 
@@ -660,6 +788,7 @@ export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): Scene
         : undefined,
     transforms:
       Array.isArray(o.transforms) && o.transforms.length ? o.transforms.map((t: any) => normalizeTransform(t, reg)) : undefined,
+    motion: normalizeMotion(o.motion),
   };
 }
 

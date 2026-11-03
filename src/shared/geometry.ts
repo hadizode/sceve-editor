@@ -180,6 +180,35 @@ export function patchFromNode(n: { x: number; y: number; rotation: number; scale
   };
 }
 
+// ---------- motion (click-to-rotate) ----------
+/** Box + optional rotate motion — anything `livePoint` accepts (a full SceneObject works too). */
+export type MotionBox = Box & Partial<Pick<SceneObject, 'motion'>>;
+
+/**
+ * Total rotation (degrees) after `steps` clicks: toggle switches swing back and forth,
+ * limited motions stop accumulating at `maxSteps` (e.g. a clock hand with 12 steps of 30°).
+ */
+export const motionAngle = (m: { angle: number; toggle?: boolean; maxSteps?: number }, steps: number) =>
+  m.toggle ? (steps % 2) * m.angle : Math.min(steps, m.maxSteps || Infinity) * m.angle;
+
+/** The motion pivot in scene coordinates (pivot is normalized to the object's box, may be outside 0..1). */
+export const pivotScene = (o: Box, p: Pt): Pt => apply(boxMatrix(o), { x: p.x * o.width, y: p.y * o.height });
+
+/**
+ * Where an anchor point of the object ACTUALLY is right now: box position → scene, then rotated
+ * around the motion pivot by the accumulated motion angle. Without motion this is just boxMatrix.
+ */
+export function livePoint(o: MotionBox, steps: number, anchor: Pt = { x: 0.5, y: 0.5 }): Pt {
+  const p = apply(boxMatrix(o), { x: anchor.x * o.width, y: anchor.y * o.height });
+  if (!o.motion || !steps) return p;
+  const deg = motionAngle(o.motion, steps);
+  if (!deg) return p;
+  const pv = pivotScene(o, o.motion.pivot);
+  const dx = p.x - pv.x, dy = p.y - pv.y;
+  const c = Math.cos(rad(deg)), s = Math.sin(rad(deg)); // screen axes (y down) → positive = clockwise
+  return { x: pv.x + dx * c - dy * s, y: pv.y + dx * s + dy * c };
+}
+
 // ---------- migration from the old frame + image-transform model ----------
 export interface LegacyGeom {
   x: number;
