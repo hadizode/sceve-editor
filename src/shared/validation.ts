@@ -98,6 +98,8 @@ export function validateProject(
       for (const item of o.view?.requiresItem ?? []) {
         if (!obtainable.has(item)) at(`View of "${o.name}" requires "${item}" but nothing grants it`, 'error', top);
       }
+      if (o.door && !list.some((s2) => s2.id === o.door!.sceneId))
+        at(`Door "${o.name}" points at a room that doesn't exist`, 'error', top);
       o.transforms?.forEach((t, i) => {
         // An empty requiresItem is valid: it means "no item required" (fires on a plain click).
         if (t.requiresItem && !obtainable.has(t.requiresItem))

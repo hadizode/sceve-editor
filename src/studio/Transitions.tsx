@@ -9,14 +9,14 @@ import { Icon, IconButton } from './icons';
 const st = () => useStudioStore.getState();
 
 /**
- * The Transitions section is a strong, SEPARATE part of the studio: transforms are not just
- * "this object changes" — each rule (and each pickup) can fire EFFECTS that reach outside:
- *  - automatically apply a transform on ANOTHER object (even in another room)
- *  - change another room's (or a close-up view's) BACKGROUND
- *  - open a DOOR so the player can walk into another room
- * Doors themselves are configured here too: an object with a `door` target takes the player
- * to another room when clicked (optionally gated by items or opened by an effect).
- */
+The Transitions section is a strong, SEPARATE part of the studio: transforms are not just
+"this object changes" — each rule (and each pickup) can fire EFFECTS that reach outside:
+automatically apply a transform on ANOTHER object (even in another room)
+change another room's (or a close-up view's) BACKGROUND
+open a DOOR so the player can walk into another room
+Doors themselves are configured here too: an object with a `door` target takes the player
+to another room when clicked (optionally gated by items or opened by an effect).
+*/
 
 // ---------- small helpers ----------
 function shortName(s?: string) {
@@ -33,7 +33,7 @@ function useProjectObjects(): { key: string; sceneTitle: string; objTitle: strin
       const walk = (objs: SceneObject[], prefix = '') => {
         for (const o of objs) {
           out.push({ key: `${sc.id}|${o.id}`, sceneTitle: sc.title, objTitle: prefix + o.name, obj: o });
-          if (o.view) walk(o.view.objects, `${prefix}${o.name} › `);
+          if (o.view) walk(o.view.objects, `${prefix}${o.name} ›`);
         }
       };
       walk(sc.objects);
@@ -48,19 +48,27 @@ function ImgPick({ value, onChange }: { value?: string; onChange: (ref: string |
   const sprites = useSprites();
   const file = useRef<HTMLInputElement>(null);
   const current = value ? sprites[transformRef(value).slice(7)] : undefined;
-  const selectValue = !value ? '' : current ? current.assetId || '__blank__' : value;
+  const selectValue = !value ? '' : current ? current.assetId || 'blank' : value;
   const src = useResolved(value ? transformRef(value) : '');
   return (
     <div className="space-y-1">
-      <input ref={file} type="file" accept="image/*" className="hidden" onChange={async (e) => {
-        const f = e.target.files?.[0];
-        e.target.value = '';
-        if (!f) return;
-        try {
-          const a = st().addAsset(await fileToImage(f));
-          onChange(st().useAssetSprite(assetRef(a.id), a.name));
-        } catch (err) { alert((err as Error).message); }
-      }} />
+      <input
+        ref={file}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={async (e) => {
+          const f = e.target.files?.[0];
+          e.target.value = '';
+          if (!f) return;
+          try {
+            const a = st().addAsset(await fileToImage(f));
+            onChange(st().useAssetSprite(assetRef(a.id), a.name));
+          } catch (err) {
+            alert((err as Error).message);
+          }
+        }}
+      />
       <div className="flex gap-1">
         <IconButton icon="upload" solid title="Upload image" onClick={() => file.current?.click()} />
         <select
@@ -68,7 +76,7 @@ function ImgPick({ value, onChange }: { value?: string; onChange: (ref: string |
           value={selectValue}
           onChange={(e) => {
             const v = e.target.value;
-            if (v === '__blank__') onChange(spriteRef(st().addSprite(blankSprite('Blank')).id));
+            if (v === 'blank') onChange(spriteRef(st().addSprite(blankSprite('Blank')).id));
             else if (v === '') onChange(undefined);
             else if (v.startsWith('asset:')) onChange(st().useAssetSprite(v));
             else onChange(v);
@@ -109,7 +117,6 @@ function EffectCard({ eff, idx, onChange, onRemove }: {
   // Objects to target: inside the chosen scene (empty sceneId = current room is handled by the caller's default).
   const targets = allObjs.filter((t) => (scope ? t.key.startsWith(`${scope}|`) : true));
   const doorTargets = allObjs.filter((t) => t.obj.door && (scope ? t.key.startsWith(`${scope}|`) : true));
-
   return (
     <div className="bg-surface rounded p-2 space-y-2 border border-purple-800/50">
       <div className="flex justify-between items-center text-xs">
@@ -134,7 +141,7 @@ function EffectCard({ eff, idx, onChange, onRemove }: {
           <Field label="Object to transform automatically">
             <select className={inputCls} value={eff.objectId ?? ''} onChange={(e) => onChange({ objectId: e.target.value || undefined })}>
               <option value="">— choose —</option>
-              {targets.map((t) => <option key={t.key} value={t.obj.id}>{shortName(t.sceneTitle)} › {shortName(t.objTitle)}{t.obj.transforms?.length ? ` (${t.obj.transforms.length} rule)` : ' — no rules'}</option>)}
+              {targets.map((t) => <option key={t.key} value={t.obj.id}>{shortName(t.sceneTitle)} › {shortName(t.objTitle)}{t.obj.transforms?.length ? `(${t.obj.transforms.length} rule)` : ' — no rules'}</option>)}
             </select>
           </Field>
           <Field label="Which rule of that object">
@@ -195,15 +202,14 @@ function EffectsEditor({ effects, onChange }: { effects: TransformEffect[]; onCh
 
 // ---------- Conditions editor (rule gating: "only when ALL of these are transformed / held") ----------
 /**
- * A condition is a logical AND of prerequisites that must hold before a transform rule may fire.
- * The classic case: "if all three fuses AND the connector have been transformed → transform this
- * panel's sprite". Prerequisites can point at objects in ANY room of the project.
- */
+A condition is a logical AND of prerequisites that must hold before a transform rule may fire.
+The classic case: "if all three fuses AND the connector have been transformed → transform this
+panel's sprite". Prerequisites can point at objects in ANY room of the project.
+*/
 function ConditionsEditor({ cond, onChange }: { cond?: TransformCondition; onChange: (next: TransformCondition | undefined) => void }) {
   const allObjs = useProjectObjects();
   const objs = cond?.transformedObjects ?? [];
   const items = cond?.itemsInInventory ?? [];
-
   const setObjs = (list: TransformCondition['transformedObjects']) => {
     const next: TransformCondition = { ...cond, transformedObjects: list?.length ? list : undefined };
     if (!next.transformedObjects && !next.itemsInInventory?.length) onChange(undefined);
@@ -217,11 +223,9 @@ function ConditionsEditor({ cond, onChange }: { cond?: TransformCondition; onCha
   };
   // Don't offer the same object twice.
   const usedIds = new Set(objs.map((e) => `${e.sceneId ?? ''}|${e.objectId}`));
-
   return (
     <div className="space-y-2 bg-surface rounded p-2 border border-amber-700/40">
       <p className="text-[11px] font-bold text-amber-300">Condition — only fire when ALL of these hold (empty = always)</p>
-
       {objs.map((e, i) => {
         const key = `${e.sceneId ?? ''}|${e.objectId}`;
         return (
@@ -260,11 +264,9 @@ function ConditionsEditor({ cond, onChange }: { cond?: TransformCondition; onCha
       >
         <Icon name="plus" size={12} /> Object must be transformed
       </button>
-
       <Field label="…and these items must be in the inventory (comma separated)">
         <ListInput value={items} onChange={setItems} placeholder="fuse, connector" />
       </Field>
-
       {(objs.length > 0 || items.length > 0) && (
         <label className="flex items-start gap-2 text-[11px] cursor-pointer bg-amber-900/20 border border-amber-700/40 rounded p-2">
           <input
@@ -295,52 +297,62 @@ function ConditionsEditor({ cond, onChange }: { cond?: TransformCondition; onCha
 }
 
 // ---------- Door editor ----------
-function DoorSection({ obj, set }: { obj: SceneObject; set: (p: Partial<SceneObject>, key?: string) => void }) {
+export function DoorSection({ obj, set }: { obj: SceneObject; set: (p: Partial<SceneObject>, key?: string) => void }) {
   const project = useCurrentProject();
   const scenes = useStudioStore((s) => s.scenes);
+  const curScene = useStudioStore((s) => s.currentSceneId);
   const sceneList = (project?.scenes ?? []).map((id) => scenes[id]).filter(Boolean);
   const door = obj.door;
+  const hasOther = !!(obj.transforms?.length || obj.pickupable || obj.view || obj.digit !== undefined ||
+    obj.grantsItem || obj.requiresItem?.length || obj.pickupEffects?.length);
+
+  const toggle = (on: boolean) => {
+    if (!on) return set({ door: undefined }, `${obj.id}:door`);
+    if (hasOther && !confirm('Making this a door removes its transforms, pickup, view, digit and item settings. Continue?')) return;
+    set({
+      door: { sceneId: sceneList.find((s) => s.id !== curScene)?.id ?? '', requiresItems: [] },
+      transforms: undefined, pickupable: undefined, pickupItemId: undefined, pickupMessage: undefined,
+      pickupEffects: undefined, view: undefined, digit: undefined, grantsItem: undefined,
+      requiresItem: undefined, message: undefined,
+    }, `${obj.id}:door`);
+  };
+
   return (
-    <Section title="Door (room transition)" color="text-sky-300">
+    <Section title="🚪 Door (room transition)" color="text-sky-300">
       <label className="flex items-center gap-2 text-gray-300 text-sm">
-        <input
-          type="checkbox"
-          checked={!!door}
-          onChange={(e) => set({ door: e.target.checked ? { sceneId: sceneList.find((s2) => s2.id !== objId(obj))?.id ?? sceneList[0]?.id ?? '', requiresItems: [] } : undefined }, `${obj.id}:door`)}
-        />
-        This object is a door — clicking it walks the player into another room
+        <input type="checkbox" checked={!!door} onChange={(e) => toggle(e.target.checked)} />
+        This sprite is a door
       </label>
-      {door && (
-        <>
-          <Field label="Goes to room">
-            <select className={inputCls} value={door.sceneId} onChange={(e) => set({ door: { ...door, sceneId: e.target.value } }, `${obj.id}:door`)}>
-              <option value="">— choose —</option>
-              {sceneList.map((sc) => <option key={sc.id} value={sc.id}>{sc.title}</option>)}
-            </select>
-          </Field>
-          <Field label="Items required to pass (comma separated, empty = always open)">
-            <ListInput value={door.requiresItems} onChange={(v) => set({ door: { ...door, requiresItems: v } }, `${obj.id}:doorreq`)} placeholder="key-gold, fuse" />
-          </Field>
-          <Field label="Locked message">
-            <input className={inputCls} dir="rtl" lang="fa" value={door.lockedMessage ?? ''} onChange={(e) => set({ door: { ...door, lockedMessage: e.target.value || undefined } }, `${obj.id}:doorlock`)} />
-          </Field>
-          <p className="text-[11px] text-gray-500">An «Open a door» effect from any transform/pickup can also unlock this door at runtime.</p>
-        </>
-      )}
+      {door && (<>
+        <Field label="Goes to room">
+          <select className={inputCls} value={door.sceneId} onChange={(e) => set({ door: { ...door, sceneId: e.target.value } }, `${obj.id}:door`)}>
+            <option value="">— choose —</option>
+            {sceneList.map((sc) => <option key={sc.id} value={sc.id}>{sc.title}</option>)}
+          </select>
+        </Field>
+        <Field label="Items required to pass (comma separated, empty = always open)">
+          <ListInput value={door.requiresItems} onChange={(v) => set({ door: { ...door, requiresItems: v } }, `${obj.id}:doorreq`)} placeholder="key-gold, fuse" />
+        </Field>
+        <Field label="Locked message">
+          <input className={inputCls} dir="rtl" lang="fa" value={door.lockedMessage ?? ''} onChange={(e) => set({ door: { ...door, lockedMessage: e.target.value || undefined } }, `${obj.id}:doorlock`)} />
+        </Field>
+        <p className="text-[11px] text-gray-500">An «Open a door» effect from any transform/pickup can also unlock this door at runtime.</p>
+      </>)}
     </Section>
   );
 }
-const objId = (o: SceneObject) => o.id;
 
 // ---------- Main panel (embedded in the Props tab below the basic properties) ----------
 function TransitionsEditor({ obj, set }: { obj: SceneObject; set: (p: Partial<SceneObject>, key?: string) => void }) {
+  if (obj.door) return <DoorSection obj={obj} set={set} />;
+
   const sprites = useSprites();
   const ts = obj.transforms ?? [];
   const setT = (i: number, patch: Partial<TransformRule>) =>
     set({ transforms: ts.map((t, j) => (j === i ? { ...t, ...patch } : t)) }, `${obj.id}:tf${i}:${Object.keys(patch)[0]}`);
   const nextSpriteOf = (t: TransformRule) => (t.newSpriteId ? transformRef(t.newSpriteId) : obj.spriteRef);
   const addRule = () => set({ transforms: [...ts, { requiresItem: '', consumesItem: true }] }, `${obj.id}:tf-add`);
-
+  
   return (
     <div className="space-y-3">
       {/* -------- Transform rules -------- */}
@@ -393,15 +405,13 @@ function TransitionsEditor({ obj, set }: { obj: SceneObject; set: (p: Partial<Sc
                 <input className={inputCls} dir="rtl" lang="fa" value={t.newMessage ?? ''} onChange={(e) => setT(i, { newMessage: e.target.value || undefined })} />
               </Field>
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-300">
-                <label className="flex items-center gap-2"><input type="checkbox" checked={t.consumesItem !== false} onChange={(e) => setT(i, { consumesItem: e.target.checked })} />Consumes item</label>
-                <label className="flex items-center gap-2"><input type="checkbox" checked={!!t.triggersDiscovery} onChange={(e) => setT(i, { triggersDiscovery: e.target.checked })} />Counts as discovery</label>
+                <label className="flex items-center gap-2"> <input type="checkbox" checked={t.consumesItem !== false} onChange={(e) => setT(i, { consumesItem: e.target.checked })} />Consumes item</label>
+                <label className="flex items-center gap-2"> <input type="checkbox" checked={!!t.triggersDiscovery} onChange={(e) => setT(i, { triggersDiscovery: e.target.checked })} />Counts as discovery</label>
               </div>
-
               {/* per-rule CONDITIONS — gate the rule behind other objects' transforms / inventory */}
               <div className="border-t border-amber-900/50 pt-2">
                 <ConditionsEditor cond={t.conditions} onChange={(next) => setT(i, { conditions: next })} />
               </div>
-
               {/* per-rule TRANSITION EFFECTS — the heart of the separate transitions engine */}
               <div className="border-t border-purple-900/60 pt-2">
                 <p className="text-[11px] font-bold text-purple-300 mb-1">When this rule fires, also…</p>
@@ -414,14 +424,12 @@ function TransitionsEditor({ obj, set }: { obj: SceneObject; set: (p: Partial<Sc
           <Icon name="plus" size={12} /> Add transform rule
         </button>
       </Section>
-
       {/* -------- Pickup effects -------- */}
       {obj.pickupable && (
         <Section title="Pickup transitions — when this item is picked up…" color="text-green-300">
           <EffectsEditor effects={obj.pickupEffects ?? []} onChange={(next) => set({ pickupEffects: next.length ? next : undefined }, `${obj.id}:pk-eff`)} />
         </Section>
       )}
-
       {/* -------- Door -------- */}
       <DoorSection obj={obj} set={set} />
     </div>
@@ -445,7 +453,7 @@ export function TransitionsTab() {
         <p>Select an object on the canvas to edit its transitions.</p>
         <p className="text-xs text-gray-500">
           Here you can define transform rules, chain effects that fire on OTHER objects (even in other rooms),
-          change another room&apos;s background, open doors remotely — and turn any sprite into a door to another room.
+          change another room's background, open doors remotely — and turn any sprite into a door to another room.
         </p>
       </div>
     );

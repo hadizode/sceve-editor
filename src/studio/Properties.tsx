@@ -3,11 +3,12 @@ import { useStudioStore } from '../stores/store';
 import type { SceneObject } from '../shared/types';
 import { Icon, IconButton } from './icons';
 import type { IconName } from './icons';
+import { ListInput, NumInput } from './ui';
+
 // ============ Small UI primitives ============
 const inputCls =
   'bg-[#2a2a2a] border border-white/10 rounded px-1.5 py-1 text-[12px] text-gray-200 ' +
   'focus:outline-none focus:border-indigo-400/60 w-full';
-
 const btnCls =
   'inline-flex items-center justify-center gap-1 rounded bg-[#3a3a3a] border border-white/10 ' +
   'px-2 py-1 text-[11px] text-gray-200 hover:bg-[#4a4a4a] disabled:opacity-40 disabled:pointer-events-none';
@@ -85,7 +86,6 @@ export function PropertiesPanel() {
   const currentSceneId = useStudioStore(s => s.currentSceneId);
   const selectedObjectIds = useStudioStore(s => s.selectedObjectIds);
   const updateObject = useStudioStore(s => s.updateObject);
-
   const scene = currentSceneId ? scenes[currentSceneId] : null;
   const obj = scene?.objects.find(o => o.id === selectedObjectIds[0]);
 
@@ -94,16 +94,15 @@ export function PropertiesPanel() {
   }
 
   const file = React.createRef<HTMLInputElement>();
-
   const ctx: Ctx = {
     set: patch => updateObject(obj.id, patch),
     setPts: pts => updateObject(obj.id, { hitArea: pts.flatMap(p => [p.x * obj.width, p.y * obj.height]) }),
     src: obj.sprite?.frames?.[0] ?? obj.imageUrl,
     fit: () => {
-            if (!src) return;
+      if (!ctx.src) return;
       const im = new window.Image();
       im.onload = () => updateObject(obj.id, { width: im.naturalWidth, height: im.naturalHeight });
-      im.src = src;
+      im.src = ctx.src;
     },
     st,
   };
@@ -114,7 +113,12 @@ export function PropertiesPanel() {
       <div className="-mx-3 -mt-3 px-3 py-2 bg-[#414141] border-b border-black/60 space-y-1.5">
         <div className="flex items-center gap-2">
           <Thumb url={obj.spriteRef} className="w-9 h-9" />
-          <input className={`${inputCls} !font-semibold`} aria-label="Name" value={obj.name} onChange={(e) => ctx.set({ name: e.target.value })} />
+          <input
+            className={`${inputCls} !font-semibold`}
+            aria-label="Name"
+            value={obj.name}
+            onChange={(e) => ctx.set({ name: e.target.value })}
+          />
         </div>
         <div className="flex items-center gap-0.5">
           <IconButton icon={obj.visible ? 'eye' : 'eyeOff'} title={obj.visible ? 'Visible (click to hide)' : 'Hidden (click to show)'} active={!obj.visible} onClick={() => ctx.set({ visible: !obj.visible })} />
@@ -149,7 +153,6 @@ export function PropertiesPanel() {
       <HitSection obj={obj} ctx={ctx} />
       <InteractionSection obj={obj} ctx={ctx} />
       <PickupSection obj={obj} ctx={ctx} />
-
       {obj.view && (
         <Section
           title="Interactive View"
@@ -162,6 +165,19 @@ export function PropertiesPanel() {
           }
         >
           <p className="text-[11px] text-gray-400 truncate">{obj.view.title}</p>
+          {(() => {
+            const v = obj.view!;
+            const upd = (p: Partial<typeof v>, k: string) => st().updateView(obj.id, p, `view-${k}`);
+            return (<>
+              <Field label="Title"><input className={inputCls} dir="rtl" lang="fa" value={v.title} onChange={(e) => upd({ title: e.target.value }, 'title')} /></Field>
+              <Field label="Message when closed"><input className={inputCls} dir="rtl" lang="fa" value={v.closeMessage ?? ''} onChange={(e) => upd({ closeMessage: e.target.value || undefined }, 'close')} /></Field>
+              <Field label="Items required to open"><ListInput value={v.requiresItem} onChange={(x) => upd({ requiresItem: x }, 'req')} /></Field>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Width"><NumInput value={v.width} min={50} onChange={(n) => upd({ width: Math.max(50, n) }, 'w')} /></Field>
+                <Field label="Height"><NumInput value={v.height} min={50} onChange={(n) => upd({ height: Math.max(50, n) }, 'h')} /></Field>
+              </div>
+            </>);
+          })()}
         </Section>
       )}
     </div>
@@ -193,7 +209,7 @@ function SpritePicker({ obj, ctx, file }: { obj: SceneObject; ctx: Ctx; file: Re
 // ============ Transform ============
 function TransformSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
   const { set, st } = ctx;
-    const num = (v: number, nv: string) => (Number.isFinite(Number(nv)) ? Number(nv) : v);
+  const num = (v: number, nv: string) => (Number.isFinite(Number(nv)) ? Number(nv) : v);
   return (
     <Section title="Transform">
       <div className="grid grid-cols-2 gap-1.5">
@@ -231,7 +247,6 @@ function HitSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
   const ha = obj.hitArea ?? [];
   for (let i = 0; i + 1 < ha.length; i += 2) pts.push({ x: ha[i] / Math.max(1, obj.width), y: ha[i + 1] / Math.max(1, obj.height) });
   const set = ctx.set;
-
   const removeAt = (i: number) => {
     const next = pts.filter((_, j) => j !== i);
     setPts(next);
@@ -244,7 +259,6 @@ function HitSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
     next.splice(i + 1, 0, mid);
     setPts(next);
   };
-
   return (
     <Section
       title="Hit Area"
@@ -362,9 +376,9 @@ export function MultiPanel() {
   const scenes = useStudioStore(s => s.scenes);
   const currentSceneId = useStudioStore(s => s.currentSceneId);
   const selectedObjectIds = useStudioStore(s => s.selectedObjectIds);
-
   const scene = currentSceneId ? scenes[currentSceneId] : null;
   const sel = scene?.objects.filter(o => selectedObjectIds.includes(o.id)) ?? [];
+
   if (sel.length < 2) return null;
 
   const align = (m: Parameters<ReturnType<typeof st>['alignObjects']>[0], icon: IconName, title: string) => (
@@ -413,4 +427,3 @@ export function MultiPanel() {
     </div>
   );
 }
-
