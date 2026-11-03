@@ -1,6 +1,6 @@
 import React, { useMemo, useRef } from 'react';
 import { useCtx, useCurrentProject, useProjectAssets, useSprites, useStudioStore } from '../stores/store';
-import { assetRef, spriteRef, transformRef, blankSprite, type SceneObject, type Sprite, type TransformCondition, type TransformEffect, type TransformRule } from '../shared/types';
+import { assetRef, spriteRef, transformRef, blankSprite, type PositionReq, type SceneObject, type Sprite, type SpriteFilter, type TransformCondition, type TransformEffect, type TransformRule } from '../shared/types';
 import { btnCls, Field, inputCls, ListInput, NumInput, Section } from './ui';
 import { useResolved } from './konva-bits';
 import { fileToImage } from '../shared/utils';
@@ -95,6 +95,16 @@ function ImgPick({ value, onChange }: { value?: string; onChange: (ref: string |
 /** Sprite color fallback for previews. */
 const spColor = (sprites: Record<string, Sprite>, ref?: string) =>
   ref ? sprites[transformRef(ref).slice(7)]?.color : undefined;
+
+/** Keep only the channels that are actually set; an all-empty filter collapses to undefined. */
+function spriteFilterOrUndefined(f: SpriteFilter): SpriteFilter | undefined {
+  const out: SpriteFilter = {};
+  if (f.invert !== undefined && f.invert !== 0) out.invert = f.invert;
+  if (f.grayscale !== undefined && f.grayscale !== 0) out.grayscale = f.grayscale;
+  if (f.hueRotate !== undefined && f.hueRotate !== 0) out.hueRotate = f.hueRotate;
+  if (f.brightness !== undefined && f.brightness !== 1) out.brightness = f.brightness;
+  return Object.keys(out).length ? out : undefined;
+}
 
 // ---------- Effects editor (shared by transform rules and pickups) ----------
 const ACTIONS: { v: TransformEffect['action']; label: string }[] = [
@@ -200,25 +210,181 @@ function EffectsEditor({ effects, onChange }: { effects: TransformEffect[]; onCh
   );
 }
 
+// ---------- Position editor (coordinate / click-count gating) ----------
+/**
+ * One row per requirement: "the anchor point of object A (after its rotation motion) satisfies
+ * X/Y vs a target" or "A is currently on click #N of its cycle" (stepsMod/stepsEq — e.g. a clock
+ * hand completing 12 clicks of 30°). Inactive axes stay `undefined` (never 0), so they are not checked.
+ */
+const OPS: { v: 'eq' | 'gte' | 'lte'; label: string }[] = [
+  { v: 'eq', label: '=' },
+  { v: 'gte', label: '≥' },
+  { v: 'lte', label: '≤' },
+];
+
+function PositionsEditor({ positions, onChange }: { positions?: PositionReq[]; onChange: (next: PositionReq[] | undefined) => void }) {
+  const allObjs = useProjectObjects();
+  const list = positions ?? [];
+  const upd = (i: number, patch: Partial<PositionReq>) => onChange(list.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+
+  // Objects WITH a rotate-motion first (they're the ones whose position actually changes);
+  // everything else still selectable but flagged without 🔄.
+  const sorted = useMemo(
+    () => [...allObjs].sort((a, b) => Number(!!b.obj.motion) - Number(!!a.obj.motion)),
+    [allObjs],
+  );
+
+  return (
+    <div className="space-y-2 border-t border-cyan-900/50 pt-2">
+      <p className="text-[11px] font-bold text-cyan-300">…and these sprites must reach a position / click count</p>
+      {list.map((r, i) => {
+        const key = `${r.sceneId ?? ''}|${r.objectId}`;
+        const hasX = Number.isFinite(r.x);
+        const hasY = Number.isFinite(r.y);
+        return (
+          <div key={i} className="bg-surface rounded p-2 space-y-1.5 border border-cyan-800/40">
+            <div className="flex gap-1 items-center">
+              <select
+                className={`${inputCls} flex-1`}
+                value={key}
+                onChange={(ev) => {
+                  const [sid, oid] = ev.target.value.split('|');
+                  upd(i, { sceneId: sid || undefined, objectId: oid });
+                }}
+              >
+                <option value="">— choose object —</option>
+                {sorted.map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.obj.motion ? '🔄 ' : ''}{shortName(t.sceneTitle)} › {shortName(t.objTitle)}
+                  </option>
+                ))}
+              </select>
+              <select
+                className={`${inputCls} w-16 shrink-0`}
+                value={r.op ?? 'eq'}
+                title="Comparison operator for the active axes"
+                onChange={(ev) => upd(i, { op: ev.target.value as PositionReq['op'] })}
+              >
+                {OPS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+              </select>
+              <IconButton icon="x" compact danger title="Remove requirement" onClick={() => onChange(list.length > 1 ? list.filter((_, j) => j !== i) : undefined)} />
+            </div>
+
+            <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+              <label className="flex items-center gap-1 text-[11px] cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="accent-cyan-400"
+                  checked={hasX}
+                  onChange={(ev) => upd(i, { x: ev.target.checked ? 0 : undefined })}
+                  title="Axis enabled — an inactive axis is NOT checked"
+                />
+                <span className="text-gray-400 shrink-0">X</span>
+                {hasX && (
+                  <NumInput value={r.x as number} step={5} onChange={(n) => upd(i, { x: n })} />
+                )}
+              </label>
+              <label className="flex items-center gap-1 text-[11px] cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="accent-cyan-400"
+                  checked={hasY}
+                  onChange={(ev) => upd(i, { y: ev.target.checked ? 0 : undefined })}
+                  title="Axis enabled — an inactive axis is NOT checked"
+                />
+                <span className="text-gray-400 shrink-0">Y</span>
+                {hasY && (
+                  <NumInput value={r.y as number} step={5} onChange={(n) => upd(i, { y: n })} />
+                )}
+              </label>
+            </div>
+
+            <div className="grid grid-cols-2 gap-x-2">
+              <Field label="Anchor X (0..1 of box)">
+                <NumInput value={r.anchor?.x ?? 0.5} step={0.05} onChange={(n) => upd(i, { anchor: { x: n, y: r.anchor?.y ?? 0.5 } })} />
+              </Field>
+              <Field label="Anchor Y (0..1 of box)">
+                <NumInput value={r.anchor?.y ?? 0.5} step={0.05} onChange={(n) => upd(i, { anchor: { x: r.anchor?.x ?? 0.5, y: n } })} />
+              </Field>
+            </div>
+
+            <Field label="Tolerance (px)">
+              <NumInput value={r.tolerance ?? 2} min={0} step={1} onChange={(n) => upd(i, { tolerance: Math.max(0, n) })} />
+            </Field>
+
+            <details className="text-[11px] text-gray-400">
+              <summary className="cursor-pointer select-none">Click count mod (optional — e.g. clock: every 12 clicks)</summary>
+              <div className="grid grid-cols-2 gap-x-2 mt-1">
+                <Field label="Cycle size (stepsMod)">
+                  <NumInput
+                    value={r.stepsMod ?? 0}
+                    min={0}
+                    onChange={(n) => {
+                      const m = Math.floor(n);
+                      upd(i, m > 0 ? { stepsMod: m, stepsEq: Math.min(r.stepsEq ?? 0, m - 1) } : { stepsMod: undefined, stepsEq: undefined });
+                    }}
+                  />
+                </Field>
+                <Field label="Must be on click # (stepsEq)">
+                  <NumInput
+                    value={r.stepsEq ?? 0}
+                    min={0}
+                    onChange={(n) => upd(i, { stepsEq: Math.max(0, Math.floor(n)) })}
+                  />
+                </Field>
+              </div>
+            </details>
+          </div>
+        );
+      })}
+      <button
+        className={`${btnCls} w-full border border-cyan-700/60 text-cyan-200 text-[11px]`}
+        onClick={() => onChange([...list, { objectId: '', op: 'gte' }])}
+      >
+        <Icon name="plus" size={12} /> Sprite must reach a position
+      </button>
+      {list.length === 0 && (
+        <p className="text-[10px] text-gray-500">
+          Gate a rule on WHERE a sprite physically is after its rotate-motion (e.g. «lever tip below y=300») or on its
+          click counter (e.g. «clock hand, click 3 of every 12»).
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ---------- Conditions editor (rule gating: "only when ALL of these are transformed / held") ----------
 /**
 A condition is a logical AND of prerequisites that must hold before a transform rule may fire.
 The classic case: "if all three fuses AND the connector have been transformed → transform this
 panel's sprite". Prerequisites can point at objects in ANY room of the project.
 */
+/**
+ * A condition counts as EMPTY (and gets dropped) only when it has no prerequisites at all —
+ * transformed objects, inventory items AND positions. Forgetting `positions` here would silently
+ * delete conditions that only gate on coordinates / click counts.
+ */
+const emptyCond = (c?: TransformCondition) =>
+  !c?.transformedObjects?.length && !c?.itemsInInventory?.length && !c?.positions?.length;
+
 function ConditionsEditor({ cond, onChange }: { cond?: TransformCondition; onChange: (next: TransformCondition | undefined) => void }) {
   const allObjs = useProjectObjects();
   const objs = cond?.transformedObjects ?? [];
   const items = cond?.itemsInInventory ?? [];
   const setObjs = (list: TransformCondition['transformedObjects']) => {
     const next: TransformCondition = { ...cond, transformedObjects: list?.length ? list : undefined };
-    if (!next.transformedObjects && !next.itemsInInventory?.length) onChange(undefined);
+    if (emptyCond(next)) onChange(undefined);
     else onChange(next);
   };
   const setItems = (list: string[] | undefined) => {
     const items2 = list ?? [];
     const next: TransformCondition = { ...cond, itemsInInventory: items2.length ? items2 : undefined };
-    if (!next.transformedObjects && !next.itemsInInventory) onChange(undefined);
+    if (emptyCond(next)) onChange(undefined);
+    else onChange(next);
+  };
+  const setPositions = (list: PositionReq[] | undefined) => {
+    const next: TransformCondition = { ...cond, positions: list?.length ? list : undefined };
+    if (emptyCond(next)) onChange(undefined);
     else onChange(next);
   };
   // Don't offer the same object twice.
@@ -267,7 +433,11 @@ function ConditionsEditor({ cond, onChange }: { cond?: TransformCondition; onCha
       <Field label="…and these items must be in the inventory (comma separated)">
         <ListInput value={items} onChange={setItems} placeholder="fuse, connector" />
       </Field>
-      {(objs.length > 0 || items.length > 0) && (
+
+      {/* -------- POSITION / CLICK-COUNT requirements (coordinate-aware gating) -------- */}
+      <PositionsEditor positions={cond?.positions} onChange={setPositions} />
+
+      {(objs.length > 0 || items.length > 0 || !!cond?.positions?.length) && (
         <label className="flex items-start gap-2 text-[11px] cursor-pointer bg-amber-900/20 border border-amber-700/40 rounded p-2">
           <input
             type="checkbox"
@@ -275,7 +445,7 @@ function ConditionsEditor({ cond, onChange }: { cond?: TransformCondition; onCha
             checked={cond?.autoApply === true}
             onChange={(ev) => {
               const next: TransformCondition = { ...cond, autoApply: ev.target.checked ? true : undefined };
-              if (!next.transformedObjects && !next.itemsInInventory && !next.autoApply) onChange(undefined);
+              if (emptyCond(next) && !next.autoApply) onChange(undefined);
               else onChange(next);
             }}
           />
@@ -404,6 +574,68 @@ function TransitionsEditor({ obj, set }: { obj: SceneObject; set: (p: Partial<Sc
               <Field label="New message">
                 <input className={inputCls} dir="rtl" lang="fa" value={t.newMessage ?? ''} onChange={(e) => setT(i, { newMessage: e.target.value || undefined })} />
               </Field>
+
+              {/* -------- per-rule VISUAL FILTER — invert / grayscale / hue / brightness while this rule is shown -------- */}
+              <div className="border-t border-cyan-900/40 pt-2 space-y-1.5">
+                <p className="text-[11px] font-bold text-cyan-300">Visual filter (while this rule is applied)</p>
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-300">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="accent-cyan-400"
+                      checked={!!t.filter?.invert}
+                      onChange={(e) => {
+                        const f: SpriteFilter = { ...t.filter, invert: e.target.checked ? 1 : undefined };
+                        setT(i, { filter: spriteFilterOrUndefined(f) });
+                      }}
+                    />
+                    Invert colors
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="accent-cyan-400"
+                      checked={!!t.filter?.grayscale}
+                      onChange={(e) => {
+                        const f: SpriteFilter = { ...t.filter, grayscale: e.target.checked ? 1 : undefined };
+                        setT(i, { filter: spriteFilterOrUndefined(f) });
+                      }}
+                    />
+                    Grayscale
+                  </label>
+                </div>
+                <Field label={`Hue rotate — ${t.filter?.hueRotate ?? 0}°`}>
+                  <input
+                    type="range"
+                    min={0}
+                    max={360}
+                    step={1}
+                    className="w-full accent-cyan-400"
+                    value={t.filter?.hueRotate ?? 0}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      const f: SpriteFilter = { ...t.filter, hueRotate: v > 0 ? v : undefined };
+                      setT(i, { filter: spriteFilterOrUndefined(f) });
+                    }}
+                  />
+                </Field>
+                <Field label={`Brightness — ${(t.filter?.brightness ?? 1).toFixed(2)}×`}>
+                  <input
+                    type="range"
+                    min={0}
+                    max={3}
+                    step={0.05}
+                    className="w-full accent-cyan-400"
+                    value={t.filter?.brightness ?? 1}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      const f: SpriteFilter = { ...t.filter, brightness: v !== 1 ? v : undefined };
+                      setT(i, { filter: spriteFilterOrUndefined(f) });
+                    }}
+                  />
+                </Field>
+              </div>
+
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-300">
                 <label className="flex items-center gap-2"> <input type="checkbox" checked={t.consumesItem !== false} onChange={(e) => setT(i, { consumesItem: e.target.checked })} />Consumes item</label>
                 <label className="flex items-center gap-2"> <input type="checkbox" checked={!!t.triggersDiscovery} onChange={(e) => setT(i, { triggersDiscovery: e.target.checked })} />Counts as discovery</label>
