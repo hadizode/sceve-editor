@@ -788,6 +788,7 @@ export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): Scene
         : undefined,
     transforms:
       Array.isArray(o.transforms) && o.transforms.length ? o.transforms.map((t: any) => normalizeTransform(t, reg)) : undefined,
+    motion: normalizeMotion(o.motion),
   };
 }
 

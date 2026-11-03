@@ -828,6 +828,7 @@ interface PlayerState {
   setToast: (t: string | null) => void;
   switchScene: (id: string) => void;
   clickObject: (objectId: string, viewId?: string) => void;
+  rotateObject: (objectId: string, viewId?: string) => void;
   pickup: (objectId: string, viewId?: string) => void;
   useItemOnObject: (itemId: string | null, objectId: string, viewId?: string) => void;
   enterLockDigit: (d: string) => void;
@@ -836,6 +837,9 @@ interface PlayerState {
 }
 
 let toastTimer: number | undefined;
+
+/** objectId → timestamp of the last rotation click. Guards against double-clicks mid-animation. */
+const lastRotateAt = new Map<string, number>();
 
 /** All object ids in a scene/view *including* nested close-up view objects. */
 export function scopeIds(scene: Scene, viewId?: string): Set<string> {
@@ -1034,6 +1038,31 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
       if (res.grantsItem) say(`🎒 آیتم به دست آمد: ${itemName(objs, res.grantsItem)}`, 5000);
       else if (res.message) say(res.message);
       if (res.newState !== g.session.state) commit(res.newState);
+    },
+
+    /**
+     * One motion click: bump the object's rotation step counter. The renderer animates around the
+     * pivot; position-gated rules re-evaluate through commit() → evaluateAutoTransforms.
+     */
+    rotateObject: (objectId, viewId) => {
+      const g = get();
+      const scene = sceneOfCurrent();
+      if (!g.session || !scene) return;
+      const objs = viewId ? scene.objects.find((o) => o.id === viewId)?.view?.objects ?? [] : scene.objects;
+      const obj = objs.find((o) => o.id === objectId);
+      const m = obj?.motion;
+      if (!m) return;
+      const cur = g.session.state.motionSteps?.[objectId] ?? 0;
+      // A non-toggle motion stops dead at maxSteps (e.g. a clock hand that cannot pass 12 clicks).
+      if (!m.toggle && m.maxSteps !== undefined && cur >= m.maxSteps) return;
+      // Anti double-click: ignore clicks while the previous rotation is still animating.
+      const dur = Number.isFinite(m.duration) ? (m.duration as number) : 600;
+      const last = lastRotateAt.get(objectId);
+      if (last !== undefined && Date.now() - last < dur) return;
+      if (m.message) say(m.message);
+      lastRotateAt.set(objectId, Date.now());
+      // commit() runs evaluateAutoTransforms itself — position conditions fire from the new step count.
+      commit({ ...g.session.state, motionSteps: { ...(g.session.state.motionSteps ?? {}), [objectId]: cur + 1 } });
     },
 
     pickup: (objectId, viewId) => {

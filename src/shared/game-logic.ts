@@ -1,4 +1,5 @@
-import type { Scene, SceneObject, SessionState, TransformCondition, TransformEffect } from './types';
+import { livePoint } from './geometry';
+import type { PositionReq, Scene, SceneObject, SessionState, TransformCondition, TransformEffect } from './types';
 
 // ============ Effects / Transitions Engine ============
 // A strong, separate part of the game logic: when something happens (a transform fires, an item is
@@ -24,6 +25,33 @@ const allObjectsOf = (sc: Scene): SceneObject[] => [...sc.objects, ...sc.objects
 // A rule can carry extra gating beyond its `requiresItem`: e.g. "only fire once ALL three fuses AND
 // the connector have been transformed". Every listed prerequisite must hold (logical AND).
 
+/**
+ * Coordinate-aware gating: "a point of object A (after its rotation motion) reached X/Y" or
+ * "A is on click N (mod M)" — e.g. a clock hand whose 3rd click (90°) completes a circuit.
+ * Empty list = always true; every requirement must hold (logical AND).
+ */
+export function checkPositions(reqs: PositionReq[] | undefined, state: SessionState, scenesById?: Record<string, Scene>): boolean {
+  if (!reqs?.length) return true;
+  if (!scenesById) return false;
+  for (const r of reqs) {
+    const sc = r.sceneId ? scenesById[r.sceneId] : Object.values(scenesById).find((s) => allObjectsOf(s).some((o) => o.id === r.objectId));
+    const obj = sc ? allObjectsOf(sc).find((o) => o.id === r.objectId) : undefined;
+    if (!obj) return false;
+    const steps = state.motionSteps?.[r.objectId] ?? 0;
+    const p = livePoint(obj, steps, r.anchor);
+    const tol = Number.isFinite(r.tolerance) ? Math.max(0, r.tolerance as number) : 2;
+    const op = r.op ?? 'eq';
+    const okAxis = (v: number, t: number) => (op === 'gte' ? v >= t - tol : op === 'lte' ? v <= t + tol : Math.abs(v - t) <= tol);
+    if (Number.isFinite(r.x) && !okAxis(p.x, r.x as number)) return false;
+    if (Number.isFinite(r.y) && !okAxis(p.y, r.y as number)) return false;
+    if ((r.stepsMod ?? 0) > 0 && r.stepsEq !== undefined) {
+      const mod = r.stepsMod as number;
+      if (((steps % mod) + mod) % mod !== r.stepsEq) return false;
+    }
+  }
+  return true;
+}
+
 /** True when every prerequisite of the condition is satisfied by the current session state.
  * `depth` guards against recursive display checks on cyclic condition graphs. */
 export function checkTransformCondition(
@@ -36,6 +64,7 @@ export function checkTransformCondition(
   for (const it of cond.itemsInInventory ?? []) {
     if (!state.inventory.includes(it)) return false;
   }
+  if (!checkPositions(cond.positions, state, scenesById)) return false;
   for (const req of cond.transformedObjects ?? []) {
     const applied = state.transformsApplied?.[req.objectId] ?? -1;
     if (applied < (req.minRule ?? 0)) return false;
@@ -85,6 +114,7 @@ export function checkConditionForDisplay(
   for (const req of cond.transformedObjects ?? []) {
     if (!prereqVisible(req, state, scenesById, depth)) return false;
   }
+  if (!checkPositions(cond.positions, state, scenesById)) return false;
   return true;
 }
 
@@ -129,6 +159,8 @@ export function evaluateAutoTransforms(
           if (!prereqVisible(req, s, scenesById)) { ok = false; break; }
         }
       }
+      // Coordinate-aware gating uses the LIVE step counter `s` (motion clicks counted so far).
+      if (ok && !checkPositions(cond.positions, s, scenesById)) ok = false;
       if (!ok) continue;
       // Fire the rule exactly like applyEffect would: visuals via transformsApplied + grants/discovery/effects.
       let ns = { ...s, transformsApplied: { ...(s.transformsApplied ?? {}), [obj.id]: nextIdx } };
@@ -152,7 +184,7 @@ export function evaluateAutoTransforms(
 }
 
 /** Human-readable reason why the condition currently fails ('' when it holds). */
-export function conditionFailMessage(cond: TransformCondition | undefined, state: SessionState): string {
+export function conditionFailMessage(cond: TransformCondition | undefined, state: SessionState, scenesById?: Record<string, Scene>): string {
   if (!cond) return '';
   for (const it of cond.itemsInInventory ?? []) {
     if (!state.inventory.includes(it)) return `⏳ هنوز همه شرایط فراهم نشده — آیتم «${it}» در کیف شما نیست`;
@@ -161,6 +193,7 @@ export function conditionFailMessage(cond: TransformCondition | undefined, state
     const applied = state.transformsApplied?.[req.objectId] ?? -1;
     if (applied < (req.minRule ?? 0)) return '⏳ هنوز همه شرایط فراهم نشده — اول بقیه موارد را فعال کنید';
   }
+  if (!checkPositions(cond.positions, state, scenesById)) return '⏳ هنوز همه شرایط فراهم نشده — موقعیت درست نیست';
   return '';
 }
 
@@ -504,7 +537,7 @@ export function applyItemToObject(
     const condMsg = obj.transforms
       ?.map((t, i) =>
         ((state.transformsApplied ?? {})[objectId] ?? -1) + 1 === i && !checkTransformCondition(t.conditions, state, ctx?.scenesById)
-          ? conditionFailMessage(t.conditions, state)
+          ? conditionFailMessage(t.conditions, state, ctx?.scenesById)
           : ''
       )
       .find(Boolean);
@@ -521,7 +554,7 @@ export function applyItemToObject(
   const nextIdx = ((state.transformsApplied ?? {})[objectId] ?? -1) + 1;
   const nextRule = obj.transforms?.[nextIdx];
   if (nextRule && !checkTransformCondition(nextRule.conditions, state, ctx?.scenesById)) {
-    return { newState: state, success: false, message: conditionFailMessage(nextRule.conditions, state) || 'هنوز شرایط لازم فراهم نشده است' };
+    return { newState: state, success: false, message: conditionFailMessage(nextRule.conditions, state, ctx?.scenesById) || 'هنوز شرایط لازم فراهم نشده است' };
   }
 
   // Fallback: check requiresItem (old behavior for containers)
