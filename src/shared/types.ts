@@ -10,7 +10,7 @@ import { migrateLegacyGeometry, type Size } from './geometry';
  * Behavior comes from the sprite's properties and rules, never from a type enum.
  */
 export const OBJECT_TYPE = 'sprite' as const;
-export type ObjectType = typeof OBJECT_TYPE;
+export type ObjectType = typeof OBJECT_TYPE | 'decoration' | 'inventory' | 'container';
 /** @deprecated kept only so old imports keep compiling; there is exactly one kind now. */
 export const OBJECT_TYPES = [OBJECT_TYPE] as const;
 
@@ -52,7 +52,7 @@ export interface BackgroundLayer {
  * automatically (even in other rooms), change another room's background, or open a door so the
  * player can walk into another room.
  */
-export type EffectAction = 'transform' | 'background' | 'unlockDoor';
+export type EffectAction = 'transform' | 'background' | 'unlockDoor' | 'setUsable';
 
 export interface TransformEffect {
   action: EffectAction;
@@ -66,6 +66,8 @@ export interface TransformEffect {
   newSpriteId?: string;
   /** Door object that becomes clickable/enterable — used by `unlockDoor`. */
   doorObjectId?: string;
+  /** For setUsable: true (default) = make target usable, false = lock it. Target = objectId (+ sceneId). */
+  usable?: boolean;
   /** Optional toast shown when the effect fires. */
   message?: string;
 }
@@ -77,6 +79,8 @@ export interface DoorTarget {
   requiresItems?: string[];
   /** Message shown while the door is still locked. */
   lockedMessage?: string;
+  /** Effects fired when the player actually walks through this door. */
+  onEnterEffects?: TransformEffect[];
 }
 
 /**
@@ -96,10 +100,10 @@ const r3n = (n: number) => Math.round(n * 1000) / 1000;
 export function spriteFilterCss(f?: SpriteFilter): string | undefined {
   if (!f) return undefined;
   const parts: string[] = [];
-  if (Number.isFinite(f.invert) && f.invert !== 0) parts.push(`invert(${r3n(f.invert)})`);
-  if (Number.isFinite(f.grayscale) && f.grayscale !== 0) parts.push(`grayscale(${r3n(f.grayscale)})`);
-  if (Number.isFinite(f.hueRotate) && f.hueRotate !== 0) parts.push(`hue-rotate(${r3n(f.hueRotate)}deg)`);
-  if (Number.isFinite(f.brightness) && f.brightness !== 1) parts.push(`brightness(${r3n(f.brightness)})`);
+  if (typeof f.invert === 'number' && Number.isFinite(f.invert) && f.invert !== 0) parts.push(`invert(${r3n(f.invert)})`);
+  if (typeof f.grayscale === 'number' && Number.isFinite(f.grayscale) && f.grayscale !== 0) parts.push(`grayscale(${r3n(f.grayscale)})`);
+  if (typeof f.hueRotate === 'number' && Number.isFinite(f.hueRotate) && f.hueRotate !== 0) parts.push(`hue-rotate(${r3n(f.hueRotate)}deg)`);
+  if (typeof f.brightness === 'number' && Number.isFinite(f.brightness) && f.brightness !== 1) parts.push(`brightness(${r3n(f.brightness)})`);
   return parts.length ? parts.join(' ') : undefined;
 }
 
@@ -259,6 +263,8 @@ export interface SessionState {
   backgrounds?: Record<string, string>;
   /** Door object ids opened by effects — a door can also be gated only by items. */
   openDoors?: string[];
+  /** objectId -> runtime override set by effects */
+  usable?: Record<string, boolean>;
   /** objectId -> number of motion (rotation) clicks performed so far. */
   motionSteps?: Record<string, number>;
 }
@@ -282,6 +288,7 @@ export function createSessionState(firstSceneId: string): SessionState {
     transformsApplied: {},
     backgrounds: {},
     openDoors: [],
+    usable: {},
     motionSteps: {},
   };
 }
@@ -336,6 +343,12 @@ export interface SceneObject {
   visible: boolean;
   locked: boolean;
   oneTimeUse: boolean;
+  /** Initial usability, default true */
+  usable?: boolean;
+  /** Toast when clicked while locked */
+  unusableMessage?: string;
+  /** Live condition: while locked, the object becomes usable the moment it holds, no click and no effect needed */
+  unlockWhen?: TransformCondition;
   message?: string;
   digit?: number;
   requiresItem?: string[];
@@ -662,7 +675,7 @@ function normalizeEffects(list: any, reg: SpriteRegistry): TransformEffect[] | u
   for (const e of list) {
     if (!e || typeof e !== 'object') continue;
     const action = str(e.action) as EffectAction;
-    if (action !== 'transform' && action !== 'background' && action !== 'unlockDoor') continue;
+    if (action !== 'transform' && action !== 'background' && action !== 'unlockDoor' && action !== 'setUsable') continue;
     out.push({
       action,
       sceneId: str(e.sceneId) || undefined,
@@ -670,6 +683,7 @@ function normalizeEffects(list: any, reg: SpriteRegistry): TransformEffect[] | u
       ruleIndex: Number.isInteger(e.ruleIndex) ? Math.max(0, e.ruleIndex as number) : undefined,
       newSpriteId: normalizeSpriteValue(e.newSpriteId ?? e.newImageUrl ?? e.backgroundUrl, reg),
       doorObjectId: str(e.doorObjectId) || undefined,
+      usable: e.usable === false ? false : undefined,
       message: str(e.message) || undefined,
     });
   }
@@ -784,8 +798,16 @@ export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): Scene
     pickupEffects: normalizeEffects(o.pickupEffects, reg),
     door:
       o.door && typeof o.door === 'object' && str(o.door.sceneId)
-        ? { sceneId: str(o.door.sceneId), requiresItems: strList(o.door.requiresItems), lockedMessage: str(o.door.lockedMessage) || undefined }
+        ? {
+            sceneId: str(o.door.sceneId),
+            requiresItems: strList(o.door.requiresItems),
+            lockedMessage: str(o.door.lockedMessage) || undefined,
+            onEnterEffects: normalizeEffects(o.door.onEnterEffects, reg),
+          }
         : undefined,
+    usable: o.usable === false ? false : undefined,
+    unusableMessage: str(o.unusableMessage) || undefined,
+    unlockWhen: normalizeConditions(o.unlockWhen),
     transforms:
       Array.isArray(o.transforms) && o.transforms.length ? o.transforms.map((t: any) => normalizeTransform(t, reg)) : undefined,
     motion: normalizeMotion(o.motion),

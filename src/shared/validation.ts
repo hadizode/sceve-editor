@@ -1,4 +1,4 @@
-import type { Asset, Project, Scene, SceneObject, Sprite } from './types';
+import type { Asset, Project, Scene, SceneObject, Sprite, TransformEffect } from './types';
 import { getSprite, transformRef } from './types';
 
 export interface Issue {
@@ -100,6 +100,42 @@ export function validateProject(
       }
       if (o.door && !list.some((s2) => s2.id === o.door!.sceneId))
         at(`Door "${o.name}" points at a room that doesn't exist`, 'error', top);
+
+      // unlockWhen condition validation
+      o.unlockWhen?.transformedObjects?.forEach((c, ci) => {
+        const host = c.sceneId ? list.find((s2) => s2.id === c.sceneId) : undefined;
+        const exists = host
+          ? flattenObjects(host).some((x) => x.id === c.objectId)
+          : list.some((s2) => flattenObjects(s2).some((x) => x.id === c.objectId));
+        if (!exists) {
+          at(`"${o.name}" unlock condition #${ci + 1} points at object "${c.objectId || '?'}" that does not exist`, 'error', top);
+        }
+      });
+      o.unlockWhen?.itemsInInventory?.forEach((item) => {
+        if (!obtainable.has(item)) {
+          at(`"${o.name}" unlock condition needs item "${item}" in the inventory but nothing grants it`, 'error', top);
+        }
+      });
+
+      // door.onEnterEffects and setUsable effect validation
+      o.door?.onEnterEffects?.forEach((eff, i) => {
+        if (!eff.objectId || !list.some((s2) => flattenObjects(s2).some((x) => x.id === eff.objectId))) {
+          at(`Door "${o.name}" onEnter effect #${i + 1} points at object "${eff.objectId || '?'}" that does not exist`, 'error', top);
+        }
+      });
+
+      const checkSetUsable = (eff: TransformEffect, label: string) => {
+        if (eff.action === 'setUsable') {
+          if (!eff.objectId || !list.some((s2) => flattenObjects(s2).some((x) => x.id === eff.objectId))) {
+            at(`"${o.name}" ${label} effect points at object "${eff.objectId || '?'}" that does not exist`, 'error', top);
+          }
+        }
+      };
+      o.pickupEffects?.forEach((eff, i) => checkSetUsable(eff, `pickup effect #${i + 1}`));
+      o.transforms?.forEach((t, ti) => {
+        t.effects?.forEach((eff, ei) => checkSetUsable(eff, `transform ${ti + 1} effect #${ei + 1}`));
+      });
+
       o.transforms?.forEach((t, i) => {
         // An empty requiresItem is valid: it means "no item required" (fires on a plain click).
         if (t.requiresItem && !obtainable.has(t.requiresItem))

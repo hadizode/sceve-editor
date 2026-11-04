@@ -118,6 +118,14 @@ export function checkConditionForDisplay(
   return true;
 }
 
+/** Is this object currently usable? Effect override > initial flag > live `unlockWhen` condition. */
+export function isUsable(state: SessionState, obj: SceneObject, scenesById: Record<string, Scene> = {}): boolean {
+  const override = state.usable?.[obj.id];
+  if (override !== undefined) return override;
+  if (obj.usable !== false) return true;
+  return !!obj.unlockWhen && checkConditionForDisplay(obj.unlockWhen, state, scenesById);
+}
+
 /**
  * The instant ("بدون کلیک") transform evaluator. Conditions marked `autoApply` behave like live
  * wires: the moment their prerequisites hold, the rule fires — no click, and no effect needs to
@@ -235,6 +243,13 @@ function applyEffect(state: SessionState, eff: TransformEffect, triggerSceneId: 
     return { ...state, openDoors: [...doors, eff.doorObjectId] };
   }
 
+  if (eff.action === 'setUsable') {
+    if (!eff.objectId) return state;
+    const v = eff.usable !== false;
+    if (state.usable?.[eff.objectId] === v) return state;
+    return { ...state, usable: { ...(state.usable ?? {}), [eff.objectId]: v } };
+  }
+
   // --- automatically apply a transform rule on another object ---
   if (eff.action !== 'transform' || !targetScene) return state;
   const list = [
@@ -298,6 +313,7 @@ export function collectProjectEffects(scenes: Scene[]): { eff: TransformEffect; 
     for (const o of allObjectsOf(sc)) {
       for (const t of o.transforms ?? []) for (const e of t.effects ?? []) out.push({ eff: e, fromSceneId: sc.id, fromName: `${sc.title} → ${o.name}` });
       for (const e of o.pickupEffects ?? []) out.push({ eff: e, fromSceneId: sc.id, fromName: `${sc.title} → ${o.name} (pickup)` });
+      for (const e of o.door?.onEnterEffects ?? []) out.push({ eff: e, fromSceneId: sc.id, fromName: `${sc.title} → ${o.name} (enter door)` });
     }
   }
   return out;
@@ -377,6 +393,10 @@ export function pickupObject(
   }
 
   const obj = target;
+
+  if (!isUsable(state, obj, ctx?.scenesById)) {
+    return { newState: state, success: false, message: obj.unusableMessage || 'فعلاً قابل استفاده نیست' };
+  }
 
   if (!obj.pickupable) {
     return { newState: state, success: false, message: 'این مورد قابل برداشتن نیست' };
@@ -459,6 +479,10 @@ export function applyItemToObject(
 } {
   const obj = objects.find(o => o.id === objectId);
   if (!obj) return { newState: state, success: false, message: 'مورد یافت نشد' };
+
+  if (!isUsable(state, obj, ctx?.scenesById)) {
+    return { newState: state, success: false, message: obj.unusableMessage || 'فعلاً قابل استفاده نیست' };
+  }
 
   if (itemId && !state.inventory.includes(itemId)) {
     return { newState: state, success: false, message: 'شما این آیتم را ندارید' };
@@ -685,5 +709,17 @@ export function tryEnterDoor(
   if (!canUseDoor(state, obj)) {
     return { newState: state, entered: false, message: obj.door.lockedMessage || '🔒 این در قفل است — کلیدش را پیدا کنید!' };
   }
-  return { newState: { ...state, currentSceneId: target.id }, entered: true, message: `🚪 وارد شدید: ${target.title}` };
+  let s = state;
+  const msgs: string[] = [];
+  if (obj.door.onEnterEffects?.length) {
+    const scenesById = Object.fromEntries(rooms.map((r) => [r.id, r]));
+    const res = applyEffects(s, obj.door.onEnterEffects, target.id, scenesById);
+    s = res.state;
+    msgs.push(...res.messages);
+  }
+  return {
+    newState: { ...s, currentSceneId: target.id },
+    entered: true,
+    message: [`🚪 وارد شدید: ${target.title}`, ...msgs].join(' • '),
+  };
 }
