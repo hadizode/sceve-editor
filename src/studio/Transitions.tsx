@@ -111,7 +111,6 @@ const ACTIONS: { v: TransformEffect['action']; label: string }[] = [
   { v: 'transform', label: 'Transform another object' },
   { v: 'background', label: 'Change background' },
   { v: 'unlockDoor', label: 'Open a door' },
-  { v: 'setUsable', label: 'Lock / unlock an object' },
 ];
 
 function EffectCard({ eff, idx, onChange, onRemove }: {
@@ -161,26 +160,6 @@ function EffectCard({ eff, idx, onChange, onRemove }: {
               min={0}
               onChange={(n) => onChange({ ruleIndex: Math.max(0, Math.floor(n)) })}
             />
-          </Field>
-        </>
-      )}
-      {eff.action === 'setUsable' && (
-        <>
-          <Field label="Object to lock / unlock">
-            <select className={inputCls} value={eff.objectId ?? ''} onChange={(e) => onChange({ objectId: e.target.value || undefined })}>
-              <option value="">— choose —</option>
-              {targets.map((t) => <option key={t.key} value={t.obj.id}>{shortName(t.sceneTitle)} › {shortName(t.objTitle)}{t.obj.door ? ' 🚪' : ''}</option>)}
-            </select>
-          </Field>
-          <Field label="Set to">
-            <select
-              className={inputCls}
-              value={eff.usable === false ? 'no' : 'yes'}
-              onChange={(e) => onChange({ usable: e.target.value === 'no' ? false : undefined })}
-            >
-              <option value="yes">Usable</option>
-              <option value="no">Locked</option>
-            </select>
           </Field>
         </>
       )}
@@ -487,38 +466,6 @@ function ConditionsEditor({ cond, onChange }: { cond?: TransformCondition; onCha
   );
 }
 
-// ---------- Usability editor (locked objects / unlockWhen) ----------
-/**
- * Every object starts usable unless "Usable at the start" is unchecked. A locked object shows its
- * `unusableMessage` when clicked and becomes usable either through a `setUsable` effect or — if an
- * `unlockWhen` condition is defined — the instant that condition holds, without any click.
- */
-export function UsabilitySection({ obj, set }: { obj: SceneObject; set: (p: Partial<SceneObject>, key?: string) => void }) {
-  const locked = obj.usable === false;
-  return (
-    <Section title="Usability" color="text-amber-300">
-      <label className="flex items-center gap-2 text-gray-300 text-sm">
-        <input
-          type="checkbox"
-          checked={obj.usable !== false}
-          onChange={(e) => set({ usable: e.target.checked ? undefined : false }, `${obj.id}:usable`)}
-        />
-        Usable at the start
-      </label>
-      {locked && (<>
-        <Field label="Message while locked">
-          <input className={inputCls} dir="rtl" lang="fa" value={obj.unusableMessage ?? ''} onChange={(e) => set({ unusableMessage: e.target.value || undefined }, `${obj.id}:unmsg`)} />
-        </Field>
-        <p className="text-[11px] text-gray-500">
-          While locked, clicking only shows this message. A «Lock / unlock an object» effect from any
-          transform/pickup can free it — or define a condition below so it unlocks by itself the moment it holds.
-        </p>
-        <ConditionsEditor cond={obj.unlockWhen} onChange={(next) => set({ unlockWhen: next }, `${obj.id}:unlockWhen`)} />
-      </>)}
-    </Section>
-  );
-}
-
 // ---------- Door editor ----------
 export function DoorSection({ obj, set }: { obj: SceneObject; set: (p: Partial<SceneObject>, key?: string) => void }) {
   const project = useCurrentProject();
@@ -526,12 +473,18 @@ export function DoorSection({ obj, set }: { obj: SceneObject; set: (p: Partial<S
   const curScene = useStudioStore((s) => s.currentSceneId);
   const sceneList = (project?.scenes ?? []).map((id) => scenes[id]).filter(Boolean);
   const door = obj.door;
+  const hasOther = !!(obj.transforms?.length || obj.pickupable || obj.view || obj.digit !== undefined ||
+    obj.grantsItem || obj.requiresItem?.length || obj.pickupEffects?.length);
 
-  // Toggling a door never wipes the object's other capabilities (transforms, pickup, view, …) —
-  // a door can also be a transform target or hold effects of its own.
   const toggle = (on: boolean) => {
     if (!on) return set({ door: undefined }, `${obj.id}:door`);
-    set({ door: { sceneId: sceneList.find((s) => s.id !== curScene)?.id ?? '', requiresItems: [] } }, `${obj.id}:door`);
+    if (hasOther && !confirm('Making this a door removes its transforms, pickup, view, digit and item settings. Continue?')) return;
+    set({
+      door: { sceneId: sceneList.find((s) => s.id !== curScene)?.id ?? '', requiresItems: [] },
+      transforms: undefined, pickupable: undefined, pickupItemId: undefined, pickupMessage: undefined,
+      pickupEffects: undefined, view: undefined, digit: undefined, grantsItem: undefined,
+      requiresItem: undefined, message: undefined,
+    }, `${obj.id}:door`);
   };
 
   return (
@@ -553,12 +506,6 @@ export function DoorSection({ obj, set }: { obj: SceneObject; set: (p: Partial<S
         <Field label="Locked message">
           <input className={inputCls} dir="rtl" lang="fa" value={door.lockedMessage ?? ''} onChange={(e) => set({ door: { ...door, lockedMessage: e.target.value || undefined } }, `${obj.id}:doorlock`)} />
         </Field>
-        <Field label="When the player walks through, also…">
-          <EffectsEditor
-            effects={door.onEnterEffects ?? []}
-            onChange={(next) => set({ door: { ...door, onEnterEffects: next.length ? next : undefined } }, `${obj.id}:door-eff`)}
-          />
-        </Field>
         <p className="text-[11px] text-gray-500">An «Open a door» effect from any transform/pickup can also unlock this door at runtime.</p>
       </>)}
     </Section>
@@ -567,6 +514,8 @@ export function DoorSection({ obj, set }: { obj: SceneObject; set: (p: Partial<S
 
 // ---------- Main panel (embedded in the Props tab below the basic properties) ----------
 function TransitionsEditor({ obj, set }: { obj: SceneObject; set: (p: Partial<SceneObject>, key?: string) => void }) {
+  if (obj.door) return <DoorSection obj={obj} set={set} />;
+
   const sprites = useSprites();
   const ts = obj.transforms ?? [];
   const setT = (i: number, patch: Partial<TransformRule>) =>
@@ -713,8 +662,6 @@ function TransitionsEditor({ obj, set }: { obj: SceneObject; set: (p: Partial<Sc
           <EffectsEditor effects={obj.pickupEffects ?? []} onChange={(next) => set({ pickupEffects: next.length ? next : undefined }, `${obj.id}:pk-eff`)} />
         </Section>
       )}
-      {/* -------- Usability (locked objects / unlockWhen) -------- */}
-      <UsabilitySection obj={obj} set={set} />
       {/* -------- Door -------- */}
       <DoorSection obj={obj} set={set} />
     </div>
