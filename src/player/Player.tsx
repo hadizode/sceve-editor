@@ -6,7 +6,7 @@ import type { Asset, Scene, SceneObject, SessionState, Sprite, View } from '../s
 import { getSprite, resolveSprite, transformRef } from '../shared/types';
 import { boxMatrix, cssMatrix, hitClipPath, motionAngle, pivotScene, placementMatrix } from '../shared/geometry';
 import { spriteFilterCss } from '../shared/types';
-import { allRoomsComplete, checkTransformCondition } from '../shared/game-logic';
+import { allRoomsComplete, checkTransformCondition, isUsable } from '../shared/game-logic';
 
 /** Resolve a sprite/image ref to the concrete image URL ('' when the sprite has no image). */
 const spriteSrc = (
@@ -176,13 +176,26 @@ function ObjSprite({
   const onlyTransform =
     !obj.message && obj.digit === undefined && !obj.grantsItem && !obj.requiresItem?.length;
 
+  // Current usability: effect override > initial `usable` flag > live `unlockWhen` condition.
+  const usable = isUsable(state, obj, scenesById);
+
   const handleClick = () => {
     if (!clickable) return;
+
+    // Locked objects only show their "not usable yet" message — nothing else happens.
+    if (!usable) {
+      say(obj.unusableMessage || obj.door?.lockedMessage || '🔒 فعلاً قابل استفاده نیست');
+      return;
+    }
 
     // Doors take the player to another room. When an item is selected we try using it first
     // (e.g. unlocking), otherwise clicking walks straight through (clickObject handles the door).
     if (obj.door) {
-      clickObject(obj.id, viewId);
+      if (selectedItem && obj.transforms?.length) { useItemOnObject(selectedItem, obj.id, viewId); return; }
+      if (nextRule && !nextRule.requiresItem && checkTransformCondition(nextRule.conditions, state, scenesById)) {
+        useItemOnObject(null, obj.id, viewId); return;
+      }
+      clickObject(obj.id, viewId); // walks through or shows the locked message
       return;
     }
 
@@ -228,7 +241,11 @@ function ObjSprite({
   // A sprite with neither image nor color is fully invisible — but still clickable
   // when it has game rules (invisible hotspot), and never shows a placeholder.
   const hasVisual = !!url || !!sp?.color;
-  const pointerCls = clickable ? 'cursor-pointer pointer-events-auto' : 'pointer-events-none';
+  const pointerCls = !clickable
+    ? 'pointer-events-none'
+    : usable
+      ? 'cursor-pointer pointer-events-auto'
+      : 'cursor-not-allowed pointer-events-auto';
   const clipPath = hitClipPath(obj);
 
   const boxStyle: React.CSSProperties = {
@@ -275,7 +292,7 @@ function ObjSprite({
 
         <div
           className={`absolute inset-0 ${pointerCls} ${
-            hasVisual && clickable ? 'hover:bg-amber-400/10' : ''
+            hasVisual && clickable && usable ? 'hover:bg-amber-400/10' : ''
           }`}
           style={clipPath ? { clipPath } : undefined}
           onClick={handleClick}
