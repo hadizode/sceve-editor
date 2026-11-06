@@ -76,7 +76,7 @@ function regularPolygon(n: number): { x: number; y: number }[] {
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
 interface Ctx {
-  set: (patch: Partial<SceneObject>) => void;
+  set: (patch: Partial<SceneObject>, key?: string) => void;
   setPts: (pts: { x: number; y: number }[]) => void;
   fit: () => void;
   src: string;

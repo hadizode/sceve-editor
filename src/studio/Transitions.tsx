@@ -40,6 +40,7 @@ type Trigger = 'click' | 'item' | 'auto';
 
 // ───────────────────────── helpers ─────────────────────────
 const short = (s?: string, n = 26) => ((s ?? '').length > n ? `${s!.slice(0, n - 2)}…` : s ?? '');
+const shortName = short;
 
 interface ProjectObj { key: string; sceneId: string; sceneTitle: string; objTitle: string; obj: SceneObject }
 
@@ -688,6 +689,7 @@ export function DoorSection({ obj, set }: { obj: SceneObject; set: SetFn }) {
   const rooms = useRooms();
   const curScene = useStudioStore((s) => s.currentSceneId);
   const door = obj.door;
+  const sceneList = rooms;
   const hasOther = !!(obj.transforms?.length || obj.pickupable || obj.view || obj.digit !== undefined ||
     obj.grantsItem || obj.requiresItem?.length || obj.pickupEffects?.length);
 
@@ -723,7 +725,7 @@ export function DoorSection({ obj, set }: { obj: SceneObject; set: SetFn }) {
         </Field>
         <p className="text-[11px] text-gray-500">An «Open a door» effect from any transform/pickup can also unlock this door at runtime.</p>
       </>)}
-    </Section>
+    </Card>
   );
 }
 

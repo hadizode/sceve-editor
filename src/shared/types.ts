@@ -366,6 +366,8 @@ export interface SceneObject {
   pickupEffects?: TransformEffect[];
   /** Door: clicking this object takes the player to another room. */
   door?: DoorTarget;
+  /** Hidden clue digit revealed once this sprite is discovered (feeds the final lock). */
+  digit?: number;
 }
 
 export interface Scene {
