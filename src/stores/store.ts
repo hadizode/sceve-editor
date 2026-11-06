@@ -898,9 +898,24 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     set({ toast: message ?? null });
     if (message) toastTimer = window.setTimeout(() => set({ toast: null }), ms);
   };
-  // completedScenes حالا فقط از افکت completeRoom پر می‌شود (در applyEffect)
-  set({ session: { ...session, state } });
-  persistPlayer(get());
+  /**
+   * Commit a new session state: run the instant (autoApply) transform pass so chained rules
+   * cascade on every state change, surface any rule messages as toasts, and persist.
+   */
+  const commit = (next: SessionState) => {
+    const g = get();
+    if (!g.session) return;
+    let s = next;
+    const msgs: string[] = [];
+    if (g.scenes && Object.keys(g.scenes).length) {
+      const res = evaluateAutoTransforms(s, g.scenes);
+      s = res.state;
+      msgs.push(...res.messages);
+    }
+    set({ session: { ...g.session, state: s } });
+    persistPlayer(get());
+    for (const m of msgs) say(m, 5000);
+  };
 
   const sceneOfCurrent = () => {
     const g = get();
