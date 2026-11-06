@@ -250,6 +250,14 @@ function applyEffect(state: SessionState, eff: TransformEffect, triggerSceneId: 
     return { ...state, usable: { ...(state.usable ?? {}), [eff.objectId]: v } };
   }
 
+  if (eff.action === 'completeRoom') {
+    const sid = eff.sceneId || triggerSceneId;
+    const sc = ctx.scenesById[sid];
+    if (!sc || state.completedScenes.includes(sid)) return state;
+    pushMsg(ctx, `🔢 رقم این اتاق: ${sc.exitNumber}`);
+    return { ...state, completedScenes: [...state.completedScenes, sid] };
+  }
+
   // --- automatically apply a transform rule on another object ---
   if (eff.action !== 'transform' || !targetScene) return state;
   const list = [
@@ -434,13 +442,13 @@ export function pickupObject(
   if (obj.pickupEffects?.length && ctx?.scenesById) {
     const res = applyEffects(newState, obj.pickupEffects, sceneId, ctx.scenesById);
     finalState = res.state;
-    extraMessage = res.messages[0];
+    extraMessage = res.messages.join(' • ') || undefined;
   }
 
   return {
     newState: finalState,
     success: true,
-    message: extraMessage ?? obj.pickupMessage ?? obj.message,
+    message: [obj.pickupMessage ?? obj.message, extraMessage].filter(Boolean).join(' • ') || extraMessage || obj.pickupMessage || obj.message,
     itemId,
   };
 }
@@ -542,7 +550,7 @@ export function applyItemToObject(
         if (rule.effects?.length && ctx?.scenesById) {
           const res = applyEffects(newState, rule.effects, sceneId, ctx.scenesById);
           finalState = res.state;
-          effectMsg = res.messages[0];
+          effectMsg = res.messages.join(' • ') || undefined;
         }
 
         return {
@@ -616,73 +624,10 @@ export function applyItemToObject(
 }
 
 /**
- * Every object in a room that carries a digit, together with the discovery scope it is tracked under:
- * top-level objects are tracked under the scene id, objects inside a close-up view under the parent object's id.
- * (Digits inside views used to be ignored, so a room whose digit lived in a view could never be completed.)
- */
-export function roomDigitTargets(scene: Scene): { scopeId: string; obj: SceneObject }[] {
-  const out: { scopeId: string; obj: SceneObject }[] = [];
-  for (const o of scene.objects) {
-    if (o.digit !== undefined) out.push({ scopeId: scene.id, obj: o });
-    for (const v of o.view?.objects ?? []) {
-      if (v.digit !== undefined) out.push({ scopeId: o.id, obj: v });
-    }
-  }
-  return out;
-}
-
-/**
- * Check if a room/scene is complete (all objects with digits discovered).
- */
-export function isRoomComplete(state: SessionState, scene: Scene): boolean {
-  return roomDigitTargets(scene).every(({ scopeId, obj }) => (state.discoveredObjects[scopeId] || []).includes(obj.id));
-}
-
-/**
- * Get discovered digits for a room.
- */
-export function getRoomDigits(state: SessionState, scene: Scene): { digit: number; objectId: string }[] {
-  return roomDigitTargets(scene)
-    .filter(({ scopeId, obj }) => (state.discoveredObjects[scopeId] || []).includes(obj.id))
-    .map(({ obj }) => ({ digit: obj.digit!, objectId: obj.id }));
-}
-
-/**
- * Validate the final lock entry.
- */
-export function validateFinalLock(
-  state: SessionState,
-  scenes: Scene[],
-  enteredDigits: string
-): { valid: boolean; message: string } {
-  const expectedDigits = scenes
-    .map(s => s.exitNumber.toString())
-    .join('');
-  
-  if (enteredDigits === expectedDigits) {
-    return { valid: true, message: 'تبریک! شما موفق شدید!' };
-  }
-  return { valid: false, message: 'رمز اشتباه است. دوباره تلاش کنید.' };
-}
-
-/**
- * Get the next clue in the chain based on what's been discovered.
- */
-export function getNextClue(state: SessionState, scene: Scene): SceneObject | null {
-  const discovered = state.discoveredObjects[scene.id] || [];
-  for (const chainId of scene.clueChain) {
-    if (!discovered.includes(chainId)) {
-      return scene.objects.find(o => o.id === chainId) || null;
-    }
-  }
-  return null;
-}
-
-/**
  * Check if all rooms are complete.
  */
 export function allRoomsComplete(state: SessionState, scenes: Scene[]): boolean {
-  return scenes.every(scene => isRoomComplete(state, scene));
+  return scenes.every((s) => state.completedScenes.includes(s.id));
 }
 
 // ============ Doors / Room transitions ============

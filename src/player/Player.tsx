@@ -122,23 +122,19 @@ function ObjSprite({
   // pickup Gone removed: pickupObject already marks the object discovered, so `discovered` covers it
   // (and checking inventory by itemId would wrongly hide every sibling sharing a pickupItemId).
   const hidden = !obj.visible || (!keepVisible && !!discovered && !obj.view);
-
-  const tIndex = (state.transformsApplied ?? {})[obj.id] ?? -1;
-  const applied = obj.transforms?.[tIndex];
-
-  // After a transform fires, the object takes on the rule's new sprite ("بعد از ترنسفورم عکس بگیرن").
-  // Effects can also transform OTHER objects automatically — the engine records those under the same
-  // `transformsApplied` map, so we show that rule's visuals too when no direct rule has fired yet.
-  const autoRule = applied ? undefined : obj.transforms?.[Math.max(tIndex, 0)];
-  const shown = applied ?? (tIndex >= 0 ? autoRule : undefined);
-
-  // Live scene map — condition checks (incl. chained/auto-applied prerequisites) are evaluated against it.
   const scenesById = usePlayerStore((s) => s.scenes);
+  const tIndex = (state.transformsApplied ?? {})[obj.id] ?? -1;
 
-  // Rules gated by conditions only take visual effect once their prerequisites hold (e.g. "the panel
-  // lights up as soon as ALL three fuses + the connector are transformed") — even when the engine
-  // already recorded the automatic application for this object.
-  const shownOk = !!shown && checkTransformCondition(shown.conditions, state, scenesById);
+  // بالاترین ruleِ اجراشده که شرطش همین الان برقرار است
+  let shown: NonNullable<SceneObject['transforms']>[number] | undefined;
+  const rules = obj.transforms ?? [];
+  for (let i = Math.min(tIndex, rules.length - 1); i >= 0; i--) {
+    if (checkTransformCondition(rules[i].conditions, state, scenesById)) {
+      shown = rules[i];
+      break;
+    }
+  }
+  const shownOk = !!shown;
 
   const ref = shownOk && shown?.newSpriteId ? transformRef(shown.newSpriteId) : obj.spriteRef;
   const sp = getSprite(ref, sprites);
@@ -159,7 +155,7 @@ function ObjSprite({
   // The shown transform rule may tint the sprite with a CSS filter (invert / hue-rotate / …).
   const filterCss = shownOk ? spriteFilterCss(shown?.filter) : undefined;
 
-  if (hidden) return null;
+  if (hidden || (shownOk && shown?.hides)) return null;
 
   const clickable =
     obj.digit !== undefined ||

@@ -52,7 +52,7 @@ export interface BackgroundLayer {
  * automatically (even in other rooms), change another room's background, or open a door so the
  * player can walk into another room.
  */
-export type EffectAction = 'transform' | 'background' | 'unlockDoor' | 'setUsable';
+export type EffectAction = 'transform' | 'background' | 'unlockDoor' | 'setUsable' | 'completeRoom';
 
 export interface TransformEffect {
   action: EffectAction;
@@ -150,6 +150,8 @@ export interface TransformRule {
   grantsItem?: string;
   consumesItem?: boolean;
   triggersDiscovery?: boolean;
+  /** مخفی شدن اسپرایت وقتی این rule فعال است */
+  hides?: boolean;
   /** Extra gating ("only once ALL of these objects are transformed…"). Empty = no extra condition. */
   conditions?: TransformCondition;
   /** Side actions fired when this rule applies (other objects / other rooms / doors). */
@@ -350,7 +352,6 @@ export interface SceneObject {
   /** Live condition: while locked, the object becomes usable the moment it holds, no click and no effect needed */
   unlockWhen?: TransformCondition;
   message?: string;
-  digit?: number;
   requiresItem?: string[];
   grantsItem?: string;
   soundUrl?: string;
@@ -675,7 +676,7 @@ function normalizeEffects(list: any, reg: SpriteRegistry): TransformEffect[] | u
   for (const e of list) {
     if (!e || typeof e !== 'object') continue;
     const action = str(e.action) as EffectAction;
-    if (action !== 'transform' && action !== 'background' && action !== 'unlockDoor' && action !== 'setUsable') continue;
+    if (action !== 'transform' && action !== 'background' && action !== 'unlockDoor' && action !== 'setUsable' && action !== 'completeRoom') continue;
     out.push({
       action,
       sceneId: str(e.sceneId) || undefined,
@@ -701,6 +702,7 @@ function normalizeTransform(r: any, reg: SpriteRegistry): TransformRule {
     grantsItem: str(r?.grantsItem) || undefined,
     consumesItem: r?.consumesItem !== false,
     triggersDiscovery: r?.triggersDiscovery === true,
+    hides: r?.hides === true ? true : undefined,
     conditions: normalizeConditions(r?.conditions),
     effects: normalizeEffects(r?.effects, reg),
     filter: normalizeFilter(r?.filter),
@@ -737,7 +739,6 @@ export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): Scene
   // Old bundles had decoration/inventory/container types — everything is one unified sprite now.
   const legacyType = typeof o.type === 'string' ? o.type : '';
   const req = strList(o.requiresItem);
-  const digit = Number.isInteger(o.digit) ? clamp(o.digit, 0, 9) : undefined;
   const spriteRefValue = reg.register(o.spriteRef ?? o.imageUrl);
 
   const x = num(o.x, 0);
@@ -786,7 +787,6 @@ export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): Scene
     locked: o.locked === true,
     oneTimeUse: o.oneTimeUse === true,
     message: str(o.message) || undefined,
-    digit,
     requiresItem: req.length ? req : undefined,
     grantsItem: str(o.grantsItem) || undefined,
     soundUrl: str(o.soundUrl) || undefined,

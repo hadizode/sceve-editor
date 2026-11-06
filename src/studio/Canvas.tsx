@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Konva from 'konva';
 import { Stage, Layer, Image as KImage, Rect, Text, Transformer, Shape, Circle } from 'react-konva';
-import { apply, boxBounds, boxMatrix, invert, konvaHitFunc, konvaNodeAttrs, patchFromNode, pivotScene, polygonScene, type Pt } from '../shared/geometry';
+import { apply, boxBounds, boxMatrix, invert, konvaHitFunc, konvaNodeAttrs, patchFromNode, pivotScene,rotateBoxAboutPivot, boxCenter, polygonScene, type Pt } from '../shared/geometry';
 import { useCtx, useScene, useStudioStore } from '../stores/store';
 import { type SceneObject } from '../shared/types';
 import { clamp, fileToImage } from '../shared/utils';
@@ -201,6 +201,7 @@ function PivotHandle({ obj, zoom }: { obj: SceneObject; zoom: number }) {
 }
 
 export default function Canvas() {
+  const tStart = useRef<{ pv: Pt; c: Pt; rot: number } | null>(null);
   const scene = useScene();
   const ctx = useCtx();
   const viewOf = useStudioStore((s) => s.editingViewOf);
@@ -364,6 +365,12 @@ export default function Canvas() {
       const p = patchFromNode({
         x: n.x(), y: n.y(), rotation: n.rotation(), scaleX: n.scaleX(), scaleY: n.scaleY(), width: n.width(), height: n.height(),
       });
+      const sameSize = Math.abs(p.width - o.width) < 0.5 && Math.abs(p.height - o.height) < 0.5;
+      const fixed = o.motion && sameSize && Math.abs(p.rotation - o.rotation) > 0.01
+        ? { ...p, ...rotateBoxAboutPivot(o, p.rotation) }
+        : p;
+      patches[o.id] = fixed;
+      n.position({ x: (fixed.x ?? p.x) + p.width / 2, y: (fixed.y ?? p.y) + p.height / 2 });
       patches[o.id] = p;
       // bake the scale into the node right away so it matches the committed box
       n.scaleX(p.flipX ? -1 : 1);
@@ -373,6 +380,7 @@ export default function Canvas() {
       n.offset({ x: p.width / 2, y: p.height / 2 });
     });
     st().updateObjects(patches);
+    tStart.current = null;
   };
 
   // single selection → resize width or height independently with the side anchors
@@ -563,6 +571,19 @@ export default function Canvas() {
               );
             })()}
             <Transformer
+              onTransformStart={() => {
+                const nodes = trRef.current?.nodes() ?? [];
+                const o = nodes.length === 1 ? ctx?.objects.find((q) => q.id === nodes[0].id()) : undefined;
+                tStart.current = o?.motion ? { pv: pivotScene(o, o.motion.pivot), c: boxCenter(o), rot: o.rotation } : null;
+              }}
+              onTransform={() => {
+                const s = tStart.current;
+                const n = trRef.current?.nodes()[0];
+                if (!s || !n || Math.abs(Math.abs(n.scaleX()) - 1) > 0.001 || Math.abs(Math.abs(n.scaleY()) - 1) > 0.001) return;
+                const a = ((n.rotation() - s.rot) * Math.PI) / 180;
+                const dx = s.c.x - s.pv.x, dy = s.c.y - s.pv.y;
+                n.position({ x: s.pv.x + dx * Math.cos(a) - dy * Math.sin(a), y: s.pv.y + dx * Math.sin(a) + dy * Math.cos(a) });
+              }}
               ref={trRef}
               rotateEnabled
               enabledAnchors={anchorList}

@@ -4,6 +4,7 @@ import Canvas from './Canvas';
 import Preview from './Preview';
 import ProjectsView from './ProjectsView';
 import { PropertiesPanel } from './Properties';
+import { ViewTab } from './ViewTab';
 import { TransitionsTab } from './Transitions';
 import {
   AssetsPanel,
@@ -23,7 +24,7 @@ import { CommandPalette, MenuBar } from './MenuBar';
 const st = () => useStudioStore.getState();
 
 type Center = 'scene' | 'game';
-type Inspector = 'object' | 'transitions' | 'room';
+type Inspector = 'object' | 'view' | 'transitions' | 'room';
 
 const DEFAULTS = { left: 240, right: 320, bottom: 230 };
 
@@ -117,9 +118,7 @@ function Editor() {
   }, [selected.join('|')]);
 
   // Entering an interactive view switches back to the Inspector tab.
-  useEffect(() => {
-    if (viewOf) setInspector('object');
-  }, [viewOf]);
+  useEffect(() => { if (viewOf) setInspector('view'); }, [viewOf]);
 
   // Keyboard shortcuts, ignored while typing in inputs.
   useEffect(() => {
@@ -387,6 +386,7 @@ function Editor() {
             tabs={[
               { id: 'object', label: 'Inspector' },
               { id: 'transitions', label: 'Transitions' },
+              { id: 'view', label: 'View' },
               { id: 'room', label: 'Room' },
             ]}
             value={inspector}
@@ -395,6 +395,7 @@ function Editor() {
 
           <div className="flex-1 overflow-y-auto min-h-0" role="tabpanel">
             {inspector === 'object' && <PropertiesPanel />}
+            {inspector === 'view' && <ViewTab />}
             {inspector === 'transitions' && <TransitionsTab />}
             {inspector === 'room' && (
               <>

@@ -6,6 +6,7 @@ import { Icon, IconButton } from './icons';
 import type { IconName } from './icons';
 import { DoorSection } from './Transitions';
 import { NumInput } from './ui';
+import {rotateBoxAboutPivot} from '../shared/geometry';
 
 // ============ Small UI primitives ============
 const inputCls =
@@ -215,7 +216,10 @@ function TransformSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
         <Field label="Y"><input type="number" className={inputCls} value={Math.round(obj.y)} onChange={(e) => set({ y: num(obj.y, e.target.value) })} /></Field>
         <Field label="Width"><input type="number" className={inputCls} value={Math.round(obj.width)} onChange={(e) => set({ width: Math.max(1, num(obj.width, e.target.value)) })} /></Field>
         <Field label="Height"><input type="number" className={inputCls} value={Math.round(obj.height)} onChange={(e) => set({ height: Math.max(1, num(obj.height, e.target.value)) })} /></Field>
-        <Field label="Rotation"><input type="number" className={inputCls} value={Math.round(obj.rotation)} onChange={(e) => set({ rotation: num(obj.rotation, e.target.value) })} /></Field>
+        <Field label="Rotation">
+        <input type="number" className={inputCls} value={Math.round(obj.rotation)}
+          onChange={(e) => set(rotateBoxAboutPivot(obj, num(obj.rotation, e.target.value)))} />
+      </Field>
       </div>
       <Field label="Flip">
         <div className="flex gap-1">

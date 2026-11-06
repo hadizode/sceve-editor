@@ -275,3 +275,14 @@ export function migrateLegacyGeometry(o: LegacyGeom, nat: Size | null) {
     hit,
   };
 }
+
+export function rotateBoxAboutPivot(o: Box & Partial<Pick<SceneObject, 'motion'>>, newRot: number) {
+  if (!o.motion) return { rotation: newRot };
+  const pv = pivotScene(o, o.motion.pivot);
+  const c = boxCenter(o);
+  const a = rad(newRot - o.rotation);
+  const dx = c.x - pv.x, dy = c.y - pv.y;
+  const nx = pv.x + dx * Math.cos(a) - dy * Math.sin(a);
+  const ny = pv.y + dx * Math.sin(a) + dy * Math.cos(a);
+  return { rotation: newRot, x: r1(nx - o.width / 2), y: r1(ny - o.height / 2) };
+}
