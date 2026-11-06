@@ -1,0 +1,683 @@
+import { livePoint } from './geometry';
+import type { PositionReq, Scene, SceneObject, SessionState, TransformCondition, TransformEffect } from './types';
+
+// ============ Effects / Transitions Engine ============
+// A strong, separate part of the game logic: when something happens (a transform fires, an item is
+// picked up), attached EFFECTS can reach outside the clicked object — automatically applying a
+// transform on ANOTHER object (even in another room), changing another room's BACKGROUND, or opening
+// a DOOR so the player can walk into another room.
+
+/** One entry per scene; `null` means "this scene was already visited" (so its rules run once). */
+export interface EffectCtx {
+  scenesById: Record<string, Scene>;
+  visited: Set<string>;
+  messages: string[];
+}
+
+const pushMsg = (ctx: EffectCtx, m?: string) => {
+  if (m && !ctx.messages.includes(m)) ctx.messages.push(m);
+};
+
+/** All objects of a scene including nested close-up view objects (effect targets live anywhere). */
+const allObjectsOf = (sc: Scene): SceneObject[] => [...sc.objects, ...sc.objects.flatMap((o) => (o.view ? o.view.objects : []))];
+
+// ============ Conditions ============
+// A rule can carry extra gating beyond its `requiresItem`: e.g. "only fire once ALL three fuses AND
+// the connector have been transformed". Every listed prerequisite must hold (logical AND).
+
+/**
+ * Coordinate-aware gating: "a point of object A (after its rotation motion) reached X/Y" or
+ * "A is on click N (mod M)" — e.g. a clock hand whose 3rd click (90°) completes a circuit.
+ * Empty list = always true; every requirement must hold (logical AND).
+ */
+export function checkPositions(reqs: PositionReq[] | undefined, state: SessionState, scenesById?: Record<string, Scene>): boolean {
+  if (!reqs?.length) return true;
+  if (!scenesById) return false;
+  for (const r of reqs) {
+    const sc = r.sceneId ? scenesById[r.sceneId] : Object.values(scenesById).find((s) => allObjectsOf(s).some((o) => o.id === r.objectId));
+    const obj = sc ? allObjectsOf(sc).find((o) => o.id === r.objectId) : undefined;
+    if (!obj) return false;
+    const steps = state.motionSteps?.[r.objectId] ?? 0;
+    const p = livePoint(obj, steps, r.anchor);
+    const tol = Number.isFinite(r.tolerance) ? Math.max(0, r.tolerance as number) : 2;
+    const op = r.op ?? 'eq';
+    const okAxis = (v: number, t: number) => (op === 'gte' ? v >= t - tol : op === 'lte' ? v <= t + tol : Math.abs(v - t) <= tol);
+    if (Number.isFinite(r.x) && !okAxis(p.x, r.x as number)) return false;
+    if (Number.isFinite(r.y) && !okAxis(p.y, r.y as number)) return false;
+    if ((r.stepsMod ?? 0) > 0 && r.stepsEq !== undefined) {
+      const mod = r.stepsMod as number;
+      if (((steps % mod) + mod) % mod !== r.stepsEq) return false;
+    }
+  }
+  return true;
+}
+
+/** True when every prerequisite of the condition is satisfied by the current session state.
+ * `depth` guards against recursive display checks on cyclic condition graphs. */
+export function checkTransformCondition(
+  cond: TransformCondition | undefined,
+  state: SessionState,
+  scenesById?: Record<string, Scene>,
+  depth = 0
+): boolean {
+  if (!cond) return true;
+  for (const it of cond.itemsInInventory ?? []) {
+    if (!state.inventory.includes(it)) return false;
+  }
+  if (!checkPositions(cond.positions, state, scenesById)) return false;
+  for (const req of cond.transformedObjects ?? []) {
+    const applied = state.transformsApplied?.[req.objectId] ?? -1;
+    if (applied < (req.minRule ?? 0)) return false;
+    // If the author pinned the prerequisite to a specific room, make sure the object really lives there.
+    if (req.sceneId && scenesById) {
+      const sc = scenesById[req.sceneId];
+      if (sc && !allObjectsOf(sc).some((o) => o.id === req.objectId)) return false;
+    }
+    // autoApply conditions are checked from the LIVE game state: a prerequisite only counts when it
+    // is VISIBLY transformed right now — so instant chains never light up ahead of what the player sees.
+    if (cond.autoApply && scenesById && depth <= 24) {
+      if (!prereqVisible(req, state, scenesById, depth + 1)) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Condition check used by the RENDERER / auto-apply evaluator. A prerequisite counts as fulfilled
+ * when it is VISIBLY transformed right now: recorded in `transformsApplied` AND its own shown rule
+ * passes its gating (recursively). This keeps "instant" chains consistent with what the player
+ * sees — an intermediate fuse panel that hasn't lit up yet does not light up the final panel.
+ */
+function prereqVisible(req: { sceneId?: string; objectId: string; minRule?: number }, state: SessionState, scenesById: Record<string, Scene>, depth = 0): boolean {
+  if (depth > 24) return false; // cycle guard
+  const sc = req.sceneId ? scenesById[req.sceneId] : Object.values(scenesById).find((s) => allObjectsOf(s).some((o) => o.id === req.objectId));
+  const obj = sc ? allObjectsOf(sc).find((o) => o.id === req.objectId) : undefined;
+  const applied = state.transformsApplied?.[req.objectId] ?? -1;
+  if (applied < (req.minRule ?? 0)) return false;
+  // The prerequisite's own highest fired rule must itself be showing (its conditions hold).
+  const idx = Math.min(applied, (obj?.transforms?.length ?? 1) - 1);
+  const shown = obj?.transforms?.[idx];
+  if (!shown) return true; // nothing to display-gate (e.g. discovery-only prereq) → recorded fire counts
+  return checkTransformCondition(shown.conditions, state, scenesById, depth + 1);
+}
+
+export function checkConditionForDisplay(
+  cond: TransformCondition | undefined,
+  state: SessionState,
+  scenesById: Record<string, Scene>,
+  depth = 0
+): boolean {
+  if (!cond) return true;
+  for (const it of cond.itemsInInventory ?? []) {
+    if (!state.inventory.includes(it)) return false;
+  }
+  for (const req of cond.transformedObjects ?? []) {
+    if (!prereqVisible(req, state, scenesById, depth)) return false;
+  }
+  if (!checkPositions(cond.positions, state, scenesById)) return false;
+  return true;
+}
+
+/** Is this object currently usable? Effect override > initial flag > live `unlockWhen` condition. */
+export function isUsable(state: SessionState, obj: SceneObject, scenesById: Record<string, Scene> = {}): boolean {
+  const override = state.usable?.[obj.id];
+  if (override !== undefined) return override;
+  if (obj.usable !== false) return true;
+  return !!obj.unlockWhen && checkConditionForDisplay(obj.unlockWhen, state, scenesById);
+}
+
+/**
+ * The instant ("بدون کلیک") transform evaluator. Conditions marked `autoApply` behave like live
+ * wires: the moment their prerequisites hold, the rule fires — no click, and no effect needs to
+ * explicitly target the object. Call this after ANY state change (transform, pickup, item use, …);
+ * it loops until stable so chained auto rules cascade in one pass. Returns the same state ref
+ * when nothing new fired.
+ */
+export function evaluateAutoTransforms(
+  state: SessionState,
+  scenesById: Record<string, Scene>,
+  scopeSceneId?: string
+): { state: SessionState; messages: string[] } {
+  const candidates: { sceneId: string; obj: SceneObject }[] = [];
+  const addScene = (sc: Scene) => {
+    for (const o of allObjectsOf(sc)) if (o.transforms?.length) candidates.push({ sceneId: sc.id, obj: o });
+  };
+  if (scopeSceneId && scenesById[scopeSceneId]) addScene(scenesById[scopeSceneId]);
+  else for (const sc of Object.values(scenesById)) addScene(sc);
+  if (!candidates.length) return { state, messages: [] };
+
+  let s = state;
+  const messages: string[] = [];
+  // Loop until stable (max passes guard against pathological cycles).
+  for (let pass = 0; pass < candidates.length + 2; pass++) {
+    let changed = false;
+    for (const { sceneId, obj } of candidates) {
+      const nextIdx = (s.transformsApplied?.[obj.id] ?? -1) + 1;
+      const rule = obj.transforms![nextIdx];
+      if (!rule || !rule.conditions?.autoApply) continue;
+      // Only fire when the rule needs no item (free) — item-gated rules still need the player.
+      if (rule.requiresItem) continue;
+      // Evaluate prerequisites from the LIVE state: recorded transforms, or visibly-applied ones
+      // (an auto-firing intermediate must itself actually be showing its transformed sprite first).
+      const cond = rule.conditions;
+      let ok = true;
+      for (const it of cond.itemsInInventory ?? []) if (!s.inventory.includes(it)) { ok = false; break; }
+      if (ok) {
+        for (const req of cond.transformedObjects ?? []) {
+          if (!prereqVisible(req, s, scenesById)) { ok = false; break; }
+        }
+      }
+      // Coordinate-aware gating uses the LIVE step counter `s` (motion clicks counted so far).
+      if (ok && !checkPositions(cond.positions, s, scenesById)) ok = false;
+      if (!ok) continue;
+      // Fire the rule exactly like applyEffect would: visuals via transformsApplied + grants/discovery/effects.
+      let ns = { ...s, transformsApplied: { ...(s.transformsApplied ?? {}), [obj.id]: nextIdx } };
+      if (rule.grantsItem && !ns.inventory.includes(rule.grantsItem)) ns = { ...ns, inventory: [...ns.inventory, rule.grantsItem] };
+      if (rule.triggersDiscovery) {
+        const d = ns.discoveredObjects[sceneId] || [];
+        if (!d.includes(obj.id)) ns = { ...ns, discoveredObjects: { ...ns.discoveredObjects, [sceneId]: [...d, obj.id] } };
+      }
+      if (rule.newMessage && !messages.includes(rule.newMessage)) messages.push(rule.newMessage);
+      if (rule.effects?.length) {
+        const res = applyEffects(ns, rule.effects, sceneId, scenesById);
+        ns = res.state;
+        for (const m of res.messages) if (!messages.includes(m)) messages.push(m);
+      }
+      s = ns;
+      changed = true;
+    }
+    if (!changed) break;
+  }
+  return { state: s, messages };
+}
+
+/** Human-readable reason why the condition currently fails ('' when it holds). */
+export function conditionFailMessage(cond: TransformCondition | undefined, state: SessionState, scenesById?: Record<string, Scene>): string {
+  if (!cond) return '';
+  for (const it of cond.itemsInInventory ?? []) {
+    if (!state.inventory.includes(it)) return `⏳ هنوز همه شرایط فراهم نشده — آیتم «${it}» در کیف شما نیست`;
+  }
+  for (const req of cond.transformedObjects ?? []) {
+    const applied = state.transformsApplied?.[req.objectId] ?? -1;
+    if (applied < (req.minRule ?? 0)) return '⏳ هنوز همه شرایط فراهم نشده — اول بقیه موارد را فعال کنید';
+  }
+  if (!checkPositions(cond.positions, state, scenesById)) return '⏳ هنوز همه شرایط فراهم نشده — موقعیت درست نیست';
+  return '';
+}
+
+/**
+ * Run the instant-condition pass after any player action. When a rule's `autoApply` condition just
+ * became true (e.g. the LAST fuse/connector got transformed), its transform fires immediately —
+ * no click needed. The player store's commit() calls `evaluateAutoTransforms` on every state change,
+ * so this wrapper is kept for direct/legacy callers that hold the scene map themselves.
+ */
+export function autoApplyConditions(state: SessionState, scenesById?: Record<string, Scene>): { state: SessionState; messages: string[] } {
+  if (!scenesById || !Object.keys(scenesById).length) return { state, messages: [] };
+  return evaluateAutoTransforms(state, scenesById);
+}
+
+/** Apply one effect to the session state. Returns the updated state (same ref when nothing changed). */
+function applyEffect(state: SessionState, eff: TransformEffect, triggerSceneId: string, ctx: EffectCtx): SessionState {
+  const targetScene = eff.sceneId ? ctx.scenesById[eff.sceneId] : ctx.scenesById[triggerSceneId];
+  const scopeId = eff.sceneId || triggerSceneId;
+
+  // --- change another room's (or a close-up view's) background ---
+  if (eff.action === 'background') {
+    if (!eff.newSpriteId) return state;
+    // objectId may point at a close-up view inside the scene → override that view's background instead.
+    let key = targetScene?.id ?? scopeId;
+    if (eff.objectId) {
+      const holder = targetScene?.objects.find((o) => o.view && (o.view.id === eff.objectId || o.id === eff.objectId));
+      if (holder?.view) key = holder.view.id;
+    }
+    if (!targetScene && !state.backgrounds?.[key]) return state;
+    if (state.backgrounds?.[key] === eff.newSpriteId) return state;
+    return { ...state, backgrounds: { ...(state.backgrounds ?? {}), [key]: eff.newSpriteId } };
+  }
+
+  // --- open a door (object with `door`) so the player can enter another room ---
+  if (eff.action === 'unlockDoor') {
+    if (!eff.doorObjectId) return state;
+    const doors = state.openDoors ?? [];
+    if (doors.includes(eff.doorObjectId)) return state;
+    return { ...state, openDoors: [...doors, eff.doorObjectId] };
+  }
+
+  if (eff.action === 'setUsable') {
+    if (!eff.objectId) return state;
+    const v = eff.usable !== false;
+    if (state.usable?.[eff.objectId] === v) return state;
+    return { ...state, usable: { ...(state.usable ?? {}), [eff.objectId]: v } };
+  }
+
+  if (eff.action === 'completeRoom') {
+    const sid = eff.sceneId || triggerSceneId;
+    const sc = ctx.scenesById[sid];
+    if (!sc || state.completedScenes.includes(sid)) return state;
+    pushMsg(ctx, `🔢 رقم این اتاق: ${sc.exitNumber}`);
+    return { ...state, completedScenes: [...state.completedScenes, sid] };
+  }
+
+  // --- automatically apply a transform rule on another object ---
+  if (eff.action !== 'transform' || !targetScene) return state;
+  const list = [
+    ...targetScene.objects,
+    ...targetScene.objects.flatMap((o) => (o.view ? o.view.objects : [])),
+  ];
+  const obj = list.find((o) => o.id === eff.objectId);
+  if (!obj?.transforms?.length) return state;
+  const idx = eff.ruleIndex ?? 0;
+  const rule = obj.transforms[idx];
+  if (!rule) return state;
+  // Conditions still gate automatic transforms: "transform box X" only fires when X's own
+  // prerequisites (e.g. all three fuses + the connector already transformed) actually hold.
+  if (!checkTransformCondition(rule.conditions, state, ctx.scenesById)) return state;
+  // Idempotent: each (scene, object) gets its automatic chain applied once, following links forward.
+  if (ctx.visited.has(`${scopeId}|${obj.id}`)) return state;
+  ctx.visited.add(`${scopeId}|${obj.id}`);
+
+  let next = state;
+  if (rule.grantsItem && !next.inventory.includes(rule.grantsItem)) {
+    next = { ...next, inventory: [...next.inventory, rule.grantsItem] };
+  }
+  if (rule.triggersDiscovery) {
+    const d = next.discoveredObjects[scopeId] || [];
+    if (!d.includes(obj.id)) {
+      next = { ...next, discoveredObjects: { ...next.discoveredObjects, [scopeId]: [...d, obj.id] } };
+    }
+  }
+  next = { ...next, transformsApplied: { ...(next.transformsApplied ?? {}), [obj.id]: Math.max(next.transformsApplied?.[obj.id] ?? -1, idx) } };
+  pushMsg(ctx, rule.newMessage);
+  // The auto-transformed object may itself carry effects → the engine follows them recursively.
+  if (rule.effects?.length) next = applyEffects(next, rule.effects, scopeId, ctx.scenesById).state;
+  return next;
+}
+
+/** Fire a batch of effects (recursive-safe); returns the new state plus any toast messages they produced. */
+export function applyEffects(
+  state: SessionState,
+  effects: TransformEffect[],
+  sceneId: string,
+  scenesByIdOrCtx: Record<string, Scene> | EffectCtx
+): { state: SessionState; messages: string[] } {
+  const ctx: EffectCtx =
+    'scenesById' in scenesByIdOrCtx && (scenesByIdOrCtx as EffectCtx).visited instanceof Set
+      ? (scenesByIdOrCtx as EffectCtx)
+      : { scenesById: scenesByIdOrCtx as Record<string, Scene>, visited: new Set<string>(), messages: [] };
+  if (!effects.length) return { state, messages: ctx.messages };
+  let s = state;
+  for (const eff of effects) {
+    const before = s;
+    s = applyEffect(s, eff, sceneId, ctx);
+    if (eff.message && s !== before) pushMsg(ctx, eff.message);
+  }
+  return { state: s, messages: ctx.messages };
+}
+
+/** Every effect declared in a project's scenes — used by validation and by the Studio preview overlay. */
+export function collectProjectEffects(scenes: Scene[]): { eff: TransformEffect; fromSceneId: string; fromName: string }[] {
+  const out: { eff: TransformEffect; fromSceneId: string; fromName: string }[] = [];
+  for (const sc of scenes) {
+    for (const o of allObjectsOf(sc)) {
+      for (const t of o.transforms ?? []) for (const e of t.effects ?? []) out.push({ eff: e, fromSceneId: sc.id, fromName: `${sc.title} → ${o.name}` });
+      for (const e of o.pickupEffects ?? []) out.push({ eff: e, fromSceneId: sc.id, fromName: `${sc.title} → ${o.name} (pickup)` });
+      for (const e of o.door?.onEnterEffects ?? []) out.push({ eff: e, fromSceneId: sc.id, fromName: `${sc.title} → ${o.name} (enter door)` });
+    }
+  }
+  return out;
+}
+
+// ============ Pure Game Logic Functions ============
+
+/**
+ * Discover an object in a scene. Returns updated state or null if already discovered.
+ */
+export function discoverObject(
+  state: SessionState,
+  sceneId: string,
+  objectId: string,
+  objects: SceneObject[]
+): { newState: SessionState; message?: string; alreadyDiscovered: boolean; grantsItem?: string } {
+  const sceneDiscovered = state.discoveredObjects[sceneId] || [];
+  
+  if (sceneDiscovered.includes(objectId)) {
+    return { newState: state, alreadyDiscovered: true, message: 'این مورد قبلاً کشف شده است' };
+  }
+
+  const obj = objects.find(o => o.id === objectId);
+  if (!obj) {
+    return { newState: state, alreadyDiscovered: false, message: 'مورد یافت نشد' };
+  }
+
+  // Check if object requires an item
+  if (obj.requiresItem && obj.requiresItem.length > 0) {
+    const hasRequired = obj.requiresItem.every(item => state.inventory.includes(item));
+    if (!hasRequired) {
+      return { newState: state, alreadyDiscovered: false, message: 'برای باز کردن این مورد به آیتم خاصی نیاز دارید' };
+    }
+  }
+
+  const newDiscovered = [...sceneDiscovered, objectId];
+  const newDiscoveredObjects = { ...state.discoveredObjects, [sceneId]: newDiscovered };
+  
+  let newInventory = [...state.inventory];
+  let grantsItem: string | undefined;
+  
+  if (obj.grantsItem) {
+    if (!newInventory.includes(obj.grantsItem)) {
+      newInventory.push(obj.grantsItem);
+      grantsItem = obj.grantsItem;
+    }
+  }
+
+  const newState: SessionState = {
+    ...state,
+    discoveredObjects: newDiscoveredObjects,
+    inventory: newInventory,
+  };
+
+  return {
+    newState,
+    alreadyDiscovered: false,
+    message: obj.message,
+    grantsItem,
+  };
+}
+
+/**
+ * Pick up an object into inventory (if pickupable).
+ */
+export function pickupObject(
+  state: SessionState,
+  sceneId: string,
+  objectId: string,
+  objects: SceneObject[],
+  ctx?: InteractionCtx
+): { newState: SessionState; message?: string; success: boolean; itemId?: string } {
+  // Find the clicked object by id (as before).
+  const target = objects.find(o => o.id === objectId);
+  if (!target) {
+    return { newState: state, success: false, message: 'مورد یافت نشد' };
+  }
+
+  const obj = target;
+
+  if (!isUsable(state, obj, ctx?.scenesById)) {
+    return { newState: state, success: false, message: obj.unusableMessage || 'فعلاً قابل استفاده نیست' };
+  }
+
+  if (!obj.pickupable) {
+    return { newState: state, success: false, message: 'این مورد قابل برداشتن نیست' };
+  }
+
+  // Items live in the inventory keyed by their item id (`pickupItemId`, falling back to the object id).
+  // This is what transform rules' `requiresItem` and validation compare against, so it must stay an id —
+  // never the object's display name.
+  const itemId = obj.pickupItemId || obj.id;
+
+  // Block re-picking the *same* object instance, but not a second object that shares its pickupItemId.
+  const sceneDiscovered = state.discoveredObjects[sceneId] || [];
+  if (sceneDiscovered.includes(objectId)) {
+    return { newState: state, success: false, message: 'این مورد قبلاً برداشته شده' };
+  }
+
+  // چند شیء می‌توانند یک pickupItemId داشته باشند (مثل ۳ فیوز) → تکراری مجاز است
+  const newInventory = [...state.inventory, itemId];
+
+  // Mark as discovered so it disappears
+  const newDiscoveredObjects = {
+    ...state.discoveredObjects,
+    [sceneId]: [...sceneDiscovered, objectId],
+  };
+
+  const newState: SessionState = {
+    ...state,
+    inventory: newInventory,
+    discoveredObjects: newDiscoveredObjects,
+  };
+
+  // Picking an item up can fire transition effects too (open a door, change another room, …).
+  let finalState = newState;
+  let extraMessage: string | undefined;
+  if (obj.pickupEffects?.length && ctx?.scenesById) {
+    const res = applyEffects(newState, obj.pickupEffects, sceneId, ctx.scenesById);
+    finalState = res.state;
+    extraMessage = res.messages.join(' • ') || undefined;
+  }
+
+  return {
+    newState: finalState,
+    success: true,
+    message: [obj.pickupMessage ?? obj.message, extraMessage].filter(Boolean).join(' • ') || extraMessage || obj.pickupMessage || obj.message,
+    itemId,
+  };
+}
+
+/** Optional context for effect handling — without it, transforms/pickups still work (legacy callers). */
+export interface InteractionCtx {
+  /** All project scenes by id — effects may target objects/rooms other than the current one. */
+  scenesById?: Record<string, Scene>;
+}
+
+/**
+ * Remove exactly ONE occurrence of an item from the inventory.
+ * (Array.filter would drop every duplicate — e.g. 3 collected fuses — which is wrong when
+ * multiple objects share a pickupItemId.)
+ */
+const removeOne = (inv: string[], id: string) => {
+  const i = inv.indexOf(id);
+  return i < 0 ? inv : [...inv.slice(0, i), ...inv.slice(i + 1)];
+};
+
+/**
+ * Apply an inventory item to an object (with transform support).
+ */
+export function applyItemToObject(
+  state: SessionState,
+  sceneId: string,
+  objectId: string,
+  itemId: string | null, // null = click without a selected item
+  objects: SceneObject[],
+  ctx?: InteractionCtx
+): {
+  newState: SessionState;
+  success: boolean;
+  message: string;
+  transformed?: boolean;
+} {
+  const obj = objects.find(o => o.id === objectId);
+  if (!obj) return { newState: state, success: false, message: 'مورد یافت نشد' };
+
+  if (!isUsable(state, obj, ctx?.scenesById)) {
+    return { newState: state, success: false, message: obj.unusableMessage || 'فعلاً قابل استفاده نیست' };
+  }
+
+  if (itemId && !state.inventory.includes(itemId)) {
+    return { newState: state, success: false, message: 'شما این آیتم را ندارید' };
+  }
+
+  // Check if this object has transforms and the *next* rule matches.
+  // Progress is tracked in session state (`transformsApplied`), never on the editable object.
+  // An empty `requiresItem` means "no item required" — the rule fires with a plain click.
+  let needsItem = false;
+  if (obj.transforms && obj.transforms.length > 0) {
+    const currentTransform = (state.transformsApplied ?? {})[objectId] ?? -1;
+    const nextTransformIndex = currentTransform + 1;
+
+    if (nextTransformIndex < obj.transforms.length) {
+      const rule = obj.transforms[nextTransformIndex];
+      const free = !rule.requiresItem; // empty = no item required
+      // Extra gating conditions ("only once ALL these objects are transformed / items held").
+      const condOk = checkTransformCondition(rule.conditions, state, ctx?.scenesById);
+
+      if (condOk && (free || (itemId !== null && rule.requiresItem === itemId))) {
+        // Apply transform
+        let newInventory = [...state.inventory];
+
+        // Consume the item only when the rule actually required one (default: true)
+        if (!free && rule.consumesItem !== false) {
+          newInventory = removeOne(newInventory, rule.requiresItem);
+        }
+
+        // Grant new item if specified
+        if (rule.grantsItem && !newInventory.includes(rule.grantsItem)) {
+          newInventory.push(rule.grantsItem);
+        }
+
+        // Mark as discovered if triggersDiscovery
+        let newDiscoveredObjects = state.discoveredObjects;
+        if (rule.triggersDiscovery) {
+          const sceneDiscovered = state.discoveredObjects[sceneId] || [];
+          if (!sceneDiscovered.includes(objectId)) {
+            newDiscoveredObjects = {
+              ...state.discoveredObjects,
+              [sceneId]: [...sceneDiscovered, objectId],
+            };
+          }
+        }
+
+        const newState: SessionState = {
+          ...state,
+          inventory: newInventory,
+          discoveredObjects: newDiscoveredObjects,
+          transformsApplied: { ...(state.transformsApplied ?? {}), [objectId]: nextTransformIndex },
+        };
+
+        // Transition engine: the rule may reach outside this object — auto-transform other
+        // objects (even in other rooms), change another room's background, or open a door.
+        let finalState = newState;
+        let effectMsg: string | undefined;
+        if (rule.effects?.length && ctx?.scenesById) {
+          const res = applyEffects(newState, rule.effects, sceneId, ctx.scenesById);
+          finalState = res.state;
+          effectMsg = res.messages.join(' • ') || undefined;
+        }
+
+        return {
+          newState: finalState,
+          success: true,
+          message: [rule.newMessage, effectMsg].filter(Boolean).join(' • ') || 'با موفقیت استفاده شد',
+          transformed: true,
+        };
+      }
+      needsItem = true;
+    }
+  }
+
+  if (!itemId) {
+    // A matching item but unmet conditions → explain what is still missing.
+    const condMsg = obj.transforms
+      ?.map((t, i) =>
+        ((state.transformsApplied ?? {})[objectId] ?? -1) + 1 === i && !checkTransformCondition(t.conditions, state, ctx?.scenesById)
+          ? conditionFailMessage(t.conditions, state, ctx?.scenesById)
+          : ''
+      )
+      .find(Boolean);
+    return {
+      newState: state,
+      success: false,
+      message:
+        condMsg ||
+        (needsItem ? 'برای استفاده از این مورد، آیتم مناسب را از کیف خود انتخاب کنید' : 'این مورد قابل استفاده نیست'),
+    };
+  }
+
+  // Item selected but the next rule's conditions are not met yet → tell the player why.
+  const nextIdx = ((state.transformsApplied ?? {})[objectId] ?? -1) + 1;
+  const nextRule = obj.transforms?.[nextIdx];
+  if (nextRule && !checkTransformCondition(nextRule.conditions, state, ctx?.scenesById)) {
+    return { newState: state, success: false, message: conditionFailMessage(nextRule.conditions, state, ctx?.scenesById) || 'هنوز شرایط لازم فراهم نشده است' };
+  }
+
+  // Fallback: check requiresItem (old behavior for containers)
+  if (!obj.requiresItem || !obj.requiresItem.includes(itemId)) {
+    return { newState: state, success: false, message: 'این آیتم اینجا کار نمی‌کند' };
+  }
+
+  const sceneDiscovered = state.discoveredObjects[sceneId] || [];
+  if (sceneDiscovered.includes(objectId)) {
+    return { newState: state, success: false, message: 'این مورد قبلاً باز شده' };
+  }
+
+  // Remove used item from inventory if oneTimeUse
+  let newInventory = [...state.inventory];
+  if (obj.oneTimeUse) {
+    newInventory = removeOne(newInventory, itemId);
+  }
+
+  const newDiscoveredObjects = {
+    ...state.discoveredObjects,
+    [sceneId]: [...sceneDiscovered, objectId],
+  };
+
+  if (obj.grantsItem && !newInventory.includes(obj.grantsItem)) {
+    newInventory.push(obj.grantsItem);
+  }
+
+  const newState: SessionState = {
+    ...state,
+    discoveredObjects: newDiscoveredObjects,
+    inventory: newInventory,
+  };
+
+  return { newState, success: true, message: obj.message || 'مورد با موفقیت استفاده شد' };
+}
+
+/**
+ * Check if all rooms are complete.
+export function allRoomsComplete(state: SessionState, scenes: Scene[]): boolean {
+  return scenes.every((s) => state.completedScenes.includes(s.id));
+}
+*/
+
+// ============ Doors / Room transitions ============
+
+/** Is the player allowed to walk through this door right now? */
+export function canUseDoor(state: SessionState, obj: SceneObject): boolean {
+  const req = obj.door?.requiresItems ?? [];
+  const openByEffect = (state.openDoors ?? []).includes(obj.id);
+  return openByEffect || req.every((i) => state.inventory.includes(i));
+}
+
+/**
+ * Try to move to another room through a door object. Returns null when the object is not a door.
+ * `rooms` restricts navigation to the project's own scene list.
+ */
+export function tryEnterDoor(
+  state: SessionState,
+  obj: SceneObject,
+  rooms: Scene[]
+): { newState: SessionState; entered: boolean; message?: string } | null {
+  if (!obj.door?.sceneId) return null;
+  const target = rooms.find((s) => s.id === obj.door!.sceneId);
+  if (!target) return { newState: state, entered: false, message: '🚪 این در به اتاق معتبری وصل نیست (در استودیو بررسی کنید)' };
+  if (!canUseDoor(state, obj)) {
+    return { newState: state, entered: false, message: obj.door.lockedMessage || '🔒 این در قفل است — کلیدش را پیدا کنید!' };
+  }
+  let s = state;
+  const msgs: string[] = [];
+  if (obj.door.onEnterEffects?.length) {
+    const scenesById = Object.fromEntries(rooms.map((r) => [r.id, r]));
+    const res = applyEffects(s, obj.door.onEnterEffects, target.id, scenesById);
+    s = res.state;
+    msgs.push(...res.messages);
+  }
+  return {
+    newState: { ...s, currentSceneId: target.id },
+    entered: true,
+    message: [`🚪 وارد شدید: ${target.title}`, ...msgs].join(' • '),
+  };
+}
+export function allRoomsComplete(state: SessionState, scenes: Scene[]): boolean {
+  return scenes.every((s) => state.completedScenes.includes(s.id));
+}
+
+export function validateFinalLock(
+  state: SessionState,
+  scenes: Scene[],
+  enteredDigits: string
+): { valid: boolean; message: string } {
+  const expected = scenes.map((s) => s.exitNumber.toString()).join('');
+  if (enteredDigits === expected) return { valid: true, message: 'تبریک! شما موفق شدید!' };
+  return { valid: false, message: 'رمز اشتباه است. دوباره تلاش کنید.' };
+}

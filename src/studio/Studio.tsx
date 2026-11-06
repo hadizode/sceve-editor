@@ -1,1606 +1,465 @@
-import React, { useState, useRef } from 'react';
-import { Stage, Layer, Image as KImage, Rect, Text, Transformer, Group, Line, Circle, Shape } from 'react-konva';
-import useImage from 'use-image';
-import { useStudioStore } from '../stores/studio';
-import type { SceneObject, ObjectType, View, Asset } from '../shared/types';
-import { getObjectCorners, getRotatedBounds, createObjectHitFunc } from '../shared/geometry';
-import { validateScene } from '../shared/types';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useCtx, useCurrentProject, useScene, useStudioStore } from '../stores/store';
+import Canvas from './Canvas';
+import Preview from './Preview';
+import ProjectsView from './ProjectsView';
+import { PropertiesPanel } from './Properties';
+import { ViewTab } from './ViewTab';
+import { TransitionsTab } from './Transitions';
+import {
+  AssetsPanel,
+  BackgroundPanel,
+  ChainPanel,
+  ChecksPanel,
+  LayersPanel,
+  RoomProps,
+  RoomsPanel,
+  useIssues,
+} from './Panels';
+import { btnPrimary, Group, IconBtn, isTyping, NumInput } from './ui';
+import { DockTabs, PanelHead, Splitter, usePersistedNumber } from './dock';
+import { buildCommands, type BottomTab } from './commands';
+import { CommandPalette, MenuBar } from './MenuBar';
 
-// ============ Konva Image Component ============
-function KonvaImage({ obj, isSelected, onSelect, onDragEnd, onChange }: {
-  obj: SceneObject;
-  isSelected: boolean;
-  onSelect: (id: string, multi: boolean) => void;
-  onDragEnd: (id: string, x: number, y: number) => void;
-  onChange: (id: string, updates: Partial<SceneObject>) => void;
-}) {
-  const spriteFrames = obj.sprite?.frames;
-  const [spriteFrame, setSpriteFrame] = React.useState(obj.sprite?.startFrame ?? 0);
-  React.useEffect(() => {
-    if (!spriteFrames || spriteFrames.length < 2 || !obj.sprite) return;
-    let current = Math.min(obj.sprite.startFrame ?? 0, spriteFrames.length - 1);
-    setSpriteFrame(current);
-    const interval = setInterval(() => {
-      current += 1;
-      if (current >= spriteFrames.length) {
-        if (obj.sprite!.loop) current = 0;
-        else { clearInterval(interval); return; }
-      }
-      setSpriteFrame(current);
-    }, 1000 / Math.max(1, obj.sprite.fps));
-    return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [spriteFrames?.join('|'), obj.sprite?.fps, obj.sprite?.loop]);
+const st = () => useStudioStore.getState();
 
-  const displayUrl = spriteFrames && spriteFrames.length > 0
-    ? spriteFrames[Math.min(spriteFrame, spriteFrames.length - 1)]
-    : obj.imageUrl;
-  const [image] = useImage(displayUrl);
-  const shapeRef = useRef<any>(null);
-  const trRef = useRef<any>(null);
+type Center = 'scene' | 'game';
+type Inspector = 'object' | 'view' | 'transitions' | 'room';
 
-  React.useEffect(() => {
-    if (isSelected && trRef.current && shapeRef.current) {
-      trRef.current.nodes([shapeRef.current]);
-      trRef.current.getLayer().batchDraw();
-    }
-  }, [isSelected]);
+const DEFAULTS = { left: 240, right: 320, bottom: 230 };
 
-  if (!obj.visible) return null;
+function exportJson() {
+  const s = st();
+  const json = s.exportBundle();
+  if (!json) return;
+
+  const name = s.projects.find((p) => p.id === s.currentProjectId)?.name || 'project';
+  const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${name}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Shows autosave progress (events are dispatched by shared/idb.ts). */
+function SaveState() {
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const on = () => setSaving(true);
+    const off = () => setSaving(false);
+
+    window.addEventListener('studio-saving', on);
+    window.addEventListener('studio-saved', off);
+
+    return () => {
+      window.removeEventListener('studio-saving', on);
+      window.removeEventListener('studio-saved', off);
+    };
+  }, []);
 
   return (
-    <Group>
-      <KImage
-        ref={shapeRef}
-        image={image}
-        x={obj.x}
-        y={obj.y}
-        width={obj.sprite?.frameWidth ?? obj.width}
-        height={obj.sprite?.frameHeight ?? obj.height}
-        rotation={obj.rotation}
-        hitFunc={createObjectHitFunc(obj.sprite?.frameWidth ?? obj.width, obj.sprite?.frameHeight ?? obj.height)}
-        draggable
-        onClick={(e) => onSelect(obj.id, e.evt.shiftKey)}
-        onTap={() => onSelect(obj.id, false)}
-        onDragEnd={(e) => onDragEnd(obj.id, e.target.x(), e.target.y())}
-        onTransformEnd={() => {
-          const node = shapeRef.current;
-          if (!node) return;
-          onChange(obj.id, {
-            x: node.x(),
-            y: node.y(),
-            width: node.width() * node.scaleX(),
-            height: node.height() * node.scaleY(),
-            rotation: node.rotation(),
-          });
-          node.scaleX(1);
-          node.scaleY(1);
-        }}
-      />
-      {isSelected && (
-        <Transformer
-          ref={trRef}
-          rotateEnabled
-          enabledAnchors={['top-left', 'top-right', 'bottom-left', 'bottom-right']}
-          borderStroke="#6366f1"
-          anchorStroke="#6366f1"
-          anchorFill="#6366f1"
-        />
-      )}
-      {/* Selection frame: polygon that follows the object's rotation */}
-      {isSelected && (
-        <Shape
-          sceneFunc={(ctx: any) => {
-            const corners = getObjectCorners({
-              x: obj.x - 3,
-              y: obj.y - 3,
-              width: (obj.sprite?.frameWidth ?? obj.width) + 6,
-              height: (obj.sprite?.frameHeight ?? obj.height) + 6,
-              rotation: obj.rotation,
-            });
-            ctx.beginPath();
-            ctx.moveTo(corners[0].x, corners[0].y);
-            for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y);
-            ctx.closePath();
-            ctx.strokePath();
-          }}
-          stroke="#6366f1"
-          strokeWidth={1.5}
-          listening={false}
-        />
-      )}
-      {/* Hit-area preview: shows the custom polygonal click region when defined */}
-      {obj.hitArea && obj.hitArea.length >= 6 && (
-        <Group x={obj.x} y={obj.y} rotation={obj.rotation} listening={false}>
-          <Shape
-            sceneFunc={(ctx: any) => {
-              const pts = obj.hitArea!;
-              ctx.beginPath();
-              ctx.moveTo(pts[0], pts[1]);
-              for (let i = 2; i + 1 < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]);
-              ctx.closePath();
-              ctx.fillStrokeShape(ctx);
-            }}
-            stroke="#10b981"
-            strokeWidth={1}
-            dash={[4, 3]}
-            fill="rgba(16,185,129,0.12)"
-            listening={false}
-          />
-        </Group>
-      )}
-      {/* Object type indicator (placed at the rotated bounding box top) */}
-      {(() => {
-        const b = getRotatedBounds({
-          x: obj.x,
-          y: obj.y,
-          width: obj.sprite?.frameWidth ?? obj.width,
-          height: obj.sprite?.frameHeight ?? obj.height,
-          rotation: obj.rotation,
-        });
-        return (
-          <>
-            <Rect
-              x={b.minX}
-              y={b.minY - 18}
-              width={b.maxX - b.minX}
-              height={16}
-              fill={getTypeColor(obj.type)}
-              opacity={0.8}
-              cornerRadius={4}
-              listening={false}
-            />
-            <Text
-              x={b.minX}
-              y={b.minY - 18}
-              width={b.maxX - b.minX}
-              text={obj.name}
-              fontSize={10}
-              fill="white"
-              align="center"
-              listening={false}
-            />
-            {/* View indicator */}
-            {obj.view && (
-              <Rect
-                x={b.maxX - 16}
-                y={b.maxY - 16}
-                width={14}
-                height={14}
-                fill="#6366f1"
-                cornerRadius={3}
-                listening={false}
-              />
-            )}
-          </>
-        );
-      })()}
-    </Group>
+    <span className={saving ? 'text-amber-300' : 'text-emerald-400'}>
+      {saving ? '● Saving…' : '✓ Saved'}
+    </span>
   );
 }
 
-function getTypeColor(type: ObjectType): string {
-  switch (type) {
-    case 'decoration': return '#6b7280';
-    case 'inventory': return '#10b981';
-    case 'container': return '#8b5cf6';
-    default: return '#6b7280';
-  }
-}
+function Editor() {
+  const project = useCurrentProject();
+  const ctx = useCtx();
+  const scene = useScene();
+  const selected = useStudioStore((s) => s.selectedObjectIds);
+  const viewOf = useStudioStore((s) => s.editingViewOf);
+  const showGrid = useStudioStore((s) => s.showGrid);
+  const snap = useStudioStore((s) => s.snapToGrid);
+  const labels = useStudioStore((s) => s.showLabels);
+  const gridSize = useStudioStore((s) => s.gridSize);
+  const canUndo = useStudioStore((s) => s.past.length > 0);
+  const canRedo = useStudioStore((s) => s.future.length > 0);
+  const issues = useIssues();
+  const errors = issues.filter((i) => i.level === 'error').length;
+  const warnings = issues.length - errors;
 
-// ============ Properties Panel ============
-function PropertiesPanel() {
-  const { scenes, currentSceneId, selectedObjectIds, updateObject } = useStudioStore();
-  const scene = currentSceneId ? scenes[currentSceneId] : null;
-  const obj = scene?.objects.find(o => o.id === selectedObjectIds[0]);
-  const imageInputRef = useRef<HTMLInputElement>(null);
+  const [center, setCenter] = useState<Center>('scene');
+  const [inspector, setInspector] = useState<Inspector>('object');
+  const [bottomTab, setBottomTab] = useState<BottomTab>('assets');
+  const [left, setLeft] = usePersistedNumber('studio.left', DEFAULTS.left, 160, 420);
+  const [right, setRight] = usePersistedNumber('studio.right', DEFAULTS.right, 240, 560);
+  const [bottom, setBottom] = usePersistedNumber('studio.bottom', DEFAULTS.bottom, 120, 520);
+  const [bottomOpen, setBottomOpen] = usePersistedNumber('studio.bottomOpen', 1, 0, 1);
+  const [palette, setPalette] = useState(false);
+  const [dragging, setDragging] = useState(false);
 
-  if (!obj) {
-    return (
-      <div className="p-4 text-gray-400 text-sm">
-        <p>Select an object to edit its properties</p>
-      </div>
-    );
-  }
+  const cmds = useMemo(
+    () =>
+      buildCommands({
+        exportJson,
+        setCenter,
+        openBottom: (t) => {
+          setBottomTab(t);
+          setBottomOpen(1);
+        },
+        toggleBottom: () => setBottomOpen((o) => (o ? 0 : 1)),
+        resetLayout: () => {
+          setLeft(DEFAULTS.left);
+          setRight(DEFAULTS.right);
+          setBottom(DEFAULTS.bottom);
+          setBottomOpen(1);
+        },
+      }),
+    [setLeft, setRight, setBottom, setBottomOpen]
+  );
 
-  const handleChange = (field: string, value: any) => {
-    updateObject(obj.id, { [field]: value });
-  };
+  // Selecting something while the Room tab is open jumps to the object inspector.
+  useEffect(() => {
+    if (selected.length > 0) setInspector((t) => (t === 'room' ? 'object' : t));
+  }, [selected.join('|')]);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      handleChange('imageUrl', reader.result as string);
+  // Entering an interactive view switches back to the Inspector tab.
+  useEffect(() => { if (viewOf) setInspector('view'); }, [viewOf]);
+
+  // Keyboard shortcuts, ignored while typing in inputs.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      const k = e.key.toLowerCase();
+
+      if (mod && k === 'k') {
+        e.preventDefault();
+        setPalette(true);
+        return;
+      }
+
+      if (center !== 'scene' || isTyping(e)) return;
+
+      const s = st();
+
+      if (mod && k === 'z') {
+        e.preventDefault();
+        e.shiftKey ? s.redo() : s.undo();
+        return;
+      }
+
+      if (mod && k === 'y') {
+        e.preventDefault();
+        s.redo();
+        return;
+      }
+
+      if (mod && k === 'c') {
+        s.copySelected();
+        return;
+      }
+
+      if (mod && k === 'v') {
+        e.preventDefault();
+        s.paste();
+        return;
+      }
+
+      if (mod && k === 'd') {
+        e.preventDefault();
+        s.duplicateSelected();
+        return;
+      }
+
+      if (mod && k === 'a') {
+        e.preventDefault();
+        s.selectAll();
+        return;
+      }
+
+      if ((k === 'delete' || k === 'backspace') && s.selectedObjectIds.length) {
+        e.preventDefault();
+        s.deleteObjects(s.selectedObjectIds);
+        return;
+      }
+
+      if (k === 'escape') {
+        if (s.selectedObjectIds.length) s.clearSelection();
+        else if (s.editingViewOf) s.exitView();
+        return;
+      }
+
+      if (k.startsWith('arrow') && s.selectedObjectIds.length) {
+        e.preventDefault();
+        const d = e.shiftKey ? 10 : 1;
+        s.nudge(
+          k === 'arrowleft' ? -d : k === 'arrowright' ? d : 0,
+          k === 'arrowup' ? -d : k === 'arrowdown' ? d : 0
+        );
+      }
     };
-    reader.readAsDataURL(file);
-  };
+
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [center]);
+
+  if (!project) return null;
+
+  const playing = center === 'game';
+
+  const bottomBody =
+    bottomTab === 'assets' ? (
+      <div className="dock-assets">
+        <AssetsPanel />
+      </div>
+    ) : bottomTab === 'chain' ? (
+      <div className="max-w-xl">
+        <ChainPanel />
+      </div>
+    ) : (
+      <ChecksPanel />
+    );
 
   return (
-    <div className="p-3 space-y-3 text-sm overflow-y-auto max-h-[calc(100vh-200px)]">
-      <h3 className="font-bold text-indigo-300 text-base">Object Properties</h3>
-      
-      <div>
-        <label className="block text-gray-400 mb-1">Name</label>
-        <input
-          className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
-          value={obj.name}
-          onChange={e => handleChange('name', e.target.value)}
-        />
-      </div>
+    <div
+      dir="ltr"
+      className={`h-full flex flex-col bg-viewport text-white ${dragging ? 'select-none' : ''}`}
+    >
+      {/* ───────── Title bar: menus · project · transport ───────── */}
+      <header className="h-10 shrink-0 flex items-center gap-3 px-2 bg-dock-head border-b border-black/60">
+        <span className="text-xs font-bold text-indigo-300 px-1 select-none">
+          Escape Studio
+        </span>
 
-      <div>
-        <label className="block text-gray-400 mb-1">Type</label>
-        <select
-          className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
-          value={obj.type}
-          onChange={e => handleChange('type', e.target.value)}
-        >
-          <option value="decoration">Decoration</option>
-          <option value="inventory">Inventory Item</option>
-          <option value="container">Container</option>
-        </select>
-      </div>
+        <MenuBar cmds={cmds} />
 
-      {/* Image Upload */}
-      <div>
-        <label className="block text-gray-400 mb-1">Image</label>
         <input
-          ref={imageInputRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={handleImageUpload}
+          className="flex-1 min-w-0 max-w-sm mx-auto text-center bg-transparent border border-transparent hover:border-white/15 focus:border-primary rounded-md px-2 py-1 text-sm text-gray-100 font-medium outline-none"
+          value={project.name}
+          aria-label="Project name"
+          onChange={(e) => st().updateProject({ name: e.target.value })}
         />
+
+        <Group>
+          <IconBtn
+            title="Undo (Ctrl+Z)"
+            aria-label="Undo"
+            disabled={!canUndo}
+            onClick={() => st().undo()}
+          >
+            ↶
+          </IconBtn>
+          <IconBtn
+            title="Redo (Ctrl+Y)"
+            aria-label="Redo"
+            disabled={!canRedo}
+            onClick={() => st().redo()}
+          >
+            ↷
+          </IconBtn>
+        </Group>
+
         <button
-          className="w-full bg-gray-700 hover:bg-gray-600 text-white px-2 py-1.5 rounded text-xs"
-          onClick={() => imageInputRef.current?.click()}
+          onClick={() => setCenter(playing ? 'scene' : 'game')}
+          className={`inline-flex items-center gap-1.5 h-7 px-3.5 rounded-md text-xs font-semibold text-white ${
+            playing ? 'bg-red-600 hover:bg-red-500' : 'bg-emerald-600 hover:bg-emerald-500'
+          }`}
         >
-          📁 Upload Image
+          {playing ? '■ Stop' : '▶ Play'}
         </button>
-        <div className="mt-2 w-full h-16 bg-gray-800 rounded overflow-hidden flex items-center justify-center">
-          <img src={obj.imageUrl} alt="Preview" className="max-w-full max-h-full object-contain" />
-        </div>
-      </div>
 
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <label className="block text-gray-400 mb-1">X</label>
-          <input type="number" className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
-            value={Math.round(obj.x)} onChange={e => handleChange('x', Number(e.target.value))} />
-        </div>
-        <div>
-          <label className="block text-gray-400 mb-1">Y</label>
-          <input type="number" className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
-            value={Math.round(obj.y)} onChange={e => handleChange('y', Number(e.target.value))} />
-        </div>
-        <div>
-          <label className="block text-gray-400 mb-1">Width</label>
-          <input type="number" className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
-            value={Math.round(obj.width)} onChange={e => handleChange('width', Number(e.target.value))} />
-        </div>
-        <div>
-          <label className="block text-gray-400 mb-1">Height</label>
-          <input type="number" className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
-            value={Math.round(obj.height)} onChange={e => handleChange('height', Number(e.target.value))} />
-        </div>
-      </div>
+        <button
+          onClick={() => setPalette(true)}
+          className="h-7 px-2.5 rounded-md text-[11px] text-gray-400 bg-black/30 border border-white/10 hover:text-white hover:border-white/25"
+          title="Command palette"
+        >
+          Search commands <span className="font-mono ml-1 text-gray-500">Ctrl+K</span>
+        </button>
+      </header>
 
-      {/* Hit Area Section */}
-      <div className="border-t border-gray-700 pt-3 mt-3">
-        <h4 className="font-bold text-green-300 text-sm mb-2">🎯 Hit Area (polygon)</h4>
-        <p className="text-xs text-gray-500 mb-1">
-          Points [x1,y1,x2,y2,...] in local coords (relative to X/Y, before rotation).
-          Empty = full rectangle.
-        </p>
-        <textarea
-          className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white text-xs font-mono"
-          rows={2}
-          value={(obj.hitArea || []).join(', ')}
-          placeholder="e.g. 10,0 60,0 70,40 0,40"
-          onChange={e => {
-            const nums = e.target.value.split(/[\s,]+/).filter(Boolean).map(Number).filter(n => !isNaN(n));
-            handleChange('hitArea', nums.length >= 6 ? nums : undefined);
-          }}
-        />
-        {obj.hitArea && obj.hitArea.length >= 6 && (
-          <button
-            className="mt-1 bg-gray-700 hover:bg-gray-600 text-white px-2 py-0.5 rounded text-xs"
-            onClick={() => handleChange('hitArea', undefined)}
-          >
-            Reset to rectangle
-          </button>
-        )}
-      </div>
+      <div className="flex-1 flex min-h-0">
+        {/* ───────── Left dock: Hierarchy ───────── */}
+        <aside style={{ width: left }} className="shrink-0 flex flex-col min-h-0 bg-surface">
+          <PanelHead
+            title="Hierarchy"
+            right={
+              <button
+                title="Add sprite"
+                aria-label="Add sprite"
+                onClick={() => st().addObject()}
+                className="text-base leading-none text-gray-300 hover:text-white"
+              >
+                ＋
+              </button>
+            }
+          />
 
-      {/* Sprite Frames Section */}
-      <div className="border-t border-gray-700 pt-3 mt-3">
-        <h4 className="font-bold text-cyan-300 text-sm mb-2">✨ Sprite Frames (animation)</h4>
-        {obj.sprite ? (
-          <div className="space-y-2">
-            <div>
-              <label className="text-gray-500 text-xs">Frame URLs (one per line)</label>
-              <textarea
-                className="w-full bg-gray-800 border border-gray-600 rounded px-1 py-0.5 text-white text-xs font-mono"
-                rows={3}
-                value={obj.sprite.frames.join('\n')}
-                onChange={e => {
-                  const frames = e.target.value.split('\n').map(f => f.trim()).filter(Boolean);
-                  handleChange('sprite', { ...obj.sprite!, frames });
-                }}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-gray-500 text-xs">FPS</label>
-                <input
-                  type="number" min={1}
-                  className="w-full bg-gray-800 border border-gray-600 rounded px-1 py-0.5 text-white text-xs"
-                  value={obj.sprite.fps}
-                  onChange={e => handleChange('sprite', { ...obj.sprite!, fps: Math.max(1, Number(e.target.value) || 1) })}
-                />
-              </div>
-              <label className="flex items-center gap-1 text-gray-400 text-xs mt-4">
-                <input
-                  type="checkbox"
-                  checked={obj.sprite.loop}
-                  onChange={e => handleChange('sprite', { ...obj.sprite!, loop: e.target.checked })}
-                />
-                Loop
-              </label>
-            </div>
-            <div className="flex flex-wrap gap-1">
-              {obj.sprite.frames.map((f, i) => (
-                <img key={i} src={f} alt={`frame ${i + 1}`} className="w-10 h-10 object-contain bg-gray-800 rounded border border-gray-600" title={`Frame ${i + 1}`} />
-              ))}
-            </div>
-            <button
-              className="w-full bg-red-700 hover:bg-red-600 text-white px-2 py-1 rounded text-xs"
-              onClick={() => handleChange('sprite', undefined)}
-            >
-              Remove Sprite
-            </button>
+          <div className="flex-1 overflow-y-auto min-h-0">
+            {!ctx?.view && <RoomsPanel />}
+            <LayersPanel />
           </div>
-        ) : (
-          <button
-            className="w-full bg-cyan-700 hover:bg-cyan-600 text-white px-2 py-1.5 rounded text-xs"
-            onClick={() => {
-              const fileInput = document.createElement('input');
-              fileInput.type = 'file';
-              fileInput.accept = 'image/*';
-              fileInput.multiple = true;
-              fileInput.onchange = () => {
-                const files = Array.from(fileInput.files || []);
-                if (files.length === 0) return;
-                Promise.all(files.map(f => new Promise<string>(res => {
-                  const r = new FileReader();
-                  r.onload = () => res(r.result as string);
-                  r.readAsDataURL(f);
-                }))).then(urls => {
-                  handleChange('sprite', { frames: urls, fps: 8, loop: true });
-                });
-              };
-              fileInput.click();
-            }}
-          >
-            + Add Sprite Frames (upload images)
-          </button>
-        )}
-      </div>
+        </aside>
 
-      <div>
-        <label className="block text-gray-400 mb-1">Rotation (deg)</label>
-        <input type="number" className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
-          value={Math.round(obj.rotation)} onChange={e => handleChange('rotation', Number(e.target.value))} />
-      </div>
+        <Splitter axis="x" onDelta={(d) => setLeft((w) => w + d)} onDragging={setDragging} />
 
-      <div>
-        <label className="block text-gray-400 mb-1">Message (shown on click)</label>
-        <textarea className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white" dir="rtl" lang="fa"
-          value={obj.message || ''} onChange={e => handleChange('message', e.target.value)} rows={2} />
-      </div>
+        {/* ───────── Center: viewport + bottom dock ───────── */}
+        <div className="flex-1 min-w-0 flex flex-col">
+          <section className="flex-1 min-h-0 flex flex-col bg-surface">
+            <DockTabs<Center>
+              tabs={[
+                { id: 'scene', label: 'Scene' },
+                { id: 'game', label: 'Game' },
+              ]}
+              value={center}
+              onChange={setCenter}
+              right={
+                center === 'scene' ? (
+                  <div className="flex items-center gap-1 pr-1">
+                    <Group>
+                      <IconBtn active={showGrid} onClick={() => st().toggleGrid()}>
+                        Grid
+                      </IconBtn>
+                      <div className="w-12 px-0.5">
+                        <NumInput value={gridSize} min={5} onChange={(n) => st().setGridSize(n)} />
+                      </div>
+                      <IconBtn active={snap} onClick={() => st().toggleSnap()}>
+                        Snap
+                      </IconBtn>
+                      <IconBtn active={labels} onClick={() => st().toggleLabels()}>
+                        Labels
+                      </IconBtn>
+                    </Group>
 
-      <div>
-        <label className="block text-gray-400 mb-1">Digit (0-9, optional)</label>
-        <input type="number" min={0} max={9} className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
-          value={obj.digit ?? ''} onChange={e => handleChange('digit', e.target.value ? Number(e.target.value) : undefined)} />
-      </div>
-
-      <div className="flex items-center gap-4">
-        <label className="flex items-center gap-2">
-          <input type="checkbox" checked={obj.visible} onChange={e => handleChange('visible', e.target.checked)} />
-          <span className="text-gray-300">Visible</span>
-        </label>
-        <label className="flex items-center gap-2">
-          <input type="checkbox" checked={obj.oneTimeUse} onChange={e => handleChange('oneTimeUse', e.target.checked)} />
-          <span className="text-gray-300">One-time use</span>
-        </label>
-      </div>
-
-      <div>
-        <label className="block text-gray-400 mb-1">Requires Items (comma-separated IDs)</label>
-        <input className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
-          value={obj.requiresItem?.join(', ') || ''}
-          onChange={e => handleChange('requiresItem', e.target.value ? e.target.value.split(',').map(s => s.trim()) : undefined)} />
-      </div>
-
-      <div>
-        <label className="block text-gray-400 mb-1">Grants Item (ID)</label>
-        <input className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white"
-          value={obj.grantsItem || ''}
-          onChange={e => handleChange('grantsItem', e.target.value || undefined)} />
-      </div>
-
-      {/* Pickup / Inventory Section */}
-      <div className="border-t border-gray-700 pt-3 mt-3">
-        <h4 className="font-bold text-green-300 text-sm mb-2">🎒 Inventory / Pickup</h4>
-        <div className="space-y-2">
-          <label className="flex items-center gap-2">
-            <input 
-              type="checkbox" 
-              checked={obj.pickupable || false} 
-              onChange={e => handleChange('pickupable', e.target.checked)} 
+                    <button className={`${btnPrimary} !h-7`} onClick={() => st().addObject()}>
+                      ＋ Sprite
+                    </button>
+                  </div>
+                ) : undefined
+              }
             />
-            <span className="text-gray-300">Pickupable (can be added to inventory)</span>
-          </label>
-          
-          {obj.pickupable && (
+
+            <div className="relative flex-1 min-h-0 flex flex-col bg-viewport">
+              {center === 'scene' ? (
+                <div className="absolute inset-0">
+                  <Canvas />
+                </div>
+              ) : (
+                <Preview />
+              )}
+            </div>
+          </section>
+
+          {bottomOpen === 1 && (
             <>
-              <div>
-                <label className="block text-gray-400 mb-1 text-xs">Pickup Item ID</label>
-                <input 
-                  className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white text-xs"
-                  value={obj.pickupItemId || ''}
-                  placeholder="e.g., wire-cutter"
-                  onChange={e => handleChange('pickupItemId', e.target.value || undefined)} 
+              <Splitter
+                axis="y"
+                onDelta={(d) => setBottom((h) => h - d)}
+                onDragging={setDragging}
+              />
+
+              <section style={{ height: bottom }} className="shrink-0 flex flex-col min-h-0 bg-surface">
+                <DockTabs<BottomTab>
+                  tabs={[
+                    { id: 'assets', label: 'Assets' },
+                    { id: 'chain', label: 'Clue Chain' },
+                    { id: 'checks', label: 'Checks', badge: errors },
+                  ]}
+                  value={bottomTab}
+                  onChange={setBottomTab}
+                  right={
+                    <button
+                      title="Hide panel"
+                      aria-label="Hide panel"
+                      onClick={() => setBottomOpen(0)}
+                      className="px-2 text-gray-400 hover:text-white"
+                    >
+                      ▾
+                    </button>
+                  }
                 />
-              </div>
-              <div>
-                <label className="block text-gray-400 mb-1 text-xs">Pickup Message (Persian)</label>
-                <textarea 
-                  className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white text-xs"
-                  dir="rtl" lang="fa"
-                  value={obj.pickupMessage || ''}
-                  placeholder="پیام هنگام برداشتن..."
-                  onChange={e => handleChange('pickupMessage', e.target.value || undefined)} 
-                  rows={2}
-                />
-              </div>
+
+                <div className="flex-1 overflow-y-auto min-h-0">{bottomBody}</div>
+              </section>
             </>
           )}
         </div>
-      </div>
 
-      {/* Transforms Section */}
-      <div className="border-t border-gray-700 pt-3 mt-3">
-        <h4 className="font-bold text-purple-300 text-sm mb-2">🔄 Transforms</h4>
-        <p className="text-xs text-gray-500 mb-2">Rules for when items are used on this object</p>
-        
-        {obj.transforms && obj.transforms.length > 0 ? (
-          <div className="space-y-2">
-            {obj.transforms.map((rule, i) => (
-              <div key={i} className="bg-surface-light rounded p-2 text-xs space-y-1">
-                <div className="flex justify-between items-center">
-                  <span className="text-purple-300">Transform {i + 1}</span>
-                  <button 
-                    className="text-red-400 hover:text-red-300"
-                    onClick={() => {
-                      const newTransforms = [...(obj.transforms || [])];
-                      newTransforms.splice(i, 1);
-                      handleChange('transforms', newTransforms.length > 0 ? newTransforms : undefined);
-                    }}
-                  >
-                    ✕
-                  </button>
-                </div>
-                <div>
-                  <label className="text-gray-500">Requires Item:</label>
-                  <input 
-                    className="w-full bg-gray-800 border border-gray-600 rounded px-1 py-0.5 text-white"
-                    value={rule.requiresItem}
-                    onChange={e => {
-                      const newTransforms = [...(obj.transforms || [])];
-                      newTransforms[i] = { ...newTransforms[i], requiresItem: e.target.value };
-                      handleChange('transforms', newTransforms);
-                    }}
-                  />
-                </div>
-                <div>
-                  <label className="text-gray-500">New Message:</label>
-                  <input 
-                    className="w-full bg-gray-800 border border-gray-600 rounded px-1 py-0.5 text-white"
-                    dir="rtl" lang="fa"
-                    value={rule.newMessage || ''}
-                    onChange={e => {
-                      const newTransforms = [...(obj.transforms || [])];
-                      newTransforms[i] = { ...newTransforms[i], newMessage: e.target.value || undefined };
-                      handleChange('transforms', newTransforms);
-                    }}
-                  />
-                </div>
-                <div>
-                  <label className="text-gray-500">Grants Item:</label>
-                  <input 
-                    className="w-full bg-gray-800 border border-gray-600 rounded px-1 py-0.5 text-white"
-                    value={rule.grantsItem || ''}
-                    onChange={e => {
-                      const newTransforms = [...(obj.transforms || [])];
-                      newTransforms[i] = { ...newTransforms[i], grantsItem: e.target.value || undefined };
-                      handleChange('transforms', newTransforms);
-                    }}
-                  />
-                </div>
-                <label className="flex items-center gap-1">
-                  <input 
-                    type="checkbox" 
-                    checked={rule.consumesItem !== false}
-                    onChange={e => {
-                      const newTransforms = [...(obj.transforms || [])];
-                      newTransforms[i] = { ...newTransforms[i], consumesItem: e.target.checked };
-                      handleChange('transforms', newTransforms);
-                    }}
-                  />
-                  <span className="text-gray-400">Consumes item</span>
-                </label>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-xs text-gray-600">No transforms defined</p>
-        )}
-        
-        <button
-          className="w-full bg-purple-700 hover:bg-purple-600 text-white px-2 py-1.5 rounded text-xs mt-2"
-          onClick={() => {
-            const newTransforms = [...(obj.transforms || [])];
-            newTransforms.push({
-              requiresItem: '',
-              newMessage: '',
-              consumesItem: true,
-            });
-            handleChange('transforms', newTransforms);
-          }}
-        >
-          + Add Transform Rule
-        </button>
-      </div>
+        <Splitter axis="x" onDelta={(d) => setRight((w) => w - d)} onDragging={setDragging} />
 
-      {/* View Section */}
-      <div className="border-t border-gray-700 pt-3 mt-3">
-        <h4 className="font-bold text-amber-300 text-sm mb-2">🔍 Interactive View</h4>
-        {obj.view ? (
-          <div className="space-y-2">
-            <p className="text-xs text-green-400">✓ View is configured</p>
-            <p className="text-xs text-gray-400">Title: {obj.view.title}</p>
-            <p className="text-xs text-gray-400">Objects: {obj.view.objects.length}</p>
-            <button
-              className="w-full bg-red-700 hover:bg-red-600 text-white px-2 py-1 rounded text-xs"
-              onClick={() => handleChange('view', undefined)}
-            >
-              Remove View
-            </button>
-          </div>
-        ) : (
-          <button
-            className="w-full bg-amber-700 hover:bg-amber-600 text-white px-2 py-1.5 rounded text-xs"
-            onClick={() => {
-              const newView: View = {
-                id: `view-${Date.now()}`,
-                title: obj.name + ' - Close-up',
-                backgroundUrl: obj.imageUrl,
-                width: 400,
-                height: 400,
-                objects: [],
-              };
-              handleChange('view', newView);
-            }}
-          >
-            + Add Interactive View
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ============ Assets Panel ============
-function AssetsPanel() {
-  const { assets, uploadAssets, removeAsset } = useStudioStore();
-  const folderInputRef = useRef<HTMLInputElement>(null);
-  const filesInputRef = useRef<HTMLInputElement>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-
-  const allAssets = Object.values(assets);
-  const filteredAssets = searchTerm
-    ? allAssets.filter(a => a.name.toLowerCase().includes(searchTerm.toLowerCase()))
-    : allAssets;
-
-  const handleFolderUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      uploadAssets(e.target.files);
-    }
-  };
-
-  const handleFilesUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      uploadAssets(e.target.files);
-    }
-  };
-
-  return (
-    <div className="p-3 border-t border-gray-700">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="font-bold text-cyan-300 text-sm">📁 Assets</h3>
-        <span className="text-xs text-gray-500">{allAssets.length}</span>
-      </div>
-
-      {/* Upload buttons */}
-      <div className="flex gap-1 mb-2">
-        <button
-          className="flex-1 bg-cyan-700 hover:bg-cyan-600 text-white px-2 py-1 rounded text-xs"
-          onClick={() => folderInputRef.current?.click()}
-          title="Upload entire folder"
-        >
-          📂 Folder
-        </button>
-        <button
-          className="flex-1 bg-cyan-700 hover:bg-cyan-600 text-white px-2 py-1 rounded text-xs"
-          onClick={() => filesInputRef.current?.click()}
-          title="Upload files"
-        >
-          📄 Files
-        </button>
-      </div>
-
-      {/* Hidden file inputs */}
-      <input
-        ref={folderInputRef}
-        type="file"
-        accept="image/*"
-        multiple
-        // @ts-ignore - webkitdirectory is not in TypeScript types
-        webkitdirectory=""
-        // @ts-ignore
-        directory=""
-        className="hidden"
-        onChange={handleFolderUpload}
-      />
-      <input
-        ref={filesInputRef}
-        type="file"
-        accept="image/*"
-        multiple
-        className="hidden"
-        onChange={handleFilesUpload}
-      />
-
-      {/* Search */}
-      {allAssets.length > 5 && (
-        <input
-          type="text"
-          placeholder="Search..."
-          value={searchTerm}
-          onChange={e => setSearchTerm(e.target.value)}
-          className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-xs text-white mb-2"
-        />
-      )}
-
-      {/* Assets grid */}
-      <div className="grid grid-cols-3 gap-1 max-h-40 overflow-y-auto">
-        {filteredAssets.map(asset => (
-          <div key={asset.id} className="aspect-square bg-gray-800 rounded overflow-hidden relative group">
-            <img src={asset.url} alt={asset.name} className="w-full h-full object-cover" />
-            <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-1">
-              <span className="text-xs text-white text-center truncate w-full px-1">{asset.name}</span>
-              <button
-                className="mt-1 bg-red-600 hover:bg-red-500 text-white px-2 py-0.5 rounded text-xs"
-                onClick={() => {
-                  if (confirm(`Delete "${asset.name}"?`)) {
-                    removeAsset(asset.id);
-                  }
-                }}
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {allAssets.length === 0 && (
-        <p className="text-xs text-gray-500 text-center py-2">
-          No assets yet. Upload a folder or files.
-        </p>
-      )}
-    </div>
-  );
-}
-
-// ============ Layers Panel ============
-function LayersPanel() {
-  const { scenes, currentSceneId, selectedObjectIds, selectObject } = useStudioStore();
-  const scene = currentSceneId ? scenes[currentSceneId] : null;
-  if (!scene) return null;
-
-  // Sort by layerIndex first, then zIndex
-  const sorted = [...scene.objects].sort((a, b) => {
-    if (a.layerIndex !== b.layerIndex) return b.layerIndex - a.layerIndex;
-    return b.zIndex - a.zIndex;
-  });
-
-  return (
-    <div className="p-3">
-      <h3 className="font-bold text-indigo-300 mb-2">Layers</h3>
-      <div className="space-y-1 max-h-48 overflow-y-auto">
-        {sorted.map(obj => (
-          <div
-            key={obj.id}
-            className={`flex items-center gap-2 px-2 py-1 rounded cursor-pointer text-sm ${
-              selectedObjectIds.includes(obj.id) ? 'bg-indigo-600/30 border border-indigo-500' : 'hover:bg-gray-700'
-            }`}
-            onClick={() => selectObject(obj.id)}
-          >
-            <div className="w-3 h-3 rounded" style={{ background: getTypeColor(obj.type) }} />
-            <span className="truncate flex-1">{obj.name}</span>
-            <span className="text-gray-500 text-xs">L{obj.layerIndex}</span>
-            {obj.digit !== undefined && <span className="text-amber-400 text-xs">{obj.digit}</span>}
-            {obj.view && <span className="text-purple-400 text-xs">🔍</span>}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ============ Clue Chain Panel ============
-function ClueChainPanel() {
-  const { scenes, currentSceneId, updateScene } = useStudioStore();
-  const scene = currentSceneId ? scenes[currentSceneId] : null;
-  if (!scene) return null;
-
-  const errors = validateScene(scene);
-  const chainObjects = scene.clueChain.map(id => scene.objects.find(o => o.id === id)).filter(Boolean);
-
-  const addToChain = (objId: string) => {
-    if (!scene.clueChain.includes(objId)) {
-      updateScene({ ...scene, clueChain: [...scene.clueChain, objId] });
-    }
-  };
-
-  const removeFromChain = (index: number) => {
-    const newChain = [...scene.clueChain];
-    newChain.splice(index, 1);
-    updateScene({ ...scene, clueChain: newChain });
-  };
-
-  const moveInChain = (index: number, dir: -1 | 1) => {
-    const newChain = [...scene.clueChain];
-    const newIndex = index + dir;
-    if (newIndex < 0 || newIndex >= newChain.length) return;
-    [newChain[index], newChain[newIndex]] = [newChain[newIndex], newChain[index]];
-    updateScene({ ...scene, clueChain: newChain });
-  };
-
-  return (
-    <div className="p-3 border-t border-gray-700">
-      <h3 className="font-bold text-indigo-300 mb-2">Clue Chain</h3>
-      {errors.length > 0 && (
-        <div className="mb-2 p-2 bg-red-900/30 border border-red-700 rounded text-xs text-red-300">
-          {errors.map((e, i) => <div key={i}>⚠️ {e}</div>)}
-        </div>
-      )}
-      <div className="space-y-1 mb-2">
-        {chainObjects.map((obj, i) => (
-          <div key={obj!.id} className="flex items-center gap-1 text-sm">
-            <span className="text-gray-500 w-5">{i + 1}.</span>
-            <div className="w-2 h-2 rounded" style={{ background: getTypeColor(obj!.type) }} />
-            <span className="flex-1 truncate">{obj!.name}</span>
-            <button onClick={() => moveInChain(i, -1)} className="text-gray-400 hover:text-white px-1" disabled={i === 0}>↑</button>
-            <button onClick={() => moveInChain(i, 1)} className="text-gray-400 hover:text-white px-1" disabled={i === chainObjects.length - 1}>↓</button>
-            <button onClick={() => removeFromChain(i)} className="text-red-400 hover:text-red-300 px-1">×</button>
-          </div>
-        ))}
-      </div>
-      <select
-        className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white text-sm"
-        onChange={e => { if (e.target.value) addToChain(e.target.value); e.target.value = ''; }}
-        defaultValue=""
-      >
-        <option value="">+ Add to chain...</option>
-        {scene.objects.filter(o => !scene.clueChain.includes(o.id)).map(o => (
-          <option key={o.id} value={o.id}>{o.name} ({o.type})</option>
-        ))}
-      </select>
-    </div>
-  );
-}
-
-// ============ Validation Panel ============
-function ValidationPanel() {
-  const { scenes, currentProjectId, projects } = useStudioStore();
-  const project = projects.find(p => p.id === currentProjectId);
-  if (!project) return null;
-
-  const projectScenes = project.scenes.map(sid => scenes[sid]).filter(Boolean);
-  const errors: string[] = [];
-  const warnings: string[] = [];
-
-  if (project.scenes.length === 0) {
-    errors.push('Project must have at least one room');
-  }
-  if (project.finalLockDigits.length !== project.scenes.length && project.scenes.length > 0) {
-    errors.push(`Final lock digits (${project.finalLockDigits.length}) must match number of rooms (${project.scenes.length})`);
-  }
-
-  for (const scene of projectScenes) {
-    const sceneErrors = validateScene(scene);
-    errors.push(...sceneErrors.map(e => `[${scene.title}]: ${e}`));
-    
-    if (scene.clueChain.length === 0 && scene.objects.length > 0) {
-      warnings.push(`[${scene.title}]: No clue chain defined`);
-    }
-    if (scene.objects.filter(o => o.digit !== undefined).length === 0) {
-      errors.push(`[${scene.title}]: No objects with digits found`);
-    }
-  }
-
-  if (errors.length === 0 && warnings.length === 0) {
-    return (
-      <div className="p-3 border-t border-gray-700">
-        <h3 className="font-bold text-green-400 text-sm mb-1">✓ Validation</h3>
-        <p className="text-xs text-gray-400">All checks passed</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="p-3 border-t border-gray-700">
-      <h3 className="font-bold text-amber-300 text-sm mb-2">⚠️ Validation</h3>
-      <div className="space-y-1 max-h-32 overflow-y-auto">
-        {errors.map((e, i) => (
-          <div key={`e${i}`} className="text-xs text-red-400 flex items-start gap-1">
-            <span>❌</span><span>{e}</span>
-          </div>
-        ))}
-        {warnings.map((w, i) => (
-          <div key={`w${i}`} className="text-xs text-amber-400 flex items-start gap-1">
-            <span>⚠️</span><span>{w}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ============ Preview Mode ============
-function PreviewMode() {
-  const { scenes, currentSceneId } = useStudioStore();
-  const scene = currentSceneId ? scenes[currentSceneId] : null;
-  const [previewDiscovered, setPreviewDiscovered] = useState<Set<string>>(new Set());
-  const [previewMessage, setPreviewMessage] = useState<string | null>(null);
-  const [previewInventory, setPreviewInventory] = useState<string[]>([]);
-
-  if (!scene) return <div className="text-center text-gray-400 p-8">No scene to preview</div>;
-
-  const handleClick = (obj: SceneObject) => {
-    if (previewDiscovered.has(obj.id)) {
-      setPreviewMessage('Already discovered');
-      setTimeout(() => setPreviewMessage(null), 2000);
-      return;
-    }
-    setPreviewDiscovered(prev => new Set([...prev, obj.id]));
-    if (obj.message) {
-      setPreviewMessage(obj.message);
-      setTimeout(() => setPreviewMessage(null), 5000);
-    }
-    if (obj.grantsItem && !previewInventory.includes(obj.grantsItem)) {
-      setPreviewInventory(prev => [...prev, obj.grantsItem!]);
-    }
-  };
-
-  return (
-    <div className="h-full flex flex-col bg-gray-900">
-      {previewMessage && (
-        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 animate-fade-in">
-          <div className="bg-indigo-600 text-white px-4 py-3 rounded-xl shadow-xl text-sm" dir="rtl" lang="fa">{previewMessage}</div>
-        </div>
-      )}
-      <div className="flex-1 flex items-center justify-center p-4 overflow-auto">
-        <Stage width={scene.width} height={scene.height} style={{ maxWidth: '100%' }}>
-          <Layer>
-            <BackgroundImage url={scene.backgroundUrl} width={scene.width} height={scene.height} />
-            {scene.objects.sort((a, b) => a.zIndex - b.zIndex).map(obj => {
-              const discovered = previewDiscovered.has(obj.id);
-              if (discovered && obj.oneTimeUse) return null;
-              return (
-                <KonvaImage
-                  key={obj.id}
-                  obj={obj}
-                  isSelected={false}
-                  onSelect={() => handleClick(obj)}
-                  onDragEnd={() => {}}
-                  onChange={() => {}}
-                />
-              );
-            })}
-          </Layer>
-        </Stage>
-      </div>
-      <div className="bg-surface p-3 border-t border-gray-700 text-center text-sm text-gray-400">
-        Preview Mode • {previewDiscovered.size}/{scene.objects.length} objects discovered
-        {previewInventory.length > 0 && <span> • Items: {previewInventory.join(', ')}</span>}
-      </div>
-    </div>
-  );
-}
-
-// ============ Main Studio Component ============
-export default function Studio() {
-  const store = useStudioStore();
-  const {
-    projects, scenes, currentProjectId, currentSceneId, selectedObjectIds,
-    view, zoom, panX, panY, showGrid, gridSize, snapToGrid,
-    selectProject, selectScene, setView, createProject, deleteProject,
-    addScene, updateScene, addObject, updateObject, deleteObject,
-    selectObject, clearSelection, setZoom, setPan, toggleGrid, toggleSnap,
-    duplicateScene, exportProject, importProject, undo, redo, pushUndo,
-  } = store;
-  const [previewMode, setPreviewMode] = useState(false);
-  const [newProjectName, setNewProjectName] = useState('');
-  const [newProjectDesc, setNewProjectDesc] = useState('');
-  const [showImport, setShowImport] = useState(false);
-  const [importJson, setImportJson] = useState('');
-  const [newSceneName, setNewSceneName] = useState('');
-  const [isPanning, setIsPanning] = useState(false);
-  const [spaceHeld, setSpaceHeld] = useState(false);
-  const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
-  const lastPanPos = useRef({ x: 0, y: 0 });
-  const stageRef = useRef<any>(null);
-  const canvasContainerRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Measure container size for Stage
-  React.useEffect(() => {
-    const container = canvasContainerRef.current;
-    if (!container) return;
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        if (width > 0 && height > 0) {
-          setContainerSize({ width, height });
-        }
-      }
-    });
-    ro.observe(container);
-    return () => ro.disconnect();
-  }, [view, previewMode]);
-
-  // Auto-center when scene changes (using setTimeout to avoid ordering issues)
-  React.useEffect(() => {
-    if (currentSceneId && containerSize.width > 0) {
-      const scene = scenes[currentSceneId];
-      if (scene) {
-        const scaleX = containerSize.width / scene.width;
-        const scaleY = containerSize.height / scene.height;
-        const fitScale = Math.min(scaleX, scaleY) * 0.85;
-        const newZoom = Math.max(0.1, Math.min(5, fitScale));
-        const newPanX = (containerSize.width - scene.width * newZoom) / 2;
-        const newPanY = (containerSize.height - scene.height * newZoom) / 2;
-        setZoom(newZoom);
-        setPan(newPanX, newPanY);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSceneId]);
-
-  const currentProject = projects.find(p => p.id === currentProjectId);
-  const currentScene = currentSceneId ? scenes[currentSceneId] : null;
-
-  const handleAddObject = (type: ObjectType) => {
-    const id = `obj-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const newObj: SceneObject = {
-      id,
-      name: `New Object`,
-      type,
-      imageUrl: `image/svg+xml,${encodeURIComponent(
-        `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80">
-          <rect width="100%" height="100%" fill="${getTypeColor(type)}" rx="8"/>
-          <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="white" font-size="12">Object</text>
-        </svg>`
-      )}`,
-      x: 100 + Math.random() * 200,
-      y: 100 + Math.random() * 200,
-      width: 80,
-      height: 80,
-      rotation: 0,
-      zIndex: (currentScene?.objects.length || 0),
-      layerIndex: (currentScene?.objects.length || 0),
-      visible: true,
-      oneTimeUse: false,
-    };
-    pushUndo();
-    addObject(newObj);
-  };
-
-  const handleDragEnd = (id: string, x: number, y: number) => {
-    let finalX = x, finalY = y;
-    if (snapToGrid) {
-      finalX = Math.round(x / gridSize) * gridSize;
-      finalY = Math.round(y / gridSize) * gridSize;
-    }
-    updateObject(id, { x: finalX, y: finalY });
-  };
-
-  const handleBackgroundUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !currentScene) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        updateScene({ ...currentScene, backgroundUrl: reader.result as string, width: img.width, height: img.height });
-      };
-      img.src = reader.result as string;
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleExport = () => {
-    const json = exportProject();
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${currentProject?.name || 'project'}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const handleImport = () => {
-    importProject(importJson);
-    setShowImport(false);
-    setImportJson('');
-  };
-
-  // Keyboard shortcuts
-  React.useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Delete' && selectedObjectIds.length > 0) {
-        pushUndo();
-        selectedObjectIds.forEach(id => deleteObject(id));
-      }
-      if (e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); }
-      if (e.ctrlKey && e.key === 'y') { e.preventDefault(); redo(); }
-      if (e.code === 'Space' && !previewMode) {
-        e.preventDefault();
-        setSpaceHeld(true);
-      }
-    };
-    const upHandler = (e: KeyboardEvent) => {
-      if (e.code === 'Space') setSpaceHeld(false);
-    };
-    window.addEventListener('keydown', handler);
-    window.addEventListener('keyup', upHandler);
-    return () => {
-      window.removeEventListener('keydown', handler);
-      window.removeEventListener('keyup', upHandler);
-    };
-  }, [selectedObjectIds, deleteObject, undo, redo, pushUndo, previewMode]);
-
-  // Canvas wheel zoom handler - zoom to cursor position
-  const handleCanvasWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    const container = canvasContainerRef.current;
-    if (!container) return;
-    
-    const rect = container.getBoundingClientRect();
-    // Mouse position relative to container
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-    
-    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-    const newZoom = Math.max(0.1, Math.min(5, zoom * zoomFactor));
-    
-    // Adjust pan so zoom centers on mouse position
-    // Formula: newPan = mouse - (mouse - oldPan) * (newZoom / oldZoom)
-    const scale = newZoom / zoom;
-    const newPanX = mouseX - (mouseX - panX) * scale;
-    const newPanY = mouseY - (mouseY - panY) * scale;
-    
-    setZoom(newZoom);
-    setPan(newPanX, newPanY);
-  };
-
-  // Canvas pan handlers - unlimited free movement
-  const handleCanvasMouseDown = (e: React.MouseEvent) => {
-    // Middle mouse button or space+left click
-    if (e.button === 1 || (e.button === 0 && spaceHeld)) {
-      e.preventDefault();
-      setIsPanning(true);
-      lastPanPos.current = { x: e.clientX, y: e.clientY };
-    }
-  };
-
-  const handleCanvasMouseMove = (e: React.MouseEvent) => {
-    if (isPanning) {
-      const dx = e.clientX - lastPanPos.current.x;
-      const dy = e.clientY - lastPanPos.current.y;
-      setPan(panX + dx, panY + dy);
-      lastPanPos.current = { x: e.clientX, y: e.clientY };
-    }
-  };
-
-  const handleCanvasMouseUp = () => {
-    setIsPanning(false);
-  };
-
-  // Center view on scene
-  const centerOnScene = () => {
-    const scene = currentSceneId ? scenes[currentSceneId] : null;
-    if (!scene) return;
-    const scaleX = containerSize.width / scene.width;
-    const scaleY = containerSize.height / scene.height;
-    const fitScale = Math.min(scaleX, scaleY) * 0.85;
-    const newZoom = Math.max(0.1, Math.min(5, fitScale));
-    const newPanX = (containerSize.width - scene.width * newZoom) / 2;
-    const newPanY = (containerSize.height - scene.height * newZoom) / 2;
-    setZoom(newZoom);
-    setPan(newPanX, newPanY);
-  };
-
-  // Compute infinite grid lines based on viewport
-  const getGridLines = () => {
-    if (!currentScene || !showGrid) return { vertical: [], horizontal: [] };
-    
-    // Compute visible area in scene coordinates
-    const viewLeft = -panX / zoom;
-    const viewTop = -panY / zoom;
-    const viewRight = (containerSize.width - panX) / zoom;
-    const viewBottom = (containerSize.height - panY) / zoom;
-    
-    // Extend grid beyond scene bounds for infinite feel
-    const gridLeft = Math.floor(Math.min(viewLeft, 0) / gridSize) * gridSize - gridSize;
-    const gridTop = Math.floor(Math.min(viewTop, 0) / gridSize) * gridSize - gridSize;
-    const gridRight = Math.ceil(Math.max(viewRight, currentScene.width) / gridSize) * gridSize + gridSize;
-    const gridBottom = Math.ceil(Math.max(viewBottom, currentScene.height) / gridSize) * gridSize + gridSize;
-    
-    // Limit grid lines to prevent performance issues
-    const maxLines = 200;
-    const vertical: number[] = [];
-    const horizontal: number[] = [];
-    
-    for (let x = gridLeft; x <= gridRight && vertical.length < maxLines; x += gridSize) {
-      vertical.push(x);
-    }
-    for (let y = gridTop; y <= gridBottom && horizontal.length < maxLines; y += gridSize) {
-      horizontal.push(y);
-    }
-    
-    return { vertical, horizontal };
-  };
-
-  // ============ Projects View ============
-  if (view === 'projects') {
-    return (
-      <div className="min-h-screen p-4 md:p-8 animate-fade-in">
-        <div className="max-w-4xl mx-auto">
-          <h1 className="text-2xl md:text-3xl font-bold text-indigo-300 mb-6">🎮 Project Management</h1>
-          
-          {/* Create Project */}
-          <div className="bg-surface rounded-xl p-4 mb-6 border border-gray-700">
-            <h2 className="text-lg font-semibold mb-3">Create New Project</h2>
-            <div className="flex flex-col md:flex-row gap-3">
-              <input
-                className="flex-1 bg-surface-light border border-gray-600 rounded-lg px-3 py-2 text-white"
-                placeholder="Project name"
-                value={newProjectName}
-                onChange={e => setNewProjectName(e.target.value)}
-              />
-              <input
-                className="flex-1 bg-surface-light border border-gray-600 rounded-lg px-3 py-2 text-white"
-                placeholder="Description"
-                value={newProjectDesc}
-                onChange={e => setNewProjectDesc(e.target.value)}
-              />
-              <button
-                className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
-                onClick={() => {
-                  if (newProjectName) {
-                    createProject(newProjectName, newProjectDesc);
-                    setNewProjectName('');
-                    setNewProjectDesc('');
-                  }
-                }}
-              >
-                Create
-              </button>
-            </div>
-          </div>
-
-          {/* Project List */}
-          <div className="space-y-3">
-            {projects.map(project => (
-              <div key={project.id} className="bg-surface rounded-xl p-4 border border-gray-700 hover:border-indigo-500 transition-colors">
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <h3 className="text-lg font-semibold text-white">{project.name}</h3>
-                    <p className="text-gray-400 text-sm mt-1">{project.description}</p>
-                    <p className="text-gray-500 text-xs mt-1">{project.scenes.length} room(s)</p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm transition-colors"
-                      onClick={() => selectProject(project.id)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1.5 rounded-lg text-sm transition-colors"
-                      onClick={() => {
-                        if (confirm('Are you sure you want to delete this project?')) {
-                          deleteProject(project.id);
-                        }
-                      }}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ============ Editor View ============
-  return (
-    <div className="fixed inset-0 flex flex-col overflow-hidden" style={{ height: '100vh' }}>
-      {/* Top Toolbar */}
-      <div className="bg-surface border-b border-gray-700 px-3 py-2 flex items-center gap-2 flex-wrap flex-shrink-0">
-        <button
-          className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1.5 rounded text-sm"
-          onClick={() => setView('projects')}
-        >
-          ← Projects
-        </button>
-        <span className="text-indigo-300 font-semibold text-sm">{currentProject?.name}</span>
-        
-        <div className="flex-1" />
-
-        {/* Scene tabs */}
-        {currentProject?.scenes.map(sid => {
-          const s = scenes[sid];
-          return (
-            <button
-              key={sid}
-              className={`px-3 py-1 rounded text-sm ${sid === currentSceneId ? 'bg-indigo-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
-              onClick={() => selectScene(sid)}
-            >
-              {s?.title || 'Untitled'}
-            </button>
-          );
-        })}
-
-        <button
-          className="bg-green-700 hover:bg-green-600 text-white px-2 py-1 rounded text-sm"
-          onClick={() => {
-            if (newSceneName) {
-              addScene(newSceneName);
-              setNewSceneName('');
-            } else {
-              addScene(`Room ${Date.now() % 1000}`);
-            }
-          }}
-        >
-          + Room
-        </button>
-
-        <div className="h-5 w-px bg-gray-600" />
-
-        {/* Zoom */}
-        <button className="text-gray-300 hover:text-white px-1" onClick={() => setZoom(zoom - 0.1)}>−</button>
-        <span className="text-gray-400 text-xs w-12 text-center">{Math.round(zoom * 100)}%</span>
-        <button className="text-gray-300 hover:text-white px-1" onClick={() => setZoom(zoom + 0.1)}>+</button>
-        <button 
-          className="text-gray-400 hover:text-white px-1 text-xs" 
-          onClick={centerOnScene}
-          title="Fit scene to view"
-        >
-          ⊡
-        </button>
-
-        <div className="h-5 w-px bg-gray-600" />
-
-        {/* Grid */}
-        <button
-          className={`px-2 py-1 rounded text-xs ${showGrid ? 'bg-indigo-600' : 'bg-gray-700'} text-white`}
-          onClick={toggleGrid}
-        >
-          Grid
-        </button>
-        <button
-          className={`px-2 py-1 rounded text-xs ${snapToGrid ? 'bg-indigo-600' : 'bg-gray-700'} text-white`}
-          onClick={toggleSnap}
-        >
-          Snap
-        </button>
-
-        <div className="h-5 w-px bg-gray-600" />
-
-        {/* Undo/Redo */}
-        <button className="text-gray-300 hover:text-white px-1 text-sm" onClick={undo} title="Undo">↶</button>
-        <button className="text-gray-300 hover:text-white px-1 text-sm" onClick={redo} title="Redo">↷</button>
-
-        <div className="h-5 w-px bg-gray-600" />
-
-        {/* Export/Import */}
-        <button className="bg-gray-700 hover:bg-gray-600 text-white px-2 py-1 rounded text-xs" onClick={handleExport}>
-          Export JSON
-        </button>
-        <button className="bg-gray-700 hover:bg-gray-600 text-white px-2 py-1 rounded text-xs" onClick={() => setShowImport(!showImport)}>
-          Import JSON
-        </button>
-        
-        <div className="h-5 w-px bg-gray-600" />
-        
-        <button
-          className={`px-2 py-1 rounded text-xs ${previewMode ? 'bg-amber-600' : 'bg-gray-700 hover:bg-gray-600'} text-white`}
-          onClick={() => setPreviewMode(!previewMode)}
-        >
-          {previewMode ? '✏️ Edit' : '▶️ Preview'}
-        </button>
-      </div>
-
-      {/* Import Modal */}
-      {showImport && (
-        <div className="bg-surface-light border-b border-gray-700 p-3">
-          <textarea
-            className="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white text-sm h-32"
-            placeholder="Paste project JSON here..."
-            value={importJson}
-            onChange={e => setImportJson(e.target.value)}
+        {/* ───────── Right dock: Inspector ───────── */}
+        <aside style={{ width: right }} className="shrink-0 flex flex-col min-h-0 bg-surface">
+          <DockTabs<Inspector>
+            tabs={[
+              { id: 'object', label: 'Inspector' },
+              { id: 'transitions', label: 'Transitions' },
+              { id: 'view', label: 'View' },
+              { id: 'room', label: 'Room' },
+            ]}
+            value={inspector}
+            onChange={setInspector}
           />
-          <div className="flex gap-2 mt-2">
-            <button className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-sm" onClick={handleImport}>
-              Import
-            </button>
-            <button className="bg-gray-700 text-white px-3 py-1 rounded text-sm" onClick={() => setShowImport(false)}>
-              Cancel
-            </button>
+
+          <div className="flex-1 overflow-y-auto min-h-0" role="tabpanel">
+            {inspector === 'object' && <PropertiesPanel />}
+            {inspector === 'view' && <ViewTab />}
+            {inspector === 'transitions' && <TransitionsTab />}
+            {inspector === 'room' && (
+              <>
+                {!ctx?.view && <RoomProps />}
+                <BackgroundPanel />
+              </>
+            )}
           </div>
-        </div>
-      )}
-
-      {/* Main Content */}
-      {previewMode ? (
-        <div className="flex-1 overflow-hidden min-h-0">
-          <PreviewMode />
-        </div>
-      ) : (
-      <div className="flex-1 flex overflow-hidden min-h-0">
-        {/* Left Sidebar - Tools */}
-        <div className="w-48 bg-surface border-l border-gray-700 flex flex-col overflow-y-auto flex-shrink-0">
-          <div className="p-3 border-b border-gray-700">
-            <h3 className="text-xs font-bold text-gray-400 mb-2">Add Object</h3>
-            <div className="grid grid-cols-1 gap-1">
-              {([
-                ['decoration', '🖼️ Decoration'],
-                ['inventory', '🎒 Item'],
-                ['container', '📦 Container'],
-              ] as [ObjectType, string][]).map(([type, label]) => (
-                <button
-                  key={type}
-                  className="bg-gray-700 hover:bg-gray-600 text-white px-1 py-1.5 rounded text-xs transition-colors"
-                  onClick={() => handleAddObject(type)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Background Upload */}
-          <div className="p-3 border-b border-gray-700">
-            <h3 className="text-xs font-bold text-gray-400 mb-2">Background</h3>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={handleBackgroundUpload}
-            />
-            <button
-              className="w-full bg-gray-700 hover:bg-gray-600 text-white px-2 py-1.5 rounded text-xs"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              📁 Upload Image
-            </button>
-          </div>
-
-          {/* Scene Properties */}
-          {currentScene && (
-            <div className="p-3 border-b border-gray-700">
-              <h3 className="text-xs font-bold text-gray-400 mb-2">Room Properties</h3>
-              <div className="space-y-2 text-xs">
-                <div>
-                  <label className="text-gray-400">Title</label>
-                  <input
-                    className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white mt-1"
-                    value={currentScene.title}
-                    onChange={e => updateScene({ ...currentScene, title: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="text-gray-400">Exit Number</label>
-                  <input
-                    type="number" min={0} max={9}
-                    className="w-full bg-surface-light border border-gray-600 rounded px-2 py-1 text-white mt-1"
-                    value={currentScene.exitNumber}
-                    onChange={e => updateScene({ ...currentScene, exitNumber: Number(e.target.value) })}
-                  />
-                </div>
-                <button
-                  className="w-full bg-gray-700 hover:bg-gray-600 text-white px-2 py-1 rounded"
-                  onClick={() => duplicateScene(currentScene.id)}
-                >
-                  📋 Duplicate Room
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Assets */}
-          <AssetsPanel />
-          
-          {/* Layers */}
-          <LayersPanel />
-          
-          {/* Clue Chain */}
-          <ClueChainPanel />
-          <ValidationPanel />
-        </div>
-
-        {/* Canvas Area */}
-        <div 
-          ref={canvasContainerRef}
-          className="flex-1 bg-gray-900 overflow-hidden relative select-none"
-          onWheel={handleCanvasWheel}
-          onMouseDown={handleCanvasMouseDown}
-          onMouseMove={handleCanvasMouseMove}
-          onMouseUp={handleCanvasMouseUp}
-          onMouseLeave={handleCanvasMouseUp}
-          onContextMenu={e => e.preventDefault()}
-          style={{ 
-            cursor: spaceHeld ? (isPanning ? 'grabbing' : 'grab') : 'default',
-            touchAction: 'none'
-          }}
-        >
-          {/* Coordinates HUD */}
-          <div className="absolute bottom-2 left-2 bg-black/60 backdrop-blur text-gray-400 text-xs px-2 py-1 rounded font-mono pointer-events-none z-10">
-            Pan: {Math.round(panX)}, {Math.round(panY)} | Zoom: {Math.round(zoom * 100)}%
-            {currentScene && ` | Scene: ${currentScene.width}×${currentScene.height}`}
-          </div>
-          {/* Help hint */}
-          <div className="absolute top-2 left-2 bg-black/60 backdrop-blur text-gray-500 text-xs px-2 py-1 rounded pointer-events-none z-10">
-            Scroll = Zoom • Space+Drag = Pan • Middle-click = Pan
-          </div>
-          {currentScene ? (() => {
-            const grid = getGridLines();
-            // Scene bounds in world coordinates
-            const sceneX = 0;
-            const sceneY = 0;
-            const sceneW = currentScene.width;
-            const sceneH = currentScene.height;
-            
-            return (
-              <Stage
-                ref={stageRef}
-                width={containerSize.width}
-                height={containerSize.height}
-                scaleX={zoom}
-                scaleY={zoom}
-                x={panX}
-                y={panY}
-                onClick={(e) => {
-                  if (e.target === e.target.getStage() && !spaceHeld) {
-                    clearSelection();
-                  }
-                }}
-                style={{ 
-                  cursor: spaceHeld ? (isPanning ? 'grabbing' : 'grab') : 'default',
-                  touchAction: 'none',
-                  display: 'block'
-                }}
-              >
-                <Layer>
-                  {/* Infinite Grid */}
-                  {showGrid && grid.vertical.map((x, i) => (
-                    <Line
-                      key={`v${i}`}
-                      points={[x, -5000, x, 5000]}
-                      stroke={x === 0 || x === sceneW ? '#475569' : '#1e293b'}
-                      strokeWidth={x === 0 || x === sceneW ? 1 / zoom : 0.5 / zoom}
-                      listening={false}
-                    />
-                  ))}
-                  {showGrid && grid.horizontal.map((y, i) => (
-                    <Line
-                      key={`h${i}`}
-                      points={[-5000, y, 5000, y]}
-                      stroke={y === 0 || y === sceneH ? '#475569' : '#1e293b'}
-                      strokeWidth={y === 0 || y === sceneH ? 1 / zoom : 0.5 / zoom}
-                      listening={false}
-                    />
-                  ))}
-
-                  {/* Scene bounds indicator (dashed border) */}
-                  <Rect
-                    x={sceneX}
-                    y={sceneY}
-                    width={sceneW}
-                    height={sceneH}
-                    stroke="#6366f1"
-                    strokeWidth={1.5 / zoom}
-                    dash={[8 / zoom, 4 / zoom]}
-                    fill="transparent"
-                    listening={false}
-                  />
-
-                  {/* Background */}
-                  <BackgroundImage url={currentScene.backgroundUrl} width={currentScene.width} height={currentScene.height} />
-
-                  {/* Origin marker */}
-                  <Circle
-                    x={0}
-                    y={0}
-                    radius={4 / zoom}
-                    fill="#6366f1"
-                    listening={false}
-                  />
-
-                  {/* Objects */}
-                  {currentScene.objects
-                    .sort((a, b) => a.zIndex - b.zIndex)
-                    .map(obj => (
-                      <KonvaImage
-                        key={obj.id}
-                        obj={obj}
-                        isSelected={selectedObjectIds.includes(obj.id)}
-                        onSelect={selectObject}
-                        onDragEnd={handleDragEnd}
-                        onChange={updateObject}
-                      />
-                    ))}
-                </Layer>
-              </Stage>
-            );
-          })() : (
-            <div className="flex items-center justify-center h-full text-gray-500">
-              <p>Select or create a room</p>
-            </div>
-          )}
-        </div>
-
-        {/* Right Sidebar - Properties */}
-        <div className="w-64 bg-surface border-r border-gray-700 overflow-y-auto flex-shrink-0">
-          <PropertiesPanel />
-        </div>
+        </aside>
       </div>
-      )}
+
+      {/* ───────── Status bar ───────── */}
+      <footer className="h-6 shrink-0 flex items-center justify-between gap-4 px-3 bg-dock-head border-t border-black/60 text-[11px] text-gray-400">
+        <div className="flex items-center gap-4 min-w-0">
+          <span className="truncate">
+            {scene?.title ?? '—'}
+            {ctx ? ` · ${ctx.width}×${ctx.height}` : ''}
+            {ctx?.view ? ` · view: ${ctx.view.title}` : ''}
+          </span>
+          <span>{selected.length ? `${selected.length} selected` : 'Nothing selected'}</span>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <button
+            className={`hover:text-white ${
+              errors ? 'text-red-400' : warnings ? 'text-amber-300' : 'text-emerald-400'
+            }`}
+            onClick={() => {
+              setBottomTab('checks');
+              setBottomOpen(1);
+            }}
+            title="Open Checks"
+          >
+            {errors || warnings ? `${errors} errors · ${warnings} warnings` : '✓ No issues'}
+          </button>
+
+          <SaveState />
+
+          <button
+            className="hover:text-white"
+            onClick={() => setBottomOpen((o) => (o ? 0 : 1))}
+            title="Toggle bottom panel"
+          >
+            ▤ Panel
+          </button>
+        </div>
+      </footer>
+
+      {palette && <CommandPalette cmds={cmds} onClose={() => setPalette(false)} />}
     </div>
   );
 }
 
-// Background Image Component
-function BackgroundImage({ url, width, height }: { url: string; width: number; height: number }) {
-  const [image] = useImage(url);
-  if (!image) {
-    return <Rect x={0} y={0} width={width} height={height} fill="#1a1a2e" />;
+export default function Studio() {
+  const hydrated = useStudioStore((s) => s.hydrated);
+  const screen = useStudioStore((s) => s.screen);
+
+  if (!hydrated) {
+    return (
+      <div className="h-full flex items-center justify-center text-gray-400">
+        در حال بارگذاری…
+      </div>
+    );
   }
-  return <KImage image={image} x={0} y={0} width={width} height={height} />;
+
+  return screen === 'projects' ? <ProjectsView /> : <Editor />;
 }

@@ -1,129 +1,72 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Studio from './studio/Studio';
 import Player from './player/Player';
+import { useStudioStore } from './stores/store';
+import { Toasts } from './shared/notify';
 
-type AppView = 'home' | 'studio' | 'player';
-
-function HomePage({ onNavigate }: { onNavigate: (view: AppView) => void }) {
-  return (
-    <div className="min-h-full flex flex-col items-center justify-center p-4 animate-fade-in overflow-auto" dir="rtl" lang="fa">
-      {/* Hero */}
-      <div className="text-center mb-12">
-        <div className="text-6xl md:text-8xl mb-4">🔐</div>
-        <h1 className="text-3xl md:text-5xl font-black text-white mb-3">
-          Group <span className="text-indigo-400">Escape Room</span>
-        </h1>
-        <p className="text-gray-400 text-lg md:text-xl max-w-lg mx-auto" dir="ltr">
-          A multiplayer escape room & hidden object platform via Telegram
-        </p>
-      </div>
-
-      {/* Navigation Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 max-w-2xl w-full">
-        {/* Studio Card */}
-        <button
-          onClick={() => onNavigate('studio')}
-          className="group bg-surface rounded-2xl p-6 md:p-8 border border-gray-700 hover:border-indigo-500 transition-all hover:shadow-xl hover:shadow-indigo-500/10 text-right"
-        >
-          <div className="text-4xl mb-3">🎨</div>
-          <h2 className="text-xl md:text-2xl font-bold text-white group-hover:text-indigo-300 transition-colors mb-2" dir="ltr">
-            Design Studio
-          </h2>
-          <p className="text-gray-400 text-sm md:text-base" dir="ltr">
-            Design rooms, objects and clue chains. Export as JSON.
-          </p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <span className="text-xs bg-indigo-900/50 text-indigo-300 px-2 py-0.5 rounded">Konva</span>
-            <span className="text-xs bg-indigo-900/50 text-indigo-300 px-2 py-0.5 rounded">Editor</span>
-            <span className="text-xs bg-indigo-900/50 text-indigo-300 px-2 py-0.5 rounded">JSON Export</span>
-          </div>
-        </button>
-
-        {/* Player Card */}
-        <button
-          onClick={() => onNavigate('player')}
-          className="group bg-surface rounded-2xl p-6 md:p-8 border border-gray-700 hover:border-amber-500 transition-all hover:shadow-xl hover:shadow-amber-500/10 text-right"
-        >
-          <div className="text-4xl mb-3">🎮</div>
-          <h2 className="text-xl md:text-2xl font-bold text-white group-hover:text-amber-300 transition-colors mb-2" dir="ltr">
-            Play Game
-          </h2>
-          <p className="text-gray-400 text-sm md:text-base" dir="ltr">
-            Experience the game. Discover objects, follow clues and unlock the final lock.
-          </p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <span className="text-xs bg-amber-900/50 text-amber-300 px-2 py-0.5 rounded">Interactive</span>
-            <span className="text-xs bg-amber-900/50 text-amber-300 px-2 py-0.5 rounded">Multiplayer</span>
-            <span className="text-xs bg-amber-900/50 text-amber-300 px-2 py-0.5 rounded">RTL</span>
-          </div>
-        </button>
-      </div>
-
-      {/* Features */}
-      <div className="mt-12 grid grid-cols-2 md:grid-cols-4 gap-4 max-w-2xl w-full">
-        {[
-          { icon: '📱', label: 'Mobile-first' },
-          { icon: '👥', label: 'Multiplayer' },
-          { icon: '🔗', label: 'Clue Chains' },
-          { icon: '🔢', label: 'Number Lock' },
-        ].map(f => (
-          <div key={f.label} className="bg-surface/50 rounded-xl p-3 text-center border border-gray-800">
-            <div className="text-2xl mb-1">{f.icon}</div>
-            <div className="text-xs text-gray-400">{f.label}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Footer */}
-      <div className="mt-12 text-center text-gray-600 text-xs">
-        <p>Built with React + TypeScript + Konva + Zustand + TailwindCSS</p>
-        <p className="mt-1" dir="rtl" lang="fa">فارسی • RTL • Vazirmatn</p>
-      </div>
-    </div>
-  );
-}
+type Tab = 'studio' | 'game';
 
 export default function App() {
-  const [view, setView] = useState<AppView>('home');
+  const [tab, setTab] = useState<Tab>('studio');
+  const hydrated = useStudioStore((s) => s.hydrated);
+  const projectId = useStudioStore((s) => s.currentProjectId);
+  const projectName = useStudioStore(
+    (s) => s.projects.find((p) => p.id === s.currentProjectId)?.name ?? 'پروژه فعلی'
+  );
+
+  // keep body class in sync with the active tab (Studio sets it itself; restore on leaving)
+  useEffect(() => {
+    if (tab !== 'studio') document.body.className = 'bg-gray-900 text-white min-h-screen';
+  }, [tab]);
 
   return (
-    <div className="h-screen bg-gray-900 overflow-hidden" dir="rtl" lang="fa">
-      {/* Navigation */}
-      {view !== 'home' && (
-        <nav className="fixed top-0 left-0 right-0 z-50 bg-surface/95 backdrop-blur border-b border-gray-700 px-4 py-2 flex items-center justify-between">
-          <button
-            className="text-gray-300 hover:text-white flex items-center gap-1 text-sm"
-            onClick={() => setView('home')}
-          >
-            <span className="rtl-mirror">←</span> Back
-          </button>
-          <div className="flex gap-2">
+    <div className="h-screen flex flex-col bg-gray-900 text-white">
+      {/* Top navigation: Studio <-> Game */}
+      <nav className="flex items-center gap-1 px-3 py-1.5 bg-surface border-b border-line flex-shrink-0" aria-label="ناوبری اصلی">
+        <span className="text-xs font-bold text-indigo-300 ml-2 select-none">اتاق فرار</span>
+        <button
+          aria-current={tab === 'studio' ? 'page' : undefined}
+          className={`px-3 py-1 rounded-lg text-sm ${tab === 'studio' ? 'bg-primary text-white' : 'text-gray-400 hover:text-white hover:bg-surface-hover'}`}
+          onClick={() => setTab('studio')}
+        >
+          🛠 استودیو
+        </button>
+        <button
+          aria-current={tab === 'game' ? 'page' : undefined}
+          className={`px-3 py-1 rounded-lg text-sm ${tab === 'game' ? 'bg-primary text-white' : 'text-gray-400 hover:text-white hover:bg-surface-hover'}`}
+          onClick={() => setTab('game')}
+        >
+          🎮 بازی
+        </button>
+        {tab === 'game' && projectId && (
+          <span className="mr-auto text-xs text-gray-400 truncate max-w-[40vw]" dir="rtl">
+            در حال بازی: {projectName}
+          </span>
+        )}
+      </nav>
+
+      <div className="flex-1 min-h-0 relative overflow-hidden">
+        {!hydrated ? (
+          <div className="h-full flex items-center justify-center text-gray-400">در حال بارگذاری…</div>
+        ) : tab === 'studio' ? (
+          <Studio />
+        ) : projectId ? (
+          <Player key={projectId} projectName={projectName} />
+        ) : (
+          <div className="h-full flex flex-col items-center justify-center gap-3 text-gray-400" dir="rtl">
+            <p className="text-lg">🎮 هیچ پروژه‌ای باز نیست</p>
+            <p className="text-sm">ابتدا در استودیو یک پروژه را باز یا بسازید، سپس به تب بازی بروید.</p>
             <button
-              className={`px-3 py-1 rounded-lg text-sm transition-colors ${
-                view === 'studio' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'
-              }`}
-              onClick={() => setView('studio')}
+              className="bg-primary hover:bg-primary-dark text-white px-4 py-2 rounded-xl text-sm"
+              onClick={() => setTab('studio')}
             >
-              🎨 Studio
-            </button>
-            <button
-              className={`px-3 py-1 rounded-lg text-sm transition-colors ${
-                view === 'player' ? 'bg-amber-600 text-white' : 'text-gray-400 hover:text-white'
-              }`}
-              onClick={() => setView('player')}
-            >
-              🎮 Play
+              رفتن به استودیو →
             </button>
           </div>
-        </nav>
-      )}
-
-      {/* Content */}
-      <div className={view !== 'home' ? 'pt-11 h-full' : 'h-full overflow-auto'}>
-        {view === 'home' && <HomePage onNavigate={setView} />}
-        {view === 'studio' && <Studio />}
-        {view === 'player' && <Player />}
+        )}
       </div>
+
+      <Toasts />
     </div>
   );
 }

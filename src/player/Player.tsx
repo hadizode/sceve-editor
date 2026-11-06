@@ -1,629 +1,967 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Stage, Layer, Image as KImage, Rect, Circle, Group, Shape } from 'react-konva';
+// ============ Player (Game) — plays the CURRENT studio project live ============
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useImage from 'use-image';
-import { usePlayerStore } from '../stores/player';
-import { SEED_SESSION, SEED_SCENE, SEED_SCENE_2 } from '../shared/seed-data';
-import { createObjectHitFunc, getRotatedBounds, getObjectCorners } from '../shared/geometry';
-import { isRoomComplete, allRoomsComplete } from '../shared/game';
-import type { SceneObject, View } from '../shared/types';
+import { itemName, usePlayerStore } from '../stores/store';
+import type { Asset, Scene, SceneObject, SessionState, Sprite, View } from '../shared/types';
+import { getSprite, resolveSprite, transformRef } from '../shared/types';
+import { boxMatrix, cssMatrix, hitClipPath, motionAngle, pivotScene, placementMatrix } from '../shared/geometry';
+import { spriteFilterCss } from '../shared/types';
+import { allRoomsComplete, checkTransformCondition } from '../shared/game-logic';
 
-// ============ Lobby Component ============
-function Lobby() {
-  const { session, startGame, setPlayerReady } = usePlayerStore();
-  const [showGuide, setShowGuide] = useState(false);
-  if (!session) return null;
+/** Resolve a sprite/image ref to the concrete image URL ('' when the sprite has no image). */
+const spriteSrc = (
+  ref: string | undefined,
+  sprites: Record<string, Sprite>,
+  assets: Record<string, Asset>,
+) => (ref ? resolveSprite(ref, sprites, assets) : '');
 
-  const allReady = session.players.every(p => p.ready);
+const faDigits = (s: string) => s.replace(/\d/g, (d) => '۰۱۲۴۵۶۷۸۹'[+d]);
 
-  return (
-    <div className="h-full flex items-center justify-center p-4 animate-fade-in overflow-auto">
-      <div className="bg-surface rounded-2xl p-6 md:p-8 max-w-md w-full border border-gray-700 shadow-2xl">
-        <h1 className="text-2xl font-bold text-indigo-300 text-center mb-2">🎮 Game Lobby</h1>
-        <p className="text-center text-gray-500 text-sm mb-6">Group Escape Room - Old Library</p>
-        
-        <button
-          className="w-full text-center text-indigo-400 text-sm mb-4 hover:text-indigo-300"
-          onClick={() => setShowGuide(!showGuide)}
-        >
-          {showGuide ? '▲ Hide Guide' : '▼ How to Play'}
-        </button>
-        
-        {showGuide && (
-          <div className="bg-surface-light rounded-xl p-4 mb-4 text-sm text-gray-300 space-y-2 animate-fade-in">
-            <p>🔍 <strong>Explore:</strong> Click objects to discover clues</p>
-            <p>🔗 <strong>Chain:</strong> Each clue leads you to the next object</p>
-            <p>🔢 <strong>Numbers:</strong> Find number pieces to complete each room</p>
-            <p>🎒 <strong>Items:</strong> Use collected items on matching objects</p>
-            <p>🔍 <strong>Views:</strong> Some objects open a close-up interactive view (zoom & pan inside)</p>
-            <p>🔐 <strong>Final Lock:</strong> Enter the combined code when all rooms are complete</p>
-            <p>👥 <strong>Teamwork:</strong> Collaborate with your teammates!</p>
-          </div>
-        )}
+const EMPTY: string[] = [];
 
-        <div className="space-y-3 mb-6">
-          <h2 className="text-sm font-semibold text-gray-400">Players:</h2>
-          {session.players.map(player => (
-            <div key={player.telegramId} className="flex items-center justify-between bg-surface-light rounded-lg p-3">
-              <div className="flex items-center gap-2">
-                <div className={`w-3 h-3 rounded-full ${player.online ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`} />
-                <span className="text-white">{player.name}</span>
-              </div>
-              <span className={`text-xs px-2 py-0.5 rounded ${player.ready ? 'bg-green-600 text-white' : 'bg-gray-600 text-gray-300'}`}>
-                {player.ready ? '✓ Ready' : 'Waiting'}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        <div className="space-y-3">
-          <button
-            className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-bold text-lg transition-colors active:scale-95"
-            onClick={setPlayerReady}
-            aria-label="Mark as ready"
-          >
-            ✓ I'm Ready
-          </button>
-          
-          {allReady && (
-            <button
-              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold text-lg transition-colors animate-pulse-glow active:scale-95"
-              onClick={startGame}
-              aria-label="Start game"
-            >
-              🚀 Start Game
-            </button>
-          )}
-        </div>
-
-        <p className="text-center text-gray-600 text-xs mt-4">
-          🔗 Link: play.example.com/s/seed-token-abc123
-        </p>
-      </div>
-    </div>
-  );
-}
-
-// ============ Sprite Player (animated frame sequence) ============
-function useSpriteFrame(sprite: NonNullable<SceneObject['sprite']>) {
-  const frames = sprite.frames;
-  const [frame, setFrame] = useState(sprite.startFrame ?? 0);
-  useEffect(() => {
-    if (!frames || frames.length < 2) return;
-    const start = Math.min(sprite.startFrame ?? 0, frames.length - 1);
-    setFrame(start);
-    let current = start;
-    const interval = setInterval(() => {
-      current += 1;
-      if (current >= frames.length) {
-        if (sprite.loop) current = 0;
-        else { clearInterval(interval); return; }
-      }
-      setFrame(current);
-    }, 1000 / Math.max(1, sprite.fps));
-    return () => clearInterval(interval);
-  }, [frames.join('|'), sprite.fps, sprite.loop, sprite.startFrame]);
-  return frames && frames.length > 0 ? frames[Math.min(frame, frames.length - 1)] : null;
-}
-
-// ============ Game Object Component ============
-function GameObject({ obj, discovered, isHighlighted, onClick }: {
-  obj: SceneObject;
-  discovered: boolean;
-  isHighlighted: boolean;
-  onClick: () => void;
-}) {
-  const spriteUrl = obj.sprite ? useSpriteFrame(obj.sprite) : null;
-  const [image] = useImage(spriteUrl || obj.imageUrl);
-
-  if (!obj.visible) return null;
-  if (discovered && obj.oneTimeUse) return null;
-
-  // Hit area: custom polygon (local coords) when defined, otherwise the
-  // image's own rectangle via an explicit hit path. All decorations are
-  // non-interactive so they can never enlarge or block the click target.
-  return (
-    <Group>
-      <KImage
-        image={image}
-        x={obj.x}
-        y={obj.y}
-        width={obj.width}
-        height={obj.height}
-        rotation={obj.rotation}
-        hitFunc={createObjectHitFunc(obj.width, obj.height, obj.hitArea)}
-        onClick={onClick}
-        onTap={onClick}
-        cursor="pointer"
-      />
-      {obj.view && !discovered && (
-        <Circle
-          x={obj.x + 8}
-          y={obj.y + 8}
-          radius={6}
-          fill="#6366f1"
-          stroke="white"
-          strokeWidth={1}
-          listening={false}
-        />
-      )}
-      {discovered && (
-        <Circle
-          x={obj.x + obj.width - 10}
-          y={obj.y + 10}
-          radius={8}
-          fill="#10b981"
-          stroke="white"
-          strokeWidth={1}
-          listening={false}
-        />
-      )}
-      {isHighlighted && (
-        <Shape
-          sceneFunc={(ctx: any) => {
-            const corners = getObjectCorners(obj);
-            ctx.beginPath();
-            ctx.moveTo(corners[0].x, corners[0].y);
-            for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y);
-            ctx.closePath();
-            ctx.fillStrokeShape(ctx);
-          }}
-          stroke="#f59e0b"
-          strokeWidth={2}
-          dash={[5, 3]}
-          listening={false}
-        />
-      )}
-    </Group>
-  );
-}
-
-// ============ Background Component ============
-function GameBackground({ url, width, height }: { url: string; width: number; height: number }) {
-  const [image] = useImage(url);
-  if (!image) return <Rect x={0} y={0} width={width} height={height} fill="#1a1a2e" />;
-  return <KImage image={image} x={0} y={0} width={width} height={height} />;
-}
-
-// ============ View Overlay (Interactive close-up with zoom/pan) ============
-function ViewOverlay({ view, onClose, discoveredObjects, onObjectClick }: {
-  view: View;
-  onClose: () => void;
-  discoveredObjects: string[];
-  onObjectClick: (obj: SceneObject) => void;
-}) {
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [isPanning, setIsPanning] = useState(false);
-  const [spaceHeld, setSpaceHeld] = useState(false);
-  const lastPos = useRef({ x: 0, y: 0 });
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const down = (e: KeyboardEvent) => { if (e.code === 'Space') { e.preventDefault(); setSpaceHeld(true); } };
-    const up = (e: KeyboardEvent) => { if (e.code === 'Space') setSpaceHeld(false); };
-    window.addEventListener('keydown', down);
-    window.addEventListener('keyup', up);
-    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
-  }, []);
-
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const delta = e.deltaY > 0 ? -0.1 : 0.1;
-    setZoom(z => Math.max(0.5, Math.min(3, z + delta)));
-  };
-
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (spaceHeld || e.button === 1) {
-      e.preventDefault();
-      setIsPanning(true);
-      lastPos.current = { x: e.clientX, y: e.clientY };
-    }
-  };
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (isPanning) {
-      const dx = e.clientX - lastPos.current.x;
-      const dy = e.clientY - lastPos.current.y;
-      setPan(p => ({ x: p.x + dx, y: p.y + dy }));
-      lastPos.current = { x: e.clientX, y: e.clientY };
-    }
-  };
-
-  const handleMouseUp = () => setIsPanning(false);
-
-  const displayW = Math.min(view.width, 500);
-  const scale = displayW / view.width;
-
-  return (
-    <div className="fixed inset-0 bg-black/85 z-40 flex items-center justify-center animate-fade-in">
-      <div className="bg-surface rounded-2xl border border-gray-600 shadow-2xl overflow-hidden max-w-[95vw] max-h-[90vh]">
-        <div className="flex items-center justify-between px-4 py-2 bg-surface-light border-b border-gray-700">
-          <h3 className="text-sm font-bold text-indigo-300" dir="rtl" lang="fa">🔍 {view.title}</h3>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500">{Math.round(zoom * 100)}%</span>
-            <button
-              className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm"
-              onClick={onClose}
-              aria-label="Close view"
-            >
-              ✕ Close
-            </button>
-          </div>
-        </div>
-        
-        <div
-          ref={containerRef}
-          className="relative overflow-hidden select-none"
-          onWheel={handleWheel}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-          onContextMenu={e => e.preventDefault()}
-          style={{ cursor: spaceHeld ? (isPanning ? 'grabbing' : 'grab') : 'default' }}
-        >
-          <Stage
-            width={displayW}
-            height={view.height * scale}
-            scaleX={zoom * scale}
-            scaleY={zoom * scale}
-            x={pan.x}
-            y={pan.y}
-          >
-            <Layer>
-              <GameBackground url={view.backgroundUrl} width={view.width} height={view.height} />
-              {view.objects
-                .sort((a, b) => a.zIndex - b.zIndex)
-                .map(obj => (
-                  <GameObject
-                    key={obj.id}
-                    obj={obj}
-                    discovered={discoveredObjects.includes(obj.id)}
-                    isHighlighted={false}
-                    onClick={() => onObjectClick(obj)}
-                  />
-                ))}
-            </Layer>
-          </Stage>
-        </div>
-
-        <div className="px-4 py-2 bg-surface-light border-t border-gray-700 text-xs text-gray-500 flex justify-between">
-          <span>Scroll = Zoom | Space + Drag = Pan</span>
-          <span dir="rtl" lang="fa">اسکرول = زوم | Space + درگ = جابجایی</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ============ Inventory Panel ============
-function InventoryPanel() {
-  const { sessionState, selectedItem, selectItem } = usePlayerStore();
-  
-  const itemNames: Record<string, string> = {
-    'key-gold': '🔑 Golden Key',
-    'key-small': '🔑 Small Key',
-    'digit-7': '🔢 Number 7',
-    'digit-3': '🔢 Number 3',
-  };
-
-  if (sessionState.inventory.length === 0) {
-    return (
-      <div className="bg-surface/80 backdrop-blur rounded-xl p-3 text-center text-gray-400 text-sm">
-        🎒 Inventory is empty
-      </div>
-    );
-  }
-
-  return (
-    <div className="bg-surface/80 backdrop-blur rounded-xl p-3">
-      <h3 className="text-xs font-bold text-gray-400 mb-2">🎒 Inventory</h3>
-      <div className="flex gap-2 flex-wrap">
-        {sessionState.inventory.map(item => (
-          <button
-            key={item}
-            className={`px-3 py-2 rounded-lg text-sm transition-all ${
-              selectedItem === item
-                ? 'bg-amber-600 text-white scale-105 shadow-lg'
-                : 'bg-surface-light text-white hover:bg-surface-lighter'
-            }`}
-            onClick={() => selectItem(selectedItem === item ? null : item)}
-          >
-            {itemNames[item] || item}
-          </button>
-        ))}
-      </div>
-      {selectedItem && (
-        <p className="text-xs text-amber-300 mt-2">Item selected. Click an object to use it.</p>
-      )}
-    </div>
-  );
-}
-
-// ============ Final Lock Component ============
-function FinalLock() {
-  const { lockInput, enterLockDigit, clearLockDigit, submitLock, gameComplete } = usePlayerStore();
-  
-  if (gameComplete) {
-    return (
-      <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 animate-fade-in">
-        <div className="bg-surface rounded-2xl p-8 text-center animate-victory">
-          <div className="text-6xl mb-4">🎊</div>
-          <h2 className="text-3xl font-bold text-amber-400 mb-2">Congratulations!</h2>
-          <p className="text-gray-300 text-lg">You successfully escaped the room!</p>
-          <div className="mt-4 text-4xl font-mono text-green-400">{lockInput}</div>
-          <button
-            className="mt-6 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-xl"
-            onClick={() => window.location.reload()}
-          >
-            Play Again
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="bg-surface rounded-2xl p-4 md:p-6 border border-gray-700">
-      <h2 className="text-lg font-bold text-center text-amber-300 mb-4">🔐 Final Lock</h2>
-      <div className="bg-gray-800 rounded-xl p-4 mb-4 text-center">
-        <div className="text-3xl font-mono tracking-widest text-white min-h-[48px]">
-          {lockInput || '—'}
-        </div>
-      </div>
-      <div className="grid grid-cols-3 gap-2 max-w-[220px] mx-auto">
-        {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
-          <button
-            key={n}
-            className="num-key"
-            onClick={() => enterLockDigit(n.toString())}
-            aria-label={`Number ${n}`}
-          >
-            {n}
-          </button>
-        ))}
-        <button className="num-key bg-red-900/50 border-red-700" onClick={clearLockDigit} aria-label="Delete">←</button>
-        <button className="num-key" onClick={() => enterLockDigit('0')} aria-label="Number 0">0</button>
-        <button className="num-key bg-green-900/50 border-green-700" onClick={submitLock} aria-label="Submit">✓</button>
-      </div>
-    </div>
-  );
-}
-
-// ============ Toast Component ============
+// ---------- Toast ----------
 function Toast() {
-  const { toast } = usePlayerStore();
+  const toast = usePlayerStore((s) => s.toast);
   if (!toast) return null;
+
   return (
-    <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 animate-fade-in">
-      <div className="bg-indigo-600 text-white px-6 py-4 rounded-xl shadow-2xl text-sm md:text-base font-medium max-w-sm text-center" dir="rtl" lang="fa">
+    <div
+      className="fixed top-14 left-1/2 -translate-x-1/2 z-[100] pointer-events-none"
+      dir="rtl"
+    >
+      <div className="bg-surface-lighter/95 border border-indigo-500/40 text-white text-sm px-4 py-2.5 rounded-xl shadow-2xl max-w-[80vw]">
         {toast}
       </div>
     </div>
   );
 }
 
-// ============ Main Player Component ============
-export default function Player() {
-  const store = usePlayerStore();
-  const {
-    session, scenes, currentSceneId, sessionState, gameStarted, gameComplete,
-    selectedItem, initSession, clickObject, useItemOnObject, pickupObject, selectItem, switchScene,
-  } = store;
+// ---------- Lobby (multiplayer simulation) ----------
+function Lobby({ projectName }: { projectName: string }) {
+  const session = usePlayerStore((s) => s.session);
+  const setReady = usePlayerStore((s) => s.setPlayerReady);
+  const startNewGame = usePlayerStore((s) => s.startNewGame);
 
-  const [activeView, setActiveView] = useState<{ view: View; parentObjectId: string } | null>(null);
-
-  useEffect(() => {
-    if (!session) {
-      try {
-        const saved = localStorage.getItem('escape-room-state');
-        if (saved) {
-          const state = JSON.parse(saved);
-          initSession({ ...SEED_SESSION, state }, { [SEED_SCENE.id]: SEED_SCENE, [SEED_SCENE_2.id]: SEED_SCENE_2 });
-          return;
-        }
-      } catch {}
-      initSession(SEED_SESSION, { [SEED_SCENE.id]: SEED_SCENE, [SEED_SCENE_2.id]: SEED_SCENE_2 });
-    }
-  }, []);
-
-  if (!session) {
-    return <div className="min-h-screen flex items-center justify-center"><div className="text-gray-400">Loading...</div></div>;
-  }
-
-  if (!gameStarted) return <><Lobby /><Toast /></>;
-  if (gameComplete) return <FinalLock />;
-
-  const currentScene = scenes[currentSceneId];
-  if (!currentScene) return <div className="text-center text-gray-400 p-8">Scene not found</div>;
-
-  const discovered = sessionState.discoveredObjects[currentSceneId] || [];
-  const viewDiscovered = activeView ? (sessionState.discoveredObjects[activeView.view.id] || []) : [];
-  const numberPieces = currentScene.objects.filter(o => o.digit !== undefined);
-  const roomComplete = isRoomComplete(sessionState, currentScene);
-  const allComplete = allRoomsComplete(sessionState, Object.values(scenes));
-  const projectScenes = Object.values(scenes);
-
-  const handleObjectClick = (obj: SceneObject) => {
-    // If using an item on an object
-    if (selectedItem) {
-      if (obj.type === 'container' || obj.requiresItem || obj.transforms) {
-        useItemOnObject(selectedItem, obj.id);
-        return;
-      }
-    }
-    
-    // If object has a view, open it
-    if (obj.view) {
-      if (obj.view.requiresItem && obj.view.requiresItem.length > 0) {
-        const hasItems = obj.view.requiresItem.every(item => sessionState.inventory.includes(item));
-        if (!hasItems) {
-          store.setToast('You need a specific item to open this view');
-          setTimeout(() => store.setToast(null), 4000);
-          return;
-        }
-      }
-      setActiveView({ view: obj.view, parentObjectId: obj.id });
-      return;
-    }
-    
-    // If object is pickupable, pick it up
-    if (obj.pickupable) {
-      const discovered = sessionState.discoveredObjects[currentSceneId] || [];
-      if (!discovered.includes(obj.id)) {
-        pickupObject(obj.id);
-        return;
-      }
-    }
-    
-    // Normal discovery
-    clickObject(obj.id);
-  };
-
-  const handleViewObjectClick = (obj: SceneObject) => {
-    if (activeView) {
-      const viewId = activeView.view.id;
-      const vd = sessionState.discoveredObjects[viewId] || [];
-      if (vd.includes(obj.id)) {
-        store.setToast('Already discovered');
-        setTimeout(() => store.setToast(null), 3000);
-        return;
-      }
-      const newDiscovered = [...vd, obj.id];
-      const newDiscoveredObjects = { ...sessionState.discoveredObjects, [viewId]: newDiscovered };
-      let newInventory = [...sessionState.inventory];
-      if (obj.grantsItem && !newInventory.includes(obj.grantsItem)) {
-        newInventory.push(obj.grantsItem);
-      }
-      const newState = { ...sessionState, discoveredObjects: newDiscoveredObjects, inventory: newInventory };
-      if (obj.message) {
-        store.setToast(obj.message);
-        setTimeout(() => store.setToast(null), 7000);
-      }
-      const updatedSession = { ...session, state: newState };
-      store.initSession(updatedSession, scenes);
-      try { localStorage.setItem('escape-room-state', JSON.stringify(newState)); } catch {}
-    }
-  };
-
-  // Responsive canvas - fits to container, no zoom/pan in main game
-  const maxCanvasW = typeof window !== 'undefined' ? Math.min(window.innerWidth - 32, 800) : 800;
-  const canvasScale = Math.min(1, maxCanvasW / currentScene.width);
+  if (!session) return null;
 
   return (
-    <div className="h-full flex flex-col bg-gray-900 overflow-hidden">
-      <Toast />
-      
-      {activeView && (
-        <ViewOverlay
-          view={activeView.view}
-          onClose={() => {
-            if (activeView.view.closeMessage) {
-              store.setToast(activeView.view.closeMessage);
-              setTimeout(() => store.setToast(null), 4000);
-            }
-            setActiveView(null);
-          }}
-          discoveredObjects={viewDiscovered}
-          onObjectClick={handleViewObjectClick}
+    <div className="h-full flex items-center justify-center p-6" dir="rtl">
+      <div className="w-full max-w-md bg-surface border border-gray-700 rounded-2xl p-6 space-y-5 shadow-2xl">
+        <div>
+          <h2 className="text-xl font-bold">🎮 لابی بازی</h2>
+          <p className="text-sm text-gray-400 mt-1">پروژه: {projectName}</p>
+        </div>
+
+        <ul className="space-y-2">
+          {session.players.map((p) => (
+            <li
+              key={p.telegramId}
+              className="flex items-center gap-3 bg-surface-light rounded-xl px-3 py-2"
+            >
+              <span
+                className={`w-2.5 h-2.5 rounded-full ${
+                  p.online ? 'bg-emerald-400' : 'bg-gray-600'
+                }`}
+              />
+              <span className="flex-1 text-sm">{p.name}</span>
+              <span className={`text-xs ${p.ready ? 'text-emerald-400' : 'text-gray-500'}`}>
+                {p.ready ? 'آماده ✓' : 'در انتظار…'}
+              </span>
+            </li>
+          ))}
+        </ul>
+
+        <button
+          onClick={() => setReady()}
+          disabled={session.players[0]?.ready}
+          className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold"
+        >
+          {session.players[0]?.ready ? 'منتظر هم‌تیمی…' : '✅ آماده‌ام'}
+        </button>
+
+        <button
+          onClick={() => startNewGame()}
+          className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-sm font-bold"
+        >
+          🚀 شروع بدون منتور (حالت تک‌نفره)
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Game object sprite ----------
+/**
+ * Rendering rule: ONE box per object. The image fills the box (never clipped by it), the whole box
+ * is placed with `boxMatrix` (the same matrix Studio/Preview use), and the click shape is a CSS
+ * clip-path built from the normalized hit polygon. Z-order = DOM order = scene array order.
+ */
+function ObjSprite({
+  obj,
+  state,
+  sceneId,
+  viewId,
+  assets,
+  sprites,
+  onOpenView,
+}: {
+  obj: SceneObject;
+  state: SessionState;
+  sceneId: string;
+  viewId?: string; // id of parent object whose view we are in
+  assets: Record<string, Asset>;
+  sprites: Record<string, Sprite>;
+  onOpenView: (objectId: string) => void;
+}) {
+  const discovered = state.discoveredObjects[viewId || sceneId]?.includes(obj.id);
+
+  // Objects that carry a digit (shows its badge once found) or still have transform rules
+  // (an item must be usable on them after the first click) must stay on screen after discovery.
+  const keepVisible = obj.digit !== undefined || !!obj.transforms?.length;
+
+  // pickup Gone removed: pickupObject already marks the object discovered, so `discovered` covers it
+  // (and checking inventory by itemId would wrongly hide every sibling sharing a pickupItemId).
+  const hidden = !obj.visible || (!keepVisible && !!discovered && !obj.view);
+  const scenesById = usePlayerStore((s) => s.scenes);
+  const tIndex = (state.transformsApplied ?? {})[obj.id] ?? -1;
+
+  // بالاترین ruleِ اجراشده که شرطش همین الان برقرار است
+  let shown: NonNullable<SceneObject['transforms']>[number] | undefined;
+  const rules = obj.transforms ?? [];
+  for (let i = Math.min(tIndex, rules.length - 1); i >= 0; i--) {
+    if (checkTransformCondition(rules[i].conditions, state, scenesById)) {
+      shown = rules[i];
+      break;
+    }
+  }
+  const shownOk = !!shown;
+
+  const ref = shownOk && shown?.newSpriteId ? transformRef(shown.newSpriteId) : obj.spriteRef;
+  const sp = getSprite(ref, sprites);
+  const url = spriteSrc(ref, sprites, assets);
+  const name = (shownOk ? shown?.newName : undefined) || obj.name;
+
+  const selectedItem = usePlayerStore((s) => s.selectedItem);
+  const clickObject = usePlayerStore((s) => s.clickObject);
+  const pickup = usePlayerStore((s) => s.pickup);
+  const useItemOnObject = usePlayerStore((s) => s.useItemOnObject);
+  const rotateObject = usePlayerStore((s) => s.rotateObject);
+  const say = usePlayerStore((s) => s.setToast);
+
+  // Click-to-rotate motion: the accumulated step counter drives the angle around the motion pivot.
+  const steps = state.motionSteps?.[obj.id] ?? 0;
+  const rot = obj.motion ? motionAngle(obj.motion, steps) : 0;
+  const pv = obj.motion ? pivotScene(obj, obj.motion.pivot) : { x: 0, y: 0 };
+  // The shown transform rule may tint the sprite with a CSS filter (invert / hue-rotate / …).
+  const filterCss = shownOk ? spriteFilterCss(shown?.filter) : undefined;
+
+  if (hidden || (shownOk && shown?.hides)) return null;
+
+  const clickable =
+    obj.digit !== undefined ||
+    !!obj.requiresItem?.length ||
+    !!obj.grantsItem ||
+    !!obj.message ||
+    !!obj.view ||
+    obj.pickupable === true ||
+    !!obj.transforms?.length ||
+    !!obj.motion ||
+    !!obj.door;
+
+  const nextRule = obj.transforms?.[((state.transformsApplied ?? {})[obj.id] ?? -1) + 1];
+  const onlyTransform =
+    !obj.message && obj.digit === undefined && !obj.grantsItem && !obj.requiresItem?.length;
+
+  const handleClick = () => {
+    if (!clickable) return;
+
+    // Doors take the player to another room. When an item is selected we try using it first
+    // (e.g. unlocking), otherwise clicking walks straight through (clickObject handles the door).
+    if (obj.door) {
+      clickObject(obj.id, viewId);
+      return;
+    }
+
+    if (selectedItem) {
+      useItemOnObject(selectedItem, obj.id, viewId);
+      return;
+    }
+
+    // Motion objects rotate one step per click. When the click does nothing else (no message,
+    // digit, item grant, pickup, view or transform rule waiting), stop here after rotating.
+    if (obj.motion) {
+      rotateObject(obj.id, viewId);
+      const onlyMotion = !obj.message && obj.digit === undefined && !obj.grantsItem && !obj.pickupable && !obj.view && !nextRule;
+      if (onlyMotion) return;
+    }
+
+    // rule without an item: executes with a simple click — but only when its conditions hold;
+    // unmet conditions fall through to useItemOnObject(null, …) which shows the "still missing" hint.
+    if (nextRule && !nextRule.requiresItem && checkTransformCondition(nextRule.conditions, state, scenesById)) {
+      useItemOnObject(null, obj.id, viewId);
+      return;
+    }
+
+    if (obj.view) {
+      onOpenView(obj.id);
+      return;
+    }
+
+    if (obj.pickupable) {
+      pickup(obj.id, viewId);
+      return;
+    }
+
+    // transform-only object with no message: show a hint instead of staying silent
+    if (nextRule && onlyTransform) {
+      say('برای استفاده از این مورد، آیتم مناسب را از کیف خود انتخاب کنید');
+      return;
+    }
+
+    clickObject(obj.id, viewId);
+  };
+
+  // A sprite with neither image nor color is fully invisible — but still clickable
+  // when it has game rules (invisible hotspot), and never shows a placeholder.
+  const hasVisual = !!url || !!sp?.color;
+  const pointerCls = clickable ? 'cursor-pointer pointer-events-auto' : 'pointer-events-none';
+  const clipPath = hitClipPath(obj);
+
+  const boxStyle: React.CSSProperties = {
+    left: 0,
+    top: 0,
+    width: obj.width,
+    height: obj.height,
+    transform: cssMatrix(boxMatrix(obj)),
+    transformOrigin: '0 0',
+  };
+
+  return (
+    // Motion wrapper: rotate() around a transform-origin placed exactly at the pivot. Using a plain
+    // rotation (instead of animating the full matrix) lets CSS interpolate along the ARC the object
+    // actually travels — a matrix tween would cut straight across the chord.
+    <div
+      className="absolute pointer-events-none"
+      style={{
+        left: 0,
+        top: 0,
+        width: 0,
+        height: 0,
+        transformOrigin: `${pv.x}px ${pv.y}px`,
+        transform: `rotate(${rot}deg)`,
+        transition: obj.motion ? `transform ${obj.motion.duration ?? 600}ms ease-in-out` : undefined,
+      }}
+    >
+      {/* the box: colour fill + image stretched to it + click area (clip-path = hit polygon). Mirrors with flipX/flipY. */}
+      <div
+        className="absolute pointer-events-none"
+        style={{ ...boxStyle, filter: filterCss, transition: 'filter .4s' }}
+      >
+        {sp?.color && <div className="absolute inset-0" style={{ background: sp.color }} />}
+
+        {url && (
+          <img
+            src={url}
+            alt={name}
+            draggable={false}
+            className="absolute inset-0 select-none"
+            style={{ width: '100%', height: '100%', maxWidth: 'none' }}
+          />
+        )}
+
+        <div
+          className={`absolute inset-0 ${pointerCls} ${
+            hasVisual && clickable ? 'hover:bg-amber-400/10' : ''
+          }`}
+          style={clipPath ? { clipPath } : undefined}
+          onClick={handleClick}
+          title={name}
         />
-      )}
-      
-      {/* Header */}
-      <div className="bg-surface/90 backdrop-blur border-b border-gray-700 px-3 py-2">
-        <div className="flex items-center justify-between max-w-2xl mx-auto">
-          <h1 className="text-sm md:text-base font-bold text-indigo-300">{currentScene.title}</h1>
-          <div className="flex items-center gap-3">
-            {session.players.map(p => (
-              <div key={p.telegramId} className="flex items-center gap-1" title={p.name}>
-                <div className={`w-2 h-2 rounded-full ${p.online ? 'bg-green-500' : 'bg-gray-500'}`} />
-                <span className="text-xs text-gray-400 hidden md:inline">{p.name}</span>
-              </div>
-            ))}
+      </div>
+
+      {/* digit badge: placed with the same box but WITHOUT flip, so the number never mirrors */}
+      {obj.digit !== undefined && discovered && (
+        <div
+          className="absolute pointer-events-none"
+          style={{ ...boxStyle, transform: cssMatrix(placementMatrix(obj)) }}
+        >
+          <div className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-amber-500 text-black text-xs font-bold flex items-center justify-center shadow">
+            {faDigits(String(obj.digit))}
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Zoom/Pan scene view ----------
+function SceneStage({
+  scene,
+  state,
+  assets,
+  sprites,
+}: {
+  scene: Scene;
+  state: SessionState;
+  assets: Record<string, Asset>;
+  sprites: Record<string, Sprite>;
+}) {
+  const [openViewOf, setOpenViewOf] = useState<string | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [fit, setFit] = useState(1);
+  const [scale, setScale] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const dragRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+
+  // Resolve the open close-up view before computing fit, so the viewport fits
+  // the view dimensions instead of always fitting the room dimensions.
+  const view: View | undefined = openViewOf
+    ? scene.objects.find((o) => o.id === openViewOf)?.view
+    : undefined;
+
+  const dimW = view?.width ?? scene.width;
+  const dimH = view?.height ?? scene.height;
+  const zoom = fit * scale;
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+
+    const compute = () =>
+      setFit(Math.min(el.clientWidth / dimW, el.clientHeight / dimH, 2));
+
+    compute();
+
+    const ro = new ResizeObserver(compute);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [dimW, dimH]);
+
+  // Reset zoom/pan whenever a view is opened or closed.
+  useEffect(() => {
+    setScale(1);
+    setPan({ x: 0, y: 0 });
+  }, [openViewOf]);
+
+  // Safety reset when the underlying scene changes.
+  useEffect(() => {
+    setScale(1);
+    setPan({ x: 0, y: 0 });
+    setOpenViewOf(null);
+  }, [scene.id]);
+
+  const onWheel = useCallback((e: React.WheelEvent) => {
+    setScale((s) => Math.min(4, Math.max(0.5, s * (e.deltaY < 0 ? 1.1 : 0.9))));
+  }, []);
+
+  return (
+    // wrapRef is the game VIEWPORT — the only element allowed to crop sprites.
+    <div
+      ref={wrapRef}
+      className="relative w-full h-full overflow-hidden bg-black/40 touch-none"
+      onWheel={onWheel}
+      onPointerDown={(e) => {
+        if ((e.target as HTMLElement).closest('[data-scene-content]')) return;
+        dragRef.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y };
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      }}
+      onPointerMove={(e) => {
+        const d = dragRef.current;
+        if (!d) return;
+        setPan({ x: d.px + (e.clientX - d.x), y: d.py + (e.clientY - d.y) });
+      }}
+      onPointerUp={() => (dragRef.current = null)}
+    >
+      <div
+        data-scene-content
+        className="absolute left-1/2 top-1/2 shadow-2xl"
+        style={{
+          width: Math.max(dimW * zoom, view ? 260 : 0),
+          height: Math.max(dimH * zoom, view ? 200 : 0),
+          transform: `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px))`,
+        }}
+      >
+        {view ? (
+          <ViewOverlay
+            scene={scene}
+            state={state}
+            assets={assets}
+            sprites={sprites}
+            view={view}
+            zoom={zoom}
+            onClose={() => setOpenViewOf(null)}
+          />
+        ) : (
+          <div
+            className="absolute top-0 left-0"
+            style={{
+              width: dimW,
+              height: dimH,
+              transform: `scale(${zoom})`,
+              transformOrigin: 'top left',
+            }}
+          >
+            <SceneContent
+              scene={scene}
+              state={state}
+              assets={assets}
+              sprites={sprites}
+              onOpenView={setOpenViewOf}
+            />
+          </div>
+        )}
       </div>
 
-      {/* Game Canvas - No zoom/pan, just responsive fit */}
-      <div className="flex-1 flex items-center justify-center p-2 md:p-4 overflow-hidden min-h-0">
-        <div className="relative rounded-xl overflow-hidden shadow-2xl border border-gray-700">
-          <Stage
-            width={currentScene.width * canvasScale}
-            height={currentScene.height * canvasScale}
-            scaleX={canvasScale}
-            scaleY={canvasScale}
-            style={{ touchAction: 'none', display: 'block' }}
-          >
-            <Layer>
-              <GameBackground url={currentScene.backgroundUrl} width={currentScene.width} height={currentScene.height} />
-              {currentScene.objects
-                .sort((a, b) => a.zIndex - b.zIndex)
-                .map(obj => (
-                  <GameObject
-                    key={obj.id}
-                    obj={obj}
-                    discovered={discovered.includes(obj.id)}
-                    isHighlighted={selectedItem !== null && (obj.type === 'container' || !!obj.requiresItem)}
-                    onClick={() => handleObjectClick(obj)}
-                  />
-                ))}
-            </Layer>
-          </Stage>
+      {/* Zoom controls are now available for rooms and close-up views. */}
+      <div className="absolute bottom-2 left-2 flex gap-1 z-10" dir="ltr">
+        <button
+          className="w-8 h-8 rounded-lg bg-surface-light/90 border border-gray-700 text-sm"
+          onClick={() => setScale((s) => Math.min(4, s * 1.2))}
+        >
+          +
+        </button>
+        <button
+          className="w-8 h-8 rounded-lg bg-surface-light/90 border border-gray-700 text-sm"
+          onClick={() => setScale((s) => Math.max(0.5, s / 1.2))}
+        >
+          −
+        </button>
+        <button
+          className="w-8 h-8 rounded-lg bg-surface-light/90 border border-gray-700 text-xs"
+          onClick={() => {
+            setScale(1);
+            setPan({ x: 0, y: 0 });
+          }}
+        >
+          ⟲
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Scene content (background layers + objects in array order) ----------
+function SceneContent({
+  scene,
+  state,
+  assets,
+  sprites,
+  viewId,
+  onOpenView,
+}: {
+  scene: Scene;
+  state: SessionState;
+  assets: Record<string, Asset>;
+  sprites: Record<string, Sprite>;
+  viewId?: string;
+  onOpenView: (objectId: string) => void;
+}) {
+  const parent = viewId ? scene.objects.find((o) => o.id === viewId) : undefined;
+  const W = viewId ? (parent?.view?.width ?? scene.width) : scene.width;
+  const H = viewId ? (parent?.view?.height ?? scene.height) : scene.height;
+  const objects = viewId ? (parent?.view?.objects ?? []) : scene.objects;
+  const baseBgRef = viewId ? (parent?.view?.backgroundUrl ?? '') : scene.backgroundUrl;
+
+  // Effects can override a room's (or a close-up view's) background at runtime — e.g. "the lights turn on".
+  const bgOverride = state.backgrounds?.[viewId || scene.id];
+  const bgRef = bgOverride || baseBgRef;
+  const bgUrl = spriteSrc(bgRef, sprites, assets);
+  const bgSp = getSprite(bgRef, sprites);
+  const [bg] = useImage(bgUrl || '', 'anonymous');
+
+  // NOTE: no overflow-hidden here — sprite images may extend past the scene bounds; only the viewport crops.
+  return (
+    <div className="absolute inset-0 bg-surface-light" style={{ width: W, height: H }}>
+      {/* background: image (cover) or solid color sprite */}
+      {bg ? (
+        <img
+          src={bgUrl}
+          alt=""
+          className="absolute inset-0 w-full h-full object-cover select-none pointer-events-none"
+        />
+      ) : bgSp?.color ? (
+        <div className="absolute inset-0" style={{ background: bgSp.color }} />
+      ) : null}
+
+      {!viewId &&
+        scene.backgroundLayers
+          .filter((l) => l.visible)
+          .map((l) => {
+            const u = spriteSrc(l.spriteRef, sprites, assets);
+            const lsp = getSprite(l.spriteRef, sprites);
+            if (!u && !lsp?.color) return null;
+
+            return u ? (
+              <img
+                key={l.id}
+                src={u}
+                alt=""
+                className="absolute select-none pointer-events-none"
+                style={{ left: l.offsetX, top: l.offsetY, width: '100%', opacity: l.opacity }}
+              />
+            ) : (
+              <div
+                key={l.id}
+                className="absolute inset-0 pointer-events-none"
+                style={{
+                  transform: `translate(${l.offsetX}px, ${l.offsetY}px)`,
+                  background: lsp?.color,
+                  opacity: l.opacity,
+                }}
+              />
+            );
+          })}
+
+      {objects.map((o) => (
+        <ObjSprite
+          key={o.id}
+          obj={o}
+          state={state}
+          sceneId={scene.id}
+          viewId={viewId}
+          assets={assets}
+          sprites={sprites}
+          onOpenView={onOpenView}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ---------- Close-up view overlay ----------
+function ViewOverlay({
+  scene,
+  state,
+  assets,
+  sprites,
+  view,
+  zoom,
+  onClose,
+}: {
+  scene: Scene;
+  state: SessionState;
+  assets: Record<string, Asset>;
+  sprites: Record<string, Sprite>;
+  view: View;
+  zoom: number;
+  onClose: () => void;
+}) {
+  const locked = view.requiresItem?.length
+    ? !view.requiresItem.every((i) => state.inventory.includes(i))
+    : false;
+
+  const say = usePlayerStore((s) => s.setToast);
+
+  if (locked) {
+    return (
+      <div
+        className="w-full h-full bg-surface border border-gray-700 rounded-xl flex flex-col items-center justify-center gap-3 p-6"
+        dir="rtl"
+      >
+        <div className="text-4xl">🔒</div>
+        <p className="text-sm text-gray-300">برای باز کردن این مورد به آیتم نیاز دارید.</p>
+        <button
+          className="px-4 py-2 rounded-xl bg-gray-700 hover:bg-gray-600 text-sm"
+          onClick={onClose}
+        >
+          بازگشت
+        </button>
+      </div>
+    );
+  }
+
+  const parentObj = scene.objects.find((o) => o.view?.id === view.id);
+
+  return (
+    <div className="w-full h-full relative bg-surface border border-gray-700 rounded-xl">
+      <div className="absolute inset-0 overflow-hidden rounded-xl">
+        <div
+          className="absolute top-0 left-0"
+          style={{
+            width: view.width,
+            height: view.height,
+            transform: `scale(${zoom})`,
+            transformOrigin: 'top left',
+          }}
+        >
+          <SceneContent
+            scene={scene}
+            state={state}
+            assets={assets}
+            sprites={sprites}
+            viewId={parentObj?.id}
+            onOpenView={() => {}}
+          />
         </div>
       </div>
 
-      {/* Bottom Panel */}
-      <div className="bg-surface/90 backdrop-blur border-t border-gray-700 p-3 space-y-3 flex-shrink-0 overflow-y-auto max-h-[40vh]">
-        <div className="max-w-2xl mx-auto space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-400">Digits found:</span>
-              <div className="flex gap-1">
-                {numberPieces.map((np) => (
-                  <div
-                    key={np.id}
-                    className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm font-bold ${
-                      discovered.includes(np.id) ? 'bg-amber-600 text-white' : 'bg-gray-700 text-gray-500'
-                    }`}
-                  >
-                    {discovered.includes(np.id) ? np.digit : '?'}
-                  </div>
-                ))}
-              </div>
-            </div>
-            {roomComplete && (
-              <span className="text-xs bg-green-600 text-white px-2 py-1 rounded-lg">
-                ✓ Room complete! Digit: {currentScene.exitNumber}
+      <div
+        className="absolute top-2 right-2 left-2 flex items-center justify-between z-10"
+        dir="rtl"
+      >
+        <span className="bg-black/60 text-xs px-2 py-1 rounded-lg">{view.title}</span>
+        <button
+          className="bg-black/60 hover:bg-red-600/80 text-xs px-2.5 py-1 rounded-lg"
+          onClick={() => {
+            if (view.closeMessage) say(view.closeMessage);
+            onClose();
+          }}
+        >
+          ✕ بستن
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Inventory ----------
+function InventoryPanel() {
+  const inventory = usePlayerStore((s) => s.session?.state.inventory ?? EMPTY);
+  const selectedItem = usePlayerStore((s) => s.selectedItem);
+  const selectItem = usePlayerStore((s) => s.selectItem);
+  const scenes = usePlayerStore((s) => s.scenes);
+  const projectId = usePlayerStore((s) => s.session?.projectId);
+  const assets = usePlayerStore((s) => s.assets);
+  const sprites = usePlayerStore((s) => s.sprites);
+
+  const itemMeta = useMemo(() => {
+    const m: Record<string, { name: string; url: string; color?: string }> = {};
+    if (!projectId) return m;
+
+    const walk = (objs: SceneObject[]) => {
+      for (const o of objs) {
+        const sp = getSprite(o.spriteRef, sprites);
+        const u = spriteSrc(o.spriteRef, sprites, assets);
+
+        if (o.grantsItem && !m[o.grantsItem]) {
+          m[o.grantsItem] = { name: o.name, url: u, color: sp?.color };
+        }
+
+        const key = o.pickupItemId || o.id;
+        if (o.pickupable && !m[key]) {
+          m[key] = { name: o.name, url: u, color: sp?.color };
+        }
+
+        o.transforms?.forEach((t) => {
+          if (t.grantsItem && !m[t.grantsItem]) {
+            const tref = t.newSpriteId ? transformRef(t.newSpriteId) : o.spriteRef;
+            m[t.grantsItem] = {
+              name: `${o.name} ✨`,
+              url: spriteSrc(tref, sprites, assets),
+              color: getSprite(tref, sprites)?.color,
+            };
+          }
+        });
+
+        if (o.view) walk(o.view.objects);
+      }
+    };
+
+    Object.values(scenes)
+      .filter((sc) => sc.projectId === projectId)
+      .forEach((sc) => walk(sc.objects));
+
+    return m;
+  }, [scenes, projectId, assets, sprites]);
+
+  // Group duplicates so e.g. 3 collected fuses show one icon with a ×3 counter.
+  const counts = inventory.reduce<Record<string, number>>(
+    (a, id) => ((a[id] = (a[id] ?? 0) + 1), a),
+    {},
+  );
+
+  return (
+    <div
+      className="bg-surface border-t border-gray-700 px-3 py-2 flex items-center gap-2 min-h-[64px] overflow-x-auto"
+      dir="rtl"
+    >
+      <span className="text-xs text-gray-400 shrink-0 ml-1">🎒 کیف:</span>
+
+      {inventory.length === 0 && (
+        <span className="text-xs text-gray-600">خالی — بگردید و آیتم پیدا کنید!</span>
+      )}
+
+      {Object.keys(counts).map((id) => {
+        const meta = itemMeta[id];
+
+        return (
+          <button
+            key={id}
+            onClick={() => selectItem(selectedItem === id ? null : id)}
+            className={`relative shrink-0 w-12 h-12 rounded-xl border flex items-center justify-center overflow-hidden transition-all ${
+              selectedItem === id
+                ? 'border-amber-400 ring-2 ring-amber-400/50 scale-110'
+                : 'border-gray-600 hover:border-gray-400'
+            }`}
+            title={meta?.name ?? itemName([], id)}
+          >
+            {meta?.url ? (
+              <img src={meta.url} alt="" className="w-full h-full object-contain p-0.5" />
+            ) : meta?.color ? (
+              <div
+                className="w-full h-full rounded-md"
+                style={{ background: meta.color }}
+                title={meta.name}
+              />
+            ) : (
+              <span className="text-[9px] text-gray-300 px-0.5 truncate">
+                {meta?.name ?? itemName([], id)}
               </span>
             )}
-          </div>
 
-          {projectScenes.length > 1 && (
-            <div className="flex gap-2 overflow-x-auto">
-              {projectScenes.map(s => (
-                <button
-                  key={s.id}
-                  className={`px-3 py-1 rounded-lg text-xs whitespace-nowrap ${
-                    s.id === currentSceneId
-                      ? 'bg-indigo-600 text-white'
-                      : sessionState.completedScenes.includes(s.id)
-                        ? 'bg-green-800 text-green-200'
-                        : 'bg-gray-700 text-gray-300'
-                  }`}
-                  onClick={() => switchScene(s.id)}
-                >
-                  {s.title}
-                </button>
-              ))}
-            </div>
-          )}
+            {counts[id] > 1 && (
+              <span className="absolute -bottom-1 -left-1 bg-amber-500 text-black text-[10px] rounded-full px-1">
+                ×{counts[id]}
+              </span>
+            )}
+          </button>
+        );
+      })}
 
-          <InventoryPanel />
+      {selectedItem && (
+        <span className="text-[11px] text-amber-300 mr-2 shrink-0 animate-pulse">
+          آیتم انتخاب شد — روی یک شیء کلیک کنید تا استفاده شود
+        </span>
+      )}
+    </div>
+  );
+}
 
-          {allComplete && !gameComplete && <FinalLock />}
+// ---------- Final lock ----------
+function FinalLock() {
+  const session = usePlayerStore((s) => s.session);
+  const scenes = usePlayerStore((s) => s.scenes);
+  const lockInput = usePlayerStore((s) => s.lockInput);
+  const enterDigit = usePlayerStore((s) => s.enterLockDigit);
+  const clearDigit = usePlayerStore((s) => s.clearLockDigit);
+  const submitLock = usePlayerStore((s) => s.submitLock);
+  const resetGame = usePlayerStore((s) => s.resetGame);
+
+  if (!session) return null;
+
+  const list = Object.values(scenes).filter((sc) => sc.projectId === session.projectId);
+  const ready = allRoomsComplete(session.state, list);
+
+  if (session.complete) {
+    return (
+      <div className="h-full flex items-center justify-center p-6" dir="rtl">
+        <div className="text-center space-y-4 bg-surface border border-emerald-500/50 rounded-2xl p-8 max-w-md shadow-2xl">
+          <div className="text-6xl">🏆</div>
+          <h2 className="text-2xl font-bold text-emerald-400">تبریک! فرار موفق!</h2>
+          <p className="text-sm text-gray-400">
+            شما رمز نهایی را درست وارد کردید و اتاق فرار را تمام کردید.
+          </p>
+          <button
+            onClick={resetGame}
+            className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-sm font-bold"
+          >
+            🔄 بازی جدید
+          </button>
         </div>
       </div>
+    );
+  }
+
+  return (
+    <div className="h-full flex items-center justify-center p-6" dir="rtl">
+      <div className="w-full max-w-sm bg-surface border border-gray-700 rounded-2xl p-6 space-y-4">
+        <h2 className="font-bold">🔐 قفل خروج</h2>
+        <p className="text-xs text-gray-400">
+          {ready
+            ? 'همه اتاق‌ها کامل شده‌اند! رمز نهایی را وارد کنید.'
+            : 'ابتدا همه اتاق‌ها را کامل کنید.'}
+        </p>
+
+        <div className="flex gap-2 justify-center" dir="ltr">
+          {list.map((sc) => {
+            const done = session.state.completedScenes.includes(sc.id);
+            return (
+              <div
+                key={sc.id}
+                className={`w-10 h-12 rounded-lg border flex items-center justify-center text-lg font-bold ${
+                  done
+                    ? 'border-emerald-500 text-emerald-400 bg-emerald-500/10'
+                    : 'border-gray-600 text-gray-600'
+                }`}
+              >
+                {/* the lock code is each room's exit digit — not whichever digit object the player found */}
+                {done ? faDigits(String(sc.exitNumber)) : '?'}
+              </div>
+            );
+          })}
+        </div>
+
+        <div
+          className="bg-black/40 rounded-xl py-3 text-center text-2xl tracking-[0.5em] font-mono"
+          dir="ltr"
+        >
+          {lockInput ? (
+            faDigits(lockInput)
+          ) : (
+            <span className="text-gray-600 text-base">— — —</span>
+          )}
+        </div>
+
+        <div className="grid grid-cols-3 gap-2" dir="ltr">
+          {'123456789'.split('').map((d) => (
+            <button
+              key={d}
+              disabled={!ready}
+              onClick={() => enterDigit(d)}
+              className="py-2.5 rounded-xl bg-surface-light hover:bg-surface-lighter border border-gray-700 disabled:opacity-30 font-bold text-lg"
+            >
+              {faDigits(d)}
+            </button>
+          ))}
+
+          <button
+            disabled={!ready}
+            onClick={clearDigit}
+            className="py-2.5 rounded-xl bg-red-900/40 hover:bg-red-800/50 border border-red-800 disabled:opacity-30 text-sm"
+          >
+            ⌫
+          </button>
+
+          <button
+            disabled={!ready}
+            onClick={() => enterDigit('0')}
+            className="py-2.5 rounded-xl bg-surface-light hover:bg-surface-lighter border border-gray-700 disabled:opacity-30 font-bold text-lg"
+          >
+            {faDigits('0')}
+          </button>
+
+          <button
+            disabled={!ready || !lockInput}
+            onClick={submitLock}
+            className="py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-30 text-sm font-bold"
+          >
+            ✔
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Main Player ----------
+export default function Player({ projectName }: { projectName: string }) {
+  const loadFromStudio = usePlayerStore((s) => s.loadFromStudio);
+  const session = usePlayerStore((s) => s.session);
+  const scenes = usePlayerStore((s) => s.scenes);
+  const assets = usePlayerStore((s) => s.assets);
+  const sprites = usePlayerStore((s) => s.sprites);
+  const switchScene = usePlayerStore((s) => s.switchScene);
+  const resetGame = usePlayerStore((s) => s.resetGame);
+  const [tab, setTab] = useState<'rooms' | 'exit'>('rooms');
+
+  useEffect(() => {
+    loadFromStudio();
+  }, [loadFromStudio]);
+
+  const sceneList = useMemo(
+    () =>
+      session
+        ? Object.values(scenes).filter((sc) => sc.projectId === session.projectId)
+        : [],
+    [scenes, session],
+  );
+
+  const currentScene = session ? scenes[session.state.currentSceneId] : undefined;
+
+  if (!session) {
+    return (
+      <div className="h-full flex items-center justify-center text-gray-400" dir="rtl">
+        در حال بارگذاری…
+      </div>
+    );
+  }
+
+  if (!session.started) {
+    return (
+      <>
+        <Toast />
+        <Lobby projectName={projectName} />
+      </>
+    );
+  }
+
+  const roomDone = (sc: Scene) => session.state.completedScenes.includes(sc.id);
+
+  return (
+    <div className="h-full flex flex-col" dir="rtl">
+      <Toast />
+
+      {/* Room tabs */}
+      <div className="flex items-center gap-1 px-2 py-1.5 bg-surface border-b border-gray-700 overflow-x-auto flex-shrink-0">
+        {sceneList.map((sc, i) => (
+          <button
+            key={sc.id}
+            onClick={() => {
+              setTab('rooms');
+              switchScene(sc.id);
+            }}
+            className={`px-3 py-1 rounded-lg text-xs whitespace-nowrap ${
+              tab === 'rooms' && sc.id === session.state.currentSceneId
+                ? 'bg-indigo-600 text-white'
+                : roomDone(sc)
+                ? 'bg-emerald-900/50 text-emerald-300 hover:bg-emerald-800/50'
+                : 'bg-surface-light text-gray-300 hover:bg-surface-lighter'
+            }`}
+          >
+            {roomDone(sc) ? '✓ ' : ''}
+            {faDigits(String(i + 1))}. {sc.title}
+          </button>
+        ))}
+
+        <button
+          onClick={() => setTab('exit')}
+          className={`mr-auto px-3 py-1 rounded-lg text-xs whitespace-nowrap ${
+            tab === 'exit'
+              ? 'bg-amber-600 text-black font-bold'
+              : 'bg-surface-light text-amber-300 hover:bg-surface-lighter'
+          }`}
+        >
+          🔐 خروج
+        </button>
+
+        <button
+          onClick={() => {
+            if (confirm('بازی از اول شروع شود؟ همه‌ی پیشرفت پاک می‌شود.')) {
+              setTab('rooms');
+              resetGame();
+            }
+          }}
+          title="ریست بازی"
+          aria-label="ریست بازی"
+          className="px-3 py-1 rounded-lg text-xs whitespace-nowrap bg-red-900/40 text-red-300 hover:bg-red-800/50"
+        >
+          🔄 ریست
+        </button>
+      </div>
+
+      {/* Stage */}
+      <div className="flex-1 min-h-0">
+        {tab === 'exit' ? (
+          <FinalLock />
+        ) : currentScene ? (
+          <SceneStage
+            key={currentScene.id}
+            scene={currentScene}
+            state={session.state}
+            assets={assets}
+            sprites={sprites}
+          />
+        ) : (
+          <div
+            className="h-full flex items-center justify-center text-gray-500 text-sm"
+            dir="rtl"
+          >
+            اتاقی وجود ندارد — در استودیو بسازید.
+          </div>
+        )}
+      </div>
+
+      <InventoryPanel />
     </div>
   );
 }

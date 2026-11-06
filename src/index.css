@@ -2,52 +2,76 @@
 
 @theme {
   --font-vazir: 'Vazirmatn', system-ui, sans-serif;
-  --color-primary: #6366f1;
-  --color-primary-dark: #4f46e5;
-  --color-accent: #f59e0b;
-  --color-success: #10b981;
-  --color-danger: #ef4444;
-  --color-surface: #1e1e2e;
-  --color-surface-light: #2a2a3e;
-  --color-surface-lighter: #363650;
+
+  /* Accent: Unity selection blue */
+  --color-primary: #3d7ab8;
+  --color-primary-dark: #2c5d87;
+  --color-accent: #e0a030;
+  --color-success: #5fa84a;
+  --color-danger: #d04a3a;
+
+  /* Neutral editor greys */
+  --color-surface: #383838;          /* dock / inspector body */
+  --color-surface-light: #2b2b2b;    /* input fields */
+  --color-surface-lighter: #4b4b4b;  /* buttons */
+  --color-surface-hover: #5a5a5a;
+  --color-line: #1c1c1c;
+  --color-dock-head: #282828;        /* tab strips, title bar */
+  --color-viewport: #1d1d1d;
+
+  /* Old hard-coded indigo → selection blue (Layers, tabs, menu hover…) */
+  --color-indigo-300: #8fb8e3;
+  --color-indigo-400: #6a9fd4;
+  --color-indigo-500: #3d7ab8;
+  --color-indigo-600: #2c5d87;
+  --color-indigo-700: #244d70;
 }
 
-* {
-  font-family: 'Vazirmatn', system-ui, sans-serif;
-  box-sizing: border-box;
-}
+* { font-family: 'Vazirmatn', system-ui, sans-serif; box-sizing: border-box; }
 
 body {
-  margin: 0;
-  padding: 0;
-  direction: rtl;
-  background: #0f0f1a;
-  color: #e2e8f0;
-  overflow: hidden;
-  height: 100vh;
+  margin: 0; padding: 0; direction: rtl;
+  background: #1d1d1d; color: #d2d2d2;
+  overflow: hidden; height: 100vh;
+}
+#root { height: 100vh; overflow: hidden; }
+
+@layer base {
+  :where(button, input, select, textarea, [role="button"]):focus-visible {
+    outline: 1px solid var(--color-primary);
+    outline-offset: 1px;
+  }
+  button { transition: background-color .12s, color .12s, border-color .12s, opacity .12s; }
+  button:disabled { cursor: not-allowed; }
+  input[type="checkbox"], input[type="range"] { accent-color: var(--color-primary); }
+  input[type="color"] { border: 1px solid var(--color-line); border-radius: 3px; background: none; }
 }
 
-#root {
-  height: 100vh;
-  overflow: hidden;
-}
 
-/* RTL icon mirroring */
-.rtl-mirror {
-  transform: scaleX(-1);
+/* Native selects: flat Unity-style dropdown with a small chevron (unlayered so it beats utilities) */
+select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%23999'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  padding-right: 18px;
 }
+/* number inputs: hide spinners, the axis label scrubs instead */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+input[type="number"] { -moz-appearance: textfield; }
 
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: #1e1e2e;
-}
-::-webkit-scrollbar-thumb {
-  background: #4a4a6a;
-  border-radius: 3px;
+.rtl-mirror { transform: scaleX(-1); }
+
+/* Scrollbars: thin, flat, Unity-like */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #2b2b2b; }
+::-webkit-scrollbar-thumb { background: #5a5a5a; border: 2px solid #2b2b2b; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: #6e6e6e; }
+::-webkit-scrollbar-corner { background: #2b2b2b; }
+
+.dock-assets .grid.grid-cols-2 {
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
 }
 
 /* Animations */
@@ -94,6 +118,9 @@ body {
   color: white;
   cursor: pointer;
   transition: all 0.15s;
+}
+.num-key:hover {
+  background: #363650;
 }
 .num-key:active {
   background: #6366f1;
