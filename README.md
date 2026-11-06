@@ -1,105 +1,126 @@
-# Escape Room - Multiplayer Game Platform
+# Escape Room Studio
 
-A Persian-language (RTL) multiplayer escape room & hidden object platform designed for Telegram group play. The UI is in English, but all game content (messages, object names, clues) is in Persian/Farsi.
+A Persian-language (RTL) escape room / hidden-object designer and player. Built as a single-page app: a Konva-based **Design Studio** for building rooms, and a **Player** for Telegram-group play. The UI is in English; all game content (messages, object names, clues) is in Persian/Farsi and rendered right-to-left.
 
 ## Structure
 
 ```
 src/
-├── shared/          # Types, Zod schemas, game logic
-│   ├── types.ts     # TypeScript interfaces + Zod schemas
-│   ├── game-logic.ts # Pure game logic functions
-│   └── seed-data.ts # Seed data (project with 2 rooms + views)
+├── shared/              # Types, constants, game logic, persistence
+│   ├── types.ts         # TypeScript interfaces + factories + import normalization
+│   ├── game-logic.ts    # Pure game logic (discover, pickup, item-on-object, doors, locks)
+│   ├── validation.ts    # Project validation (errors + warnings)
+│   ├── seed-data.ts     # Seed project (sample rooms, sprites, views)
+│   ├── geometry.ts      # Box/point math + legacy geometry migration
+│   ├── idb.ts           # IndexedDB storage layer
+│   ├── notify.tsx       # Toast notifications
+│   └── utils.ts         # uid, nowIso, svgDataUrl, image loading
 ├── stores/
-│   └── store.ts     # Zustand stores (Studio + Player)
-├── studio/
-│   └── Studio.tsx   # Scene editor with Konva
-├── player/
-│   └── Player.tsx   # Player game interface
-├── App.tsx          # Main routing
-└── index.css        # RTL + Tailwind styles
+│   └── store.ts         # Zustand stores (useStudioStore, usePlayerStore) + hooks
+├── studio/              # Design editor (Konva + react-konva)
+│   ├── Studio.tsx       # Shell + routing between projects/editor
+│   ├── Canvas.tsx       # Konva stage, pan/zoom/grid, object rendering
+│   ├── Panels.tsx       # Side panels (assets, layers, objects, views)
+│   ├── Properties.tsx   # Per-object property editor
+│   ├── ViewTab.tsx      # Interactive View editor inside an object
+│   ├── Preview.tsx      # In-page player preview
+│   ├── ProjectsView.tsx # Project list (create/delete/duplicate/import)
+│   ├── MenuBar.tsx      # File/edit (undo/redo, export/import bundle)
+│   ├── commands.ts      # Undo/redo commands (Command pattern)
+│   ├── dock.tsx, ui.tsx, icons.tsx, konva-bits.tsx, Transitions.tsx
+├── player/              # In-game interface
+│   └── Player.tsx       # Lobby, room, inventory, views, final lock
+├── App.tsx              # Main routing (studio vs player)
+├── index.css            # RTL + Tailwind styles
+├── main.tsx
+├── index.html
+├── vite.config.js
+└── tsconfig.json
 ```
 
 ## Features
 
 ### Design Studio
-- ✅ Project management (create, delete, list)
-- ✅ **Assets Panel** - manage all images used in project
-  - 📂 **Folder upload** - upload entire folders at once
-  - 📄 **Files upload** - upload multiple files
-  - 🔍 **Search** - filter assets by name
-  - 🗑️ **Delete** - remove unused assets
-  - 🖼️ **Instant preview** - thumbnails shown immediately
-- ✅ Konva editor with infinite pan/zoom
-- ✅ Object CRUD with drag & resize
-- ✅ Properties panel for every SceneObject field
-- ✅ **Image upload for objects** (like background upload)
-- ✅ Background upload with auto-dimension detection
-- ✅ **Layered backgrounds** - multiple background layers with opacity
-- ✅ **Global layer index system** - unified z-ordering for all objects
-- ✅ Visual clue chain editor
-- ✅ Layers panel with layerIndex + zIndex
+- ✅ Project management: create, delete, duplicate, list; JSON bundle export/import (format `escape-studio`, version 3)
+- ✅ **Assets Panel** — manage project images: folder upload, multi-file upload, search by name, delete, instant thumbnails
+- ✅ **Unified sprite model** — every object is one "sprite"; behavior comes from properties and rules, not a type enum
+- ✅ Konva editor with infinite pan/zoom, grid, snap-to-grid, select/multi-select (Shift+click), drag & resize
+- ✅ **Properties panel** for every `SceneObject` field (geometry, sprite, visibility, locks, messages, digits)
+- ✅ **Layered backgrounds** — multiple background layers with opacity, visibility, offset
+- ✅ **Visual clue chain editor** — ordered object IDs that feed the final lock digits
+- ✅ **Interactive Views** — close-up zoomable views per object (their own background + objects + transforms)
+- ✅ **Doors** — clickable objects that move the player between rooms, optionally gated by inventory items
+- ✅ **Motion (rotate)** — click-to-rotate sprites (hinges, levers, clock hands) with pivot, angle, step limits, toggle
+- ✅ **Transforms & effects** — item-triggered object changes; effects can transform other objects, change backgrounds, unlock doors, or complete rooms
+- ✅ Validation panel (errors/warnings from `validateProject`)
+- ✅ Undo/Redo (Ctrl+Z / Ctrl+Y) via command stack
 - ✅ In-page preview mode
-- ✅ Validation panel
-- ✅ Undo/Redo (Ctrl+Z / Ctrl+Y)
-- ✅ JSON export/import
-- ✅ Room duplication
-- ✅ Grid & snap-to-grid
-- ✅ Interactive View configuration per object
+- ✅ JSON export/import, room duplication, migration of legacy `imageUrl` bundles
 
 ### Player
 - ✅ Lobby with player list & Ready button
 - ✅ Konva room rendering (responsive fit, no zoom/pan in main game)
-- ✅ Click-to-discover objects
-- ✅ Clue message display (long duration: 5-7 seconds)
-- ✅ **Interactive Views** (close-up zoomable views with zoom/pan inside)
-- ✅ **Full Inventory System**:
-  - Pickupable objects (configurable per object)
-  - Items added to inventory with custom messages
-  - Use items on objects to trigger transforms
-  - Objects can change image/name after item use
-  - Items can be consumed or kept after use
-- ✅ Room digit counter
-- ✅ Final lock with numeric keypad
-- ✅ Victory animation
-- ✅ Room navigation
-- ✅ Online/offline player indicators
-- ✅ localStorage save & resume
-- ✅ Mobile-first touch UX
-- ✅ ARIA labels on all buttons
+- ✅ Click-to-discover objects (first-click-wins in multiplayer)
+- ✅ Clue message display
+- ✅ **Interactive Views** — zoom/pan inside close-up views
+- ✅ **Full Inventory System**: pickupable objects, custom pickup messages, use item on object → transform, consume-or-keep items
+- ✅ Room digit counter, final lock with numeric keypad, victory animation
+- ✅ Room navigation via doors, online/offline player indicators
+- ✅ Persistence (IndexedDB) save & resume
+- ✅ Mobile-first touch UX, ARIA labels on all buttons
 
 ### Studio Canvas Controls
-- ✅ **Zoom:** Mouse scroll wheel
-- ✅ **Pan:** Hold Space + drag, or middle mouse button drag
-- ✅ **Web-app feel:** No browser scroll, fixed layout, overflow:hidden
-- ✅ **Grid & snap:** Toggleable grid with adjustable size
-- ✅ **Cursor feedback:** grab/grabbing when panning
+| Action | Control |
+|--------|---------|
+| Zoom | Mouse scroll wheel |
+| Pan | Hold Space + drag, or middle mouse button drag |
+| Select object | Click on object |
+| Multi-select | Shift + Click |
+| Delete object | Delete key |
+| Undo | Ctrl + Z |
+| Redo | Ctrl + Y |
+
+### Player (Game)
+| Action | Control |
+|--------|---------|
+| Discover object | Click on object |
+| Use item | Select item from inventory → click target object |
+| Open view | Click object with 🔍 indicator |
+| Close view | Click "Close" button |
+| View zoom / pan | Mouse scroll wheel / Space + drag |
 
 ## Running
 
 ```bash
-npm install
-npm run dev      # Development server
-npm run build    # Production build
+npm install            # install dependencies
+npm run dev            # dev server (Vite)
+npm run build          # production build
+npm run typecheck      # tsc --noEmit
+npm test               # vitest run
 ```
 
-## Object Types
+## Tech Stack
 
-ساده‌سازی شده به ۳ نوع:
+- React 18 + TypeScript (strict)
+- Vite 6
+- TailwindCSS 4
+- Konva.js + react-konva (canvas rendering)
+- Zustand (state management, IndexedDB persistence)
+- Vazirmatn (Persian font, self-hosted via Google Fonts)
+- vitest (testing)
 
-### 1. Decoration (🖼️)
-- اشیاء تزئینی که پیام نمایش می‌دهند
-- می‌توانند `digit` داشته باشند (برای ارقام قفل)
-- می‌توانند `view` داشته باشند (نمای تعاملی)
-- می‌توانند `pickupable` باشند
+> Note: there is **no Zod** in this project — validation is hand-rolled in `src/shared/validation.ts`.
 
-### 2. Inventory (🎒)
-- آیتم‌های قابل برداشتن
-- حتماً `pickupable: true` دارند
-- به inventory بازیکن اضافه می‌شوند
+## Language
 
-### 3. Container (📦)
-- اشیایی که با آیتم باز می‌شوند
+- **UI Language:** English (buttons, labels, navigation)
+- **Game Content:** Persian/Farsi (messages, object names, clues)
+- **Direction:** RTL for game content
+- **Font:** Vazirmatn
+
+## Data Model
+
+See `DATA_MODEL.md` for the full type reference (sprites, assets, scenes, projects, transforms, effects, runtime session state).ند
 - `requiresItem` برای باز شدن
 - می‌توانند `digit` یا `transforms` داشته باشند
 
