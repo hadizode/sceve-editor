@@ -1,10 +1,10 @@
 import React, { useState, useRef } from 'react';
 import { Stage, Layer, Image as KImage, Rect, Text, Transformer, Group, Line, Circle, Shape } from 'react-konva';
 import useImage from 'use-image';
-import { useStudioStore } from '../stores/store';
+import { useStudioStore } from '../stores/studio';
 import type { SceneObject, ObjectType, View, Asset } from '../shared/types';
+import { getObjectCorners, getRotatedBounds, createObjectHitFunc } from '../shared/geometry';
 import { validateScene } from '../shared/types';
-import { getObjectCorners, getRotatedBounds, createObjectHitFunc } from '../shared/game-logic';
 
 // ============ Konva Image Component ============
 function KonvaImage({ obj, isSelected, onSelect, onDragEnd, onChange }: {

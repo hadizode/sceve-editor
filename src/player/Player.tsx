@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Stage, Layer, Image as KImage, Rect, Circle, Group, Shape } from 'react-konva';
 import useImage from 'use-image';
-import { usePlayerStore } from '../stores/store';
+import { usePlayerStore } from '../stores/player';
 import { SEED_SESSION, SEED_SCENE, SEED_SCENE_2 } from '../shared/seed-data';
-import { isRoomComplete, allRoomsComplete, createObjectHitFunc, getRotatedBounds, getObjectCorners } from '../shared/game-logic';
+import { createObjectHitFunc, getRotatedBounds, getObjectCorners } from '../shared/geometry';
+import { isRoomComplete, allRoomsComplete } from '../shared/game';
 import type { SceneObject, View } from '../shared/types';
 
 // ============ Lobby Component ============
