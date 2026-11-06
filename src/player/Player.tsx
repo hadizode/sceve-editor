@@ -851,6 +851,7 @@ export default function Player({ projectName }: { projectName: string }) {
   const assets = usePlayerStore((s) => s.assets);
   const sprites = usePlayerStore((s) => s.sprites);
   const switchScene = usePlayerStore((s) => s.switchScene);
+  const resetGame = usePlayerStore((s) => s.resetGame);
   const [tab, setTab] = useState<'rooms' | 'exit'>('rooms');
 
   useEffect(() => {
@@ -921,6 +922,20 @@ export default function Player({ projectName }: { projectName: string }) {
           }`}
         >
           🔐 خروج
+        </button>
+
+        <button
+          onClick={() => {
+            if (confirm('بازی از اول شروع شود؟ همه‌ی پیشرفت پاک می‌شود.')) {
+              setTab('rooms');
+              resetGame();
+            }
+          }}
+          title="ریست بازی"
+          aria-label="ریست بازی"
+          className="px-3 py-1 rounded-lg text-xs whitespace-nowrap bg-red-900/40 text-red-300 hover:bg-red-800/50"
+        >
+          🔄 ریست
         </button>
       </div>
 
