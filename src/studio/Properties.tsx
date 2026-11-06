@@ -76,7 +76,7 @@ function regularPolygon(n: number): { x: number; y: number }[] {
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
 interface Ctx {
-  set: (patch: Partial<SceneObject>, key?: string) => void;
+  set: (patch: Partial<SceneObject>) => void;
   setPts: (pts: { x: number; y: number }[]) => void;
   fit: () => void;
   src: string;
@@ -97,7 +97,7 @@ export function PropertiesPanel() {
   }
 
   const inView = !!ctx0?.view;
-  const set = (patch: Partial<SceneObject>, key?: string) => st().updateObject(obj.id, patch, key ?? `${obj.id}:${Object.keys(patch).join()}`);
+  const set = (patch: Partial<SceneObject>) => st().updateObject(obj.id, patch);
   const ctx: Ctx = {
     set,
     setPts: (pts) => set({ hit: { kind: 'polygon', points: pts.map((p) => ({ x: clamp01(p.x), y: clamp01(p.y) })) } }),

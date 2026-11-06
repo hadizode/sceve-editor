@@ -806,6 +806,18 @@ export const useStudioStore = create<StudioState>()(
   )
 );
 
+// Safety net: `hydrated` is normally flipped by onRehydrateStorage above, but if
+// persistence ever hangs or throws before that callback fires (corrupt IndexedDB,
+// private browsing, storage quota…), the app would be stuck forever on
+// "در حال بارگذاری…" — which looks exactly like a blank page. Force-hydrate
+// shortly after startup so the UI always renders from the default/seed state.
+setTimeout(() => {
+  if (!useStudioStore.getState().hydrated) {
+    console.warn('Studio hydration did not complete in time; continuing with defaults.');
+    useStudioStore.setState({ hydrated: true });
+  }
+}, 1500);
+
 // ============ Player store (game session — plays the CURRENT studio project) ============
 const PLAYER_KEY = 'escape-player-v2';
 
