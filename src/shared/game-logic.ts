@@ -625,10 +625,10 @@ export function applyItemToObject(
 
 /**
  * Check if all rooms are complete.
- */
 export function allRoomsComplete(state: SessionState, scenes: Scene[]): boolean {
   return scenes.every((s) => state.completedScenes.includes(s.id));
 }
+*/
 
 // ============ Doors / Room transitions ============
 
@@ -667,4 +667,17 @@ export function tryEnterDoor(
     entered: true,
     message: [`🚪 وارد شدید: ${target.title}`, ...msgs].join(' • '),
   };
+}
+export function allRoomsComplete(state: SessionState, scenes: Scene[]): boolean {
+  return scenes.every((s) => state.completedScenes.includes(s.id));
+}
+
+export function validateFinalLock(
+  state: SessionState,
+  scenes: Scene[],
+  enteredDigits: string
+): { valid: boolean; message: string } {
+  const expected = scenes.map((s) => s.exitNumber.toString()).join('');
+  if (enteredDigits === expected) return { valid: true, message: 'تبریک! شما موفق شدید!' };
+  return { valid: false, message: 'رمز اشتباه است. دوباره تلاش کنید.' };
 }

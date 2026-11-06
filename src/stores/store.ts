@@ -33,9 +33,7 @@ import {
   canUseDoor,
   discoverObject,
   evaluateAutoTransforms,
-  isRoomComplete,
   pickupObject as pickupObj,
-  roomDigitTargets,
   tryEnterDoor,
   validateFinalLock,
 } from '../shared/game-logic';
@@ -888,27 +886,9 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     set({ toast: message ?? null });
     if (message) toastTimer = window.setTimeout(() => set({ toast: null }), ms);
   };
-
-  /** Persist + re-evaluate room completion after every state change. */
-  const commit = (state: SessionState) => {
-    const g = get();
-    const session = g.session;
-    if (!session) return;
-    // Instant-condition pass: rules whose `autoApply` condition just became true fire WITHOUT a
-    // click (e.g. the last fuse goes in → the final panel transforms right away). Loops until
-    // stable, so chained auto rules cascade in one commit.
-    const auto = evaluateAutoTransforms(state, g.scenes);
-    for (const m of auto.messages) say(m, 5000);
-    state = auto.state;
-    const list = Object.values(g.scenes).filter((sc) => sc.projectId === session.projectId);
-    const completed = new Set(state.completedScenes ?? session.state.completedScenes);
-    for (const sc of list) {
-      if (roomDigitTargets(sc).length > 0 && isRoomComplete(state, sc)) completed.add(sc.id);
-    }
-    const next: SessionState = { ...state, completedScenes: [...completed] };
-    set({ session: { ...session, state: next } });
-    persistPlayer(get());
-  };
+  // completedScenes حالا فقط از افکت completeRoom پر می‌شود (در applyEffect)
+  set({ session: { ...session, state } });
+  persistPlayer(get());
 
   const sceneOfCurrent = () => {
     const g = get();
