@@ -34,6 +34,7 @@ import {
   discoverObject,
   evaluateAutoTransforms,
   pickupObject as pickupObj,
+  resolveSpriteState,
   tryEnterDoor,
   validateFinalLock,
 } from '../shared/game-logic';
@@ -841,6 +842,7 @@ interface PlayerState {
   rotateObject: (objectId: string, viewId?: string) => void;
   pickup: (objectId: string, viewId?: string) => void;
   useItemOnObject: (itemId: string | null, objectId: string, viewId?: string) => void;
+  toggleSpriteState: (objectId: string, viewId?: string) => void;
   enterLockDigit: (d: string) => void;
   clearLockDigit: () => void;
   submitLock: () => void;
@@ -1045,6 +1047,23 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
       if (res.grantsItem) say(`🎒 آیتم به دست آمد: ${itemName(objs, res.grantsItem)}`, 5000);
       else if (res.message) say(res.message);
       if (res.newState !== g.session.state) commit(res.newState);
+    },
+
+    /** Cross-fade a two-state sprite between its A and B images. Idempotent when already at the target state. */
+    toggleSpriteState: (objectId, viewId) => {
+      const g = get();
+      const scene = sceneOfCurrent();
+      if (!g.session || !scene) return;
+      const objs = viewId ? scene.objects.find((o) => o.id === viewId)?.view?.objects ?? [] : scene.objects;
+      const obj = objs.find((o) => o.id === objectId);
+      if (!obj?.twoState) return;
+      const cur = resolveSpriteState(g.session.state, obj);
+      const next = cur === 'a' ? 'b' : 'a';
+      if (next === cur) return;
+      commit({
+        ...g.session.state,
+        spriteStates: { ...(g.session.state.spriteStates ?? {}), [objectId]: next },
+      });
     },
 
     /**

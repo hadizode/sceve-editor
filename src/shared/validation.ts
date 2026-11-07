@@ -31,11 +31,17 @@ export function sceneRefs(scene: Scene): string[] {
   const refs: string[] = [scene.backgroundUrl, ...scene.backgroundLayers.map((l) => l.spriteRef)];
   for (const o of scene.objects) {
     refs.push(o.spriteRef);
+    if (o.twoState) {
+      refs.push(o.twoState.a, o.twoState.b);
+    }
     o.transforms?.forEach((t) => t.newSpriteId && refs.push(transformRef(t.newSpriteId)));
     if (o.view) {
       refs.push(o.view.backgroundUrl);
       o.view.objects.forEach((v) => {
         refs.push(v.spriteRef);
+        if (v.twoState) {
+          refs.push(v.twoState.a, v.twoState.b);
+        }
         v.transforms?.forEach((t) => t.newSpriteId && refs.push(transformRef(t.newSpriteId)));
       });
     }
@@ -130,6 +136,18 @@ export function validateProject(
             at(`"${o.name}" ${label} effect points at object "${eff.objectId || '?'}" that does not exist`, 'error', top);
           }
         }
+        if (eff.action === 'setSpriteState') {
+          if (!eff.objectId) {
+            at(`"${o.name}" ${label} effect targets no object`, 'error', top);
+            return;
+          }
+          const target = list.flatMap((s2) => flattenObjects(s2)).find((x) => x.id === eff.objectId);
+          if (!target) {
+            at(`"${o.name}" ${label} effect points at object "${eff.objectId}" that does not exist`, 'error', top);
+          } else if (!target.twoState) {
+            at(`"${o.name}" ${label} effect points at object "${target.name}" which has no two-state sprite`, 'error', top);
+          }
+        }
       };
       o.pickupEffects?.forEach((eff, i) => checkSetUsable(eff, `pickup effect #${i + 1}`));
       o.transforms?.forEach((t, ti) => {
@@ -173,6 +191,8 @@ export function validateProject(
       if (!o.spriteRef) at(`"${o.name}" has no sprite`, 'warning', top);
       else if (!spriteHasVisual(spr) && !o.transforms?.length)
         at(`"${o.name}" sprite is empty (no image/color) and nothing transforms it`, 'warning', top);
+      if (o.twoState && !o.twoState.a)
+        at(`"${o.name}" two-state sprite has no "A" image`, 'warning', top);
     }
 
     for (const o of scene.objects) {

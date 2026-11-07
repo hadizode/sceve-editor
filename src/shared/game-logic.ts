@@ -258,6 +258,26 @@ function applyEffect(state: SessionState, eff: TransformEffect, triggerSceneId: 
     return { ...state, completedScenes: [...state.completedScenes, sid] };
   }
 
+  // --- cross-fade between two states of a two-state sprite ('a' | 'b' | 'toggle') ---
+  if (eff.action === 'setSpriteState') {
+    if (!eff.objectId) return state;
+    const list = [
+      ...targetScene.objects,
+      ...targetScene.objects.flatMap((o) => (o.view ? o.view.objects : [])),
+    ];
+    const obj = list.find((o) => o.id === eff.objectId);
+    const ts = obj?.twoState;
+    if (!ts) return state;
+    const cur = resolveSpriteState(state, obj);
+    const mode = eff.spriteState ?? 'toggle';
+    const nextState = mode === 'toggle' ? (cur === 'a' ? 'b' : 'a') : mode;
+    if (nextState === cur) return state;
+    return {
+      ...state,
+      spriteStates: { ...(state.spriteStates ?? {}), [obj.id]: nextState },
+    };
+  }
+
   // --- automatically apply a transform rule on another object ---
   if (eff.action !== 'transform' || !targetScene) return state;
   const list = [
@@ -291,6 +311,13 @@ function applyEffect(state: SessionState, eff: TransformEffect, triggerSceneId: 
   // The auto-transformed object may itself carry effects → the engine follows them recursively.
   if (rule.effects?.length) next = applyEffects(next, rule.effects, scopeId, ctx.scenesById).state;
   return next;
+}
+
+/** Resolve the active two-state sprite state of an object: stored override, else `initial`, else 'a'. */
+export function resolveSpriteState(state: SessionState, obj: SceneObject): 'a' | 'b' {
+  const ts = obj.twoState;
+  if (!ts) return 'a';
+  return state.spriteStates?.[obj.id] ?? ts.initial ?? 'a';
 }
 
 /** Fire a batch of effects (recursive-safe); returns the new state plus any toast messages they produced. */
