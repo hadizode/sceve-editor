@@ -51,7 +51,7 @@ src/
 - ✅ **Interactive Views** — close-up zoomable views per object (their own background + objects + transforms)
 - ✅ **Doors** — clickable objects that move the player between rooms, optionally gated by inventory items
 - ✅ **Motion (rotate)** — click-to-rotate sprites (hinges, levers, clock hands) with pivot, angle, step limits, toggle
-- ✅ **Transforms & effects** — item-triggered object changes; effects can transform other objects, change backgrounds, unlock doors, or complete rooms
+- ✅ **Transforms & effects** — object look changes with optional cross-fade and click toggle; effects can transform other objects, change backgrounds, unlock doors, or complete rooms
 - ✅ Validation panel (errors/warnings from `validateProject`)
 - ✅ Undo/Redo (Ctrl+Z / Ctrl+Y) via command stack
 - ✅ In-page preview mode

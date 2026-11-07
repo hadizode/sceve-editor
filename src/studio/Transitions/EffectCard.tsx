@@ -13,7 +13,6 @@ export const ACTIONS: { v: TransformEffect['action']; label: string }[] = [
   { v: 'background', label: 'Change background' },
   { v: 'unlockDoor', label: 'Open a door' },
   { v: 'setUsable', label: 'Lock / unlock an object' },
-  { v: 'setSpriteState', label: 'Set sprite state (A / B / toggle)' },
 ];
 
 export function EffectCard({
@@ -33,7 +32,6 @@ export function EffectCard({
   const curScene = useStudioStore((s) => s.currentSceneId);
   const targetKey = eff.objectId ? `${eff.sceneId ?? curScene}|${eff.objectId}` : '';
   const target = allObjs.find((t) => t.key === targetKey)?.obj;
-  const twoStateTargets = allObjs.filter((t) => !!t.obj.twoState);
   return (
     <div className="rounded border border-purple-800/50 bg-surface p-2 space-y-1.5">
       <div className="flex items-center gap-1">
@@ -47,6 +45,7 @@ export function EffectCard({
               objectId: undefined,
               doorObjectId: undefined,
               ruleIndex: undefined,
+              mode: undefined,
               usable: undefined,
             })
           }
@@ -80,6 +79,7 @@ export function EffectCard({
             </select>
           </Field>
           {target?.transforms && (
+            <>
             <Field label="Which rule" stack>
               <select className={inputCls} value={eff.ruleIndex ?? 0} onChange={(e) => onChange({ ruleIndex: Number(e.target.value) })}>
                 {target.transforms.map((t, i) => (
@@ -89,6 +89,22 @@ export function EffectCard({
                 ))}
               </select>
             </Field>
+            <Field label="Mode" stack>
+              <select
+                className={inputCls}
+                value={eff.mode ?? 'apply'}
+                onChange={(e) => {
+                  const v = e.target.value as 'apply' | 'revert' | 'toggle';
+                  onChange({ mode: v === 'apply' ? undefined : v });
+                }}
+              >
+                <option value="apply">Apply</option>
+                <option value="revert">Revert — step back to the look before this rule</option>
+                <option value="toggle">Toggle — apply, then revert on the next click</option>
+              </select>
+              <p className="text-[10px] text-gray-500">Applies the chosen rule of the target sprite.</p>
+            </Field>
+            </>
           )}
         </>
       )}
@@ -152,46 +168,6 @@ export function EffectCard({
             ))}
           </select>
           {!allObjs.some((t) => t.obj.door) && <Warn>No door exists yet. Mark a sprite as a door first.</Warn>}
-        </Field>
-      )}
-      {eff.action === 'setSpriteState' && (
-        <Field label="Target sprite (must have two states)" stack>
-          <select
-            className={inputCls}
-            value={targetKey}
-            onChange={(e) => {
-              const [sid, oid] = e.target.value.split('|');
-              onChange({
-                sceneId: !sid || sid === curScene ? undefined : sid,
-                objectId: oid || undefined,
-                spriteState: undefined,
-              });
-            }}
-          >
-            <option value="">— choose —</option>
-            {twoStateTargets.map((t) => (
-              <option key={t.key} value={t.key}>
-                {short(t.sceneTitle)} › {short(t.objTitle)}
-              </option>
-            ))}
-            {twoStateTargets.length === 0 && <option disabled>No sprite has two states yet</option>}
-          </select>
-          {!target?.twoState && (
-            <p className="text-[10px] text-amber-400">Pick a sprite that has "Two states" enabled.</p>
-          )}
-        </Field>
-      )}
-      {target?.twoState && eff.action === 'setSpriteState' && (
-        <Field label="Set to" stack>
-          <select
-            className={inputCls}
-            value={eff.spriteState ?? 'toggle'}
-            onChange={(e) => onChange({ spriteState: e.target.value as 'a' | 'b' | 'toggle' })}
-          >
-            <option value="toggle">Toggle (A ↔ B)</option>
-            <option value="a">State A</option>
-            <option value="b">State B</option>
-          </select>
         </Field>
       )}
       <Field label="Toast message (optional)" stack>

@@ -154,7 +154,7 @@ export function evaluateAutoTransforms(
     for (const { sceneId, obj } of candidates) {
       const nextIdx = (s.transformsApplied?.[obj.id] ?? -1) + 1;
       const rule = obj.transforms![nextIdx];
-      if (!rule || !rule.conditions?.autoApply) continue;
+      if (!rule || !rule.conditions?.autoApply || rule.toggle) continue;
       // Only fire when the rule needs no item (free) — item-gated rules still need the player.
       if (rule.requiresItem) continue;
       // Evaluate prerequisites from the LIVE state: recorded transforms, or visibly-applied ones
@@ -258,27 +258,7 @@ function applyEffect(state: SessionState, eff: TransformEffect, triggerSceneId: 
     return { ...state, completedScenes: [...state.completedScenes, sid] };
   }
 
-  // --- cross-fade between two states of a two-state sprite ('a' | 'b' | 'toggle') ---
-  if (eff.action === 'setSpriteState') {
-    if (!eff.objectId) return state;
-    const list = [
-      ...targetScene.objects,
-      ...targetScene.objects.flatMap((o) => (o.view ? o.view.objects : [])),
-    ];
-    const obj = list.find((o) => o.id === eff.objectId);
-    const ts = obj?.twoState;
-    if (!ts) return state;
-    const cur = resolveSpriteState(state, obj);
-    const mode = eff.spriteState ?? 'toggle';
-    const nextState = mode === 'toggle' ? (cur === 'a' ? 'b' : 'a') : mode;
-    if (nextState === cur) return state;
-    return {
-      ...state,
-      spriteStates: { ...(state.spriteStates ?? {}), [obj.id]: nextState },
-    };
-  }
-
-  // --- automatically apply a transform rule on another object ---
+  // --- automatically apply / revert / toggle a transform rule on another object ---
   if (eff.action !== 'transform' || !targetScene) return state;
   const list = [
     ...targetScene.objects,
@@ -289,12 +269,41 @@ function applyEffect(state: SessionState, eff: TransformEffect, triggerSceneId: 
   const idx = eff.ruleIndex ?? 0;
   const rule = obj.transforms[idx];
   if (!rule) return state;
+  const mode = eff.mode ?? 'apply';
+  const current = state.transformsApplied?.[obj.id] ?? -1;
+
+  // 'revert' skips the condition check and the `visited` guard: step back to before this rule
+  // (or to the original look when nothing of it is applied).
+  if (mode === 'revert') {
+    const target = Math.min(current, idx - 1);
+    if (target === current) return state;
+    return {
+      ...state,
+      transformsApplied: { ...(state.transformsApplied ?? {}), [obj.id]: target },
+    };
+  }
+
+  // 'toggle': revert when the rule is already applied, otherwise fall through to 'apply'.
+  if (mode === 'toggle' && current >= idx) {
+    return {
+      ...state,
+      transformsApplied: { ...(state.transformsApplied ?? {}), [obj.id]: idx - 1 },
+    };
+  }
+
   // Conditions still gate automatic transforms: "transform box X" only fires when X's own
   // prerequisites (e.g. all three fuses + the connector already transformed) actually hold.
   if (!checkTransformCondition(rule.conditions, state, ctx.scenesById)) return state;
   // Idempotent: each (scene, object) gets its automatic chain applied once, following links forward.
   if (ctx.visited.has(`${scopeId}|${obj.id}`)) return state;
   ctx.visited.add(`${scopeId}|${obj.id}`);
+
+  const targetIdx = Math.max(current, idx);
+  const changed =
+    targetIdx !== current ||
+    (rule.grantsItem && !state.inventory.includes(rule.grantsItem)) ||
+    (rule.triggersDiscovery && !(state.discoveredObjects[scopeId] ?? []).includes(obj.id));
+  if (!changed) return state;
 
   let next = state;
   if (rule.grantsItem && !next.inventory.includes(rule.grantsItem)) {
@@ -306,18 +315,11 @@ function applyEffect(state: SessionState, eff: TransformEffect, triggerSceneId: 
       next = { ...next, discoveredObjects: { ...next.discoveredObjects, [scopeId]: [...d, obj.id] } };
     }
   }
-  next = { ...next, transformsApplied: { ...(next.transformsApplied ?? {}), [obj.id]: Math.max(next.transformsApplied?.[obj.id] ?? -1, idx) } };
+  next = { ...next, transformsApplied: { ...(next.transformsApplied ?? {}), [obj.id]: targetIdx } };
   pushMsg(ctx, rule.newMessage);
   // The auto-transformed object may itself carry effects → the engine follows them recursively.
   if (rule.effects?.length) next = applyEffects(next, rule.effects, scopeId, ctx.scenesById).state;
   return next;
-}
-
-/** Resolve the active two-state sprite state of an object: stored override, else `initial`, else 'a'. */
-export function resolveSpriteState(state: SessionState, obj: SceneObject): 'a' | 'b' {
-  const ts = obj.twoState;
-  if (!ts) return 'a';
-  return state.spriteStates?.[obj.id] ?? ts.initial ?? 'a';
 }
 
 /** Fire a batch of effects (recursive-safe); returns the new state plus any toast messages they produced. */
@@ -521,6 +523,25 @@ export function applyItemToObject(
 
   if (itemId && !state.inventory.includes(itemId)) {
     return { newState: state, success: false, message: 'شما این آیتم را ندارید' };
+  }
+
+  // Clicking on an object whose LAST rule is a toggle rule and is already applied switches back
+  // to the previous look (rule index - 1; -1 = the original look). Auto-apply rules ignore toggle.
+  if (!itemId && obj.transforms?.length) {
+    const currentTransform = (state.transformsApplied ?? {})[objectId] ?? -1;
+    const lastRule = obj.transforms[obj.transforms.length - 1];
+    if (
+      currentTransform >= 0 &&
+      currentTransform === obj.transforms.length - 1 &&
+      lastRule?.toggle &&
+      !lastRule.conditions?.autoApply
+    ) {
+      const nextState: SessionState = {
+        ...state,
+        transformsApplied: { ...(state.transformsApplied ?? {}), [objectId]: currentTransform - 1 },
+      };
+      return { newState: nextState, success: true, message: 'با موفقیت استفاده شد', transformed: true };
+    }
   }
 
   // Check if this object has transforms and the *next* rule matches.

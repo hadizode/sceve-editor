@@ -33,7 +33,4 @@ export function opacityTransitionCss(anim?: OpacityAnim): string {
   return `opacity ${n.duration}ms ${n.easing}${delay}`;
 }
 
-/** Opacity pair for the two stacked layers of a two-state sprite. */
-export function twoStateOpacities(state: 'a' | 'b'): { a: number; b: number } {
-  return state === 'a' ? { a: 1, b: 0 } : { a: 0, b: 1 };
-}
+

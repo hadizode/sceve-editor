@@ -77,13 +77,13 @@ export function ThenBlock({ obj, rule, trigger, upd }: { obj: SceneObject; rule:
             />
           </Field>
         </div>
-        {rule.newSpriteId ? (
+        {rule.newSpriteId || rule.hides ? (
           <Field label="Cross-fade (fade)" stack>
             <OpacityAnimEditor value={rule.fade} onChange={(v) => upd({ fade: v })} />
           </Field>
         ) : (
           <Hint>
-            Set a "New image" above so this rule swaps the look — then the fade cross-fades between old and new.
+            Set a "New image" (or enable Hides) above so this rule changes the look — the fade cross-fades between old and new.
           </Hint>
         )}
       </Sub>

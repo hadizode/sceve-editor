@@ -6,6 +6,7 @@ import type { Asset, Scene, SceneObject, SessionState, Sprite, View } from '../s
 import { getSprite, resolveSprite, transformRef } from '../shared/types';
 import { boxMatrix, cssMatrix, hitClipPath, motionAngle, pivotScene, placementMatrix } from '../shared/geometry';
 import { spriteFilterCss } from '../shared/types';
+import { normalizeOpacityAnim, opacityTransitionCss, type OpacityAnim } from '../shared/opacity-anim';
 import { allRoomsComplete, checkTransformCondition } from '../shared/game-logic';
 
 /** Resolve a sprite/image ref to the concrete image URL ('' when the sprite has no image). */
@@ -155,7 +156,59 @@ function ObjSprite({
   // The shown transform rule may tint the sprite with a CSS filter (invert / hue-rotate / …).
   const filterCss = shownOk ? spriteFilterCss(shown?.filter) : undefined;
 
-  if (hidden || (shownOk && shown?.hides)) return null;
+  const hides = shownOk && !!shown?.hides;
+  const [hideOpacity, setHideOpacity] = useState(1);
+  const [hideDone, setHideDone] = useState(false);
+  const hidesPrev = useRef(false);
+
+  // Keep the previously shown URL so a rule swap (or revert) can cross-fade between the two looks.
+  const prevRef = useRef<{ url: string; fade: OpacityAnim | undefined }>({ url, fade: shownOk ? shown?.fade : undefined });
+  const [xfade, setXfade] = useState<{ prev: string; next: string; anim: Required<OpacityAnim>; visible: boolean } | null>(null);
+
+  // Start a cross-fade whenever the shown image changes; the animation of the rule being LEFT is used.
+  useEffect(() => {
+    if (!shownOk || !url) {
+      prevRef.current = { url, fade: shownOk ? shown?.fade : undefined };
+      setXfade(null);
+      return;
+    }
+    const prev = prevRef.current;
+    const anim = prev.fade ? normalizeOpacityAnim(prev.fade) : undefined;
+    if (prev.url && prev.url !== url && anim && anim.duration > 0 && (!xfade || xfade.next !== url)) {
+      setXfade({ prev: prev.url, next: url, anim, visible: false });
+      const raf = window.requestAnimationFrame(() =>
+        setXfade((c) => (c && c.next === url ? { ...c, visible: true } : c))
+      );
+      return () => window.cancelAnimationFrame(raf);
+    }
+    prevRef.current = { url, fade: shownOk ? shown?.fade : undefined };
+  }, [url, shownOk, shown?.fade, xfade?.next]);
+
+  // Drop the old layer once the cross-fade finished.
+  useEffect(() => {
+    if (!xfade) return;
+    const t = window.setTimeout(() => setXfade(null), xfade.anim.duration + xfade.anim.delay);
+    return () => window.clearTimeout(t);
+  }, [xfade]);
+
+  // `hides`: fade the whole box out instead of snapping away, then unmount after the transition.
+  useEffect(() => {
+    if (!hides) {
+      setHideOpacity(1);
+      setHideDone(false);
+      hidesPrev.current = false;
+      return;
+    }
+    if (!hidesPrev.current && !hideDone) {
+      const anim = normalizeOpacityAnim(shown?.fade);
+      setHideOpacity(0);
+      const t = window.setTimeout(() => setHideDone(true), anim.duration + (anim.delay ?? 0));
+      return () => window.clearTimeout(t);
+    }
+    hidesPrev.current = true;
+  }, [hides, shown?.fade, hideDone]);
+
+  if (hidden || hideDone) return null;
 
   const clickable =
     obj.digit !== undefined ||
@@ -202,6 +255,16 @@ function ObjSprite({
       return;
     }
 
+    // Clicking again on the last applied toggle rule reverts to the previous look (−1 = original).
+    if (!nextRule) {
+      const applied = (state.transformsApplied ?? {})[obj.id] ?? -1;
+      const last = obj.transforms?.[applied];
+      if (applied >= 0 && last?.toggle && !last.conditions?.autoApply) {
+        useItemOnObject(null, obj.id, viewId);
+        return;
+      }
+    }
+
     if (obj.view) {
       onOpenView(obj.id);
       return;
@@ -236,6 +299,9 @@ function ObjSprite({
     transformOrigin: '0 0',
   };
 
+  // `hides` fades the whole box out with the same cross-fade animation.
+  const hideTransition = hides ? opacityTransitionCss(shown?.fade) : '';
+
   return (
     // Motion wrapper: rotate() around a transform-origin placed exactly at the pivot. Using a plain
     // rotation (instead of animating the full matrix) lets CSS interpolate along the ARC the object
@@ -255,18 +321,50 @@ function ObjSprite({
       {/* the box: colour fill + image stretched to it + click area (clip-path = hit polygon). Mirrors with flipX/flipY. */}
       <div
         className="absolute pointer-events-none"
-        style={{ ...boxStyle, filter: filterCss, transition: 'filter .4s' }}
+        style={{
+          ...boxStyle,
+          filter: filterCss,
+          opacity: hideOpacity,
+          transition: hideTransition ? `${hideTransition}, filter .4s` : 'filter .4s',
+        }}
       >
         {sp?.color && <div className="absolute inset-0" style={{ background: sp.color }} />}
 
         {url && (
-          <img
-            src={url}
-            alt={name}
-            draggable={false}
-            className="absolute inset-0 select-none"
-            style={{ width: '100%', height: '100%', maxWidth: 'none' }}
-          />
+          <>
+            {xfade && xfade.next === url ? (
+              <>
+                <img
+                  src={xfade.prev}
+                  alt={name}
+                  draggable={false}
+                  className="absolute inset-0 select-none"
+                  style={{ width: '100%', height: '100%', maxWidth: 'none' }}
+                />
+                <img
+                  src={url}
+                  alt={name}
+                  draggable={false}
+                  className="absolute inset-0 select-none"
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    maxWidth: 'none',
+                    opacity: xfade.visible ? 1 : 0,
+                    transition: opacityTransitionCss(xfade.anim),
+                  }}
+                />
+              </>
+            ) : (
+              <img
+                src={url}
+                alt={name}
+                draggable={false}
+                className="absolute inset-0 select-none"
+                style={{ width: '100%', height: '100%', maxWidth: 'none' }}
+              />
+            )}
+          </>
         )}
 
         <div

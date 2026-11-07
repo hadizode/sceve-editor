@@ -1,6 +1,6 @@
 import { clamp, nowIso, svgDataUrl, uid } from './utils';
 import { migrateLegacyGeometry, type Size } from './geometry';
-import type { OpacityAnim } from './opacity-anim';
+import { normalizeOpacityAnim, type OpacityAnim } from './opacity-anim';
 
 // ============ Basic types ============
 /**
@@ -53,13 +53,13 @@ export interface BackgroundLayer {
  * automatically (even in other rooms), change another room's background, or open a door so the
  * player can walk into another room.
  */
-export type EffectAction = 'transform' | 'background' | 'unlockDoor' | 'setUsable' | 'completeRoom' | 'setSpriteState';
+export type EffectAction = 'transform' | 'background' | 'unlockDoor' | 'setUsable' | 'completeRoom';
 
 export interface TransformEffect {
   action: EffectAction;
   /** Target scene id. Empty/missing = the scene the trigger happens in. */
   sceneId?: string;
-  /** Target object id (for `transform`/`setSpriteState`) or view id (for `background` inside a close-up view). */
+  /** Target object id (for `transform`) or view id (for `background` inside a close-up view). */
   objectId?: string;
   /** Which transform rule of the target object to apply automatically. Default 0 (the first one). */
   ruleIndex?: number;
@@ -69,8 +69,8 @@ export interface TransformEffect {
   doorObjectId?: string;
   /** For setUsable: true (default) = make target usable, false = lock it. Target = objectId (+ sceneId). */
   usable?: boolean;
-  /** For setSpriteState: 'a' | 'b' | 'toggle'. Defaults to 'toggle'. */
-  spriteState?: 'a' | 'b' | 'toggle';
+  /** For `action: 'transform'`: 'apply' (default) applies the rule, 'revert' steps the target back to the look before this rule, 'toggle' applies it or reverts it depending on the current state. Defaults to 'apply'. */
+  mode?: 'apply' | 'revert' | 'toggle';
   /** Optional toast shown when the effect fires. */
   message?: string;
 }
@@ -155,6 +155,8 @@ export interface TransformRule {
   triggersDiscovery?: boolean;
   /** مخفی شدن اسپرایت وقتی این rule فعال است */
   hides?: boolean;
+  /** On a click-triggered rule that is the LAST rule of the object: each click switches back and forth between the applied look and the original look. */
+  toggle?: boolean;
   /** Extra gating ("only once ALL of these objects are transformed…"). Empty = no extra condition. */
   conditions?: TransformCondition;
   /** Side actions fired when this rule applies (other objects / other rooms / doors). */
@@ -274,8 +276,6 @@ export interface SessionState {
   usable?: Record<string, boolean>;
   /** objectId -> number of motion (rotation) clicks performed so far. */
   motionSteps?: Record<string, number>;
-  /** objectId -> active two-state sprite state ('a' | 'b'). */
-  spriteStates?: Record<string, 'a' | 'b'>;
 }
 
 export interface Session {
@@ -299,7 +299,6 @@ export function createSessionState(firstSceneId: string): SessionState {
     openDoors: [],
     usable: {},
     motionSteps: {},
-    spriteStates: {},
   };
 }
 
@@ -376,14 +375,6 @@ export interface SceneObject {
   door?: DoorTarget;
   /** Hidden clue digit revealed once this sprite is discovered (feeds the final lock). */
   digit?: number;
-  /** Two-state sprite: cross-fades between two sprite refs. `a` and `b` are `sprite:<id>` refs. */
-  twoState?: {
-    a: string;
-    b: string;
-    initial?: 'a' | 'b';
-    anim?: OpacityAnim;
-    toggleOnClick?: boolean;
-  };
 }
 
 export interface Scene {
@@ -703,6 +694,7 @@ function normalizeEffects(list: any, reg: SpriteRegistry): TransformEffect[] | u
       newSpriteId: normalizeSpriteValue(e.newSpriteId ?? e.newImageUrl ?? e.backgroundUrl, reg),
       doorObjectId: str(e.doorObjectId) || undefined,
       usable: e.usable === false ? false : undefined,
+      mode: e.mode === 'apply' || e.mode === 'revert' || e.mode === 'toggle' ? e.mode : undefined,
       message: str(e.message) || undefined,
     });
   }
@@ -721,9 +713,11 @@ function normalizeTransform(r: any, reg: SpriteRegistry): TransformRule {
     consumesItem: r?.consumesItem !== false,
     triggersDiscovery: r?.triggersDiscovery === true,
     hides: r?.hides === true ? true : undefined,
+    toggle: r?.toggle === true ? true : undefined,
     conditions: normalizeConditions(r?.conditions),
     effects: normalizeEffects(r?.effects, reg),
     filter: normalizeFilter(r?.filter),
+    fade: r?.fade ? normalizeOpacityAnim(r.fade) : undefined,
   };
 }
 
@@ -863,6 +857,69 @@ export function normalizeScene(raw: any, projectId: string, reg: SpriteRegistry)
   };
 }
 
+/** Every object of a scene, including objects nested in its close-up views. */
+const sceneObjects = (sc: Scene): SceneObject[] => [...sc.objects, ...sc.objects.flatMap((o) => (o.view ? o.view.objects : []))];
+
+/**
+ * One-time migration: legacy `twoState` (two images A/B + cross-fade + toggle-on-click) is merged
+ * into transform rules — exactly like any other "new look" rule. The object's base sprite is the
+ * original look; the appended rule defines the NEW look.
+ *
+ *   initial 'a' or missing: spriteRef stays `a`, append a rule that switches to `b`
+ *   initial 'b':            spriteRef becomes `b`, append a rule that switches back to `a`
+ *
+ * Legacy `setSpriteState` effects targeting a migrated object are converted into `transform`
+ * effects on the migration rule (a → revert, b → apply, toggle → toggle).
+ *
+ * Idempotent: once `twoState` is removed, a second pass changes nothing.
+ */
+export function migrateTwoState(scenes: Scene[]): void {
+  // "sceneId|objectId" → index of the migration rule appended to that object
+  const targetRule = new Map<string, number>();
+
+  for (const sc of scenes) {
+    for (const o of sceneObjects(sc)) {
+      const ts = (o as any).twoState;
+      if (!ts) continue;
+      const rules: TransformRule[] = o.transforms ?? [];
+      const idx = rules.length;
+      if (ts.initial === 'b') {
+        o.spriteRef = ts.b as string;
+        rules.push({ requiresItem: '', newSpriteId: ts.a as string, fade: ts.anim ?? undefined, toggle: ts.toggleOnClick === true ? true : undefined });
+      } else {
+        // initial 'a' or missing: keep the current sprite (state a), add a rule to switch to b
+        rules.push({ requiresItem: '', newSpriteId: ts.b as string, fade: ts.anim ?? undefined, toggle: ts.toggleOnClick === true ? true : undefined });
+      }
+      o.transforms = rules;
+      targetRule.set(`${sc.id}|${o.id}`, idx);
+      delete (o as any).twoState;
+    }
+  }
+
+  const modeOf = (v: unknown): TransformEffect['mode'] | undefined =>
+    v === 'b' ? 'apply' : v === 'a' ? 'revert' : 'toggle';
+
+  const convert = (effs: TransformEffect[] | undefined, sceneId: string): void => {
+    for (const e of (effs ?? [])) {
+      if ((e as any).action !== 'setSpriteState' || !e.objectId) continue;
+      const idx = targetRule.get(`${e.sceneId ?? sceneId}|${e.objectId}`);
+      if (idx === undefined) continue;
+      e.action = 'transform';
+      e.ruleIndex = idx;
+      e.mode = modeOf((e as any).spriteState);
+      delete (e as any).spriteState;
+    }
+  };
+
+  for (const sc of scenes) {
+    for (const o of sceneObjects(sc)) {
+      o.transforms?.forEach((t) => convert(t.effects, sc.id));
+      convert(o.pickupEffects, sc.id);
+      if (o.door?.onEnterEffects) convert(o.door.onEnterEffects, sc.id);
+    }
+  }
+}
+
 export function normalizeBundle(text: string): ProjectBundle {
   let data: any;
   try {
@@ -899,6 +956,9 @@ export function normalizeBundle(text: string): ProjectBundle {
       color: str(s.color) || undefined,
       createdAt: str(s.createdAt) || nowIso(),
     }));
+  // Merge legacy "two state" sprite data into transform rules before normalizing, so nothing is lost on reload.
+  migrateTwoState(data.scenes as Scene[]);
+
   // Every image used anywhere (objects, views, layers, backgrounds, transforms) becomes a sprite.
   const reg = new SpriteRegistry(assetMap, '', Object.fromEntries(spriteList.map((s) => [s.id, s])));
   const scenes: Scene[] = data.scenes.map((s: any) => normalizeScene(s, pid, reg));

@@ -18,6 +18,7 @@ function summarize(obj: SceneObject, t: TransformRule, trigger: Trigger): string
   else if (t.newSpriteId) then.push('new look');
   if (t.filter) then.push('filter');
   if (t.fade) then.push('fade');
+  if (t.toggle) then.push('toggle');
   if (t.grantsItem) then.push(`gives ${t.grantsItem}`);
   if (t.effects?.length) then.push(`${t.effects.length} effect${t.effects.length > 1 ? 's' : ''}`);
   return `${when}${n ? ` · if ${n}` : ''} → ${then.join(', ') || obj.name}`;
@@ -51,7 +52,7 @@ export function RuleCard({ obj, ts, i, set }: { obj: SceneObject; ts: TransformR
         <IconButton icon="arrowDown" compact title="Move later in the chain" disabled={i === ts.length - 1} onClick={() => move(1)} />
         <IconButton icon="copy" compact title="Duplicate rule" onClick={() => write([...ts.slice(0, i + 1), structuredClone(rule), ...ts.slice(i + 1)], 'dup')} />
       </div>
-      <WhenBlock rule={rule} trigger={trigger} setTrigger={setTrigger} upd={upd} />
+      <WhenBlock obj={obj} rule={rule} index={i} trigger={trigger} setTrigger={setTrigger} upd={upd} />
       <IfBlock obj={obj} rule={rule} upd={upd} />
       <ThenBlock obj={obj} rule={rule} trigger={trigger} upd={upd} />
     </Card>

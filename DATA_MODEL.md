@@ -89,8 +89,10 @@ interface TransformRule {
   consumesItem?: boolean;        // whether the used item is consumed (default true)
   triggersDiscovery?: boolean;   // whether this counts as discovering the object
   hides?: boolean;               // hide the sprite while this rule is active
+  toggle?: boolean;              // last click rule only: each click switches back and forth between this look and the original
   conditions?: TransformCondition; // extra gating: "only when ALL of these…"
   filter?: SpriteFilter;         // visual filter applied when rule fires (invert, grayscale, …)
+  fade?: OpacityAnim;            // cross-fade between the previous look and this one (duration 0 = instant swap)
 }
 
 interface SpriteFilter {
@@ -136,6 +138,8 @@ interface TransformEffect {
   newSpriteId?: string;   // sprite ref / asset ref / URL — used by `background`
   doorObjectId?: string;  // door opened by `unlockDoor`
   usable?: boolean;       // for `setUsable`
+  /** For `transform`: 'apply' (default) applies the rule, 'revert' steps back to the look before it, 'toggle' switches back and forth. */
+  mode?: 'apply' | 'revert' | 'toggle';
   message?: string;       // optional toast when the effect fires
 }
 ```

@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  normalizeOpacityAnim,
-  opacityTransitionCss,
-  twoStateOpacities,
-  type OpacityAnim,
-} from './opacity-anim';
+import { normalizeOpacityAnim, opacityTransitionCss, type OpacityAnim } from './opacity-anim';
 
 describe('normalizeOpacityAnim', () => {
   it('fills defaults', () => {
@@ -40,11 +35,4 @@ describe('opacityTransitionCss', () => {
   });
 });
 
-describe('twoStateOpacities', () => {
-  it('state a shows A, hides B', () => {
-    expect(twoStateOpacities('a')).toEqual({ a: 1, b: 0 });
-  });
-  it('state b hides A, shows B', () => {
-    expect(twoStateOpacities('b')).toEqual({ a: 0, b: 1 });
-  });
-});
+
