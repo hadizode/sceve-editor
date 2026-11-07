@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { applyEffects, resolveSpriteState } from './game-logic';
-import type { EffectCtx, SessionState, SceneObject, TransformEffect } from './types';
+import { applyEffects, resolveSpriteState, type EffectCtx } from './game-logic';
+import type { SessionState, SceneObject, TransformEffect } from './types';
 
 const objA: SceneObject = {
   id: 'spr-a',
@@ -36,16 +36,16 @@ const one = (eff: TransformEffect) => applyEffects(baseState, [eff], 'scene-1', 
 
 describe('resolveSpriteState', () => {
   it('defaults to a when nothing stored and no initial', () => {
-    const plain = { ...objA, twoState: { ...objA.twoState!, initial: undefined } };
+    const plain = { ...objA, twoState: { ...objA.twoState!, initial: undefined as 'a' | 'b' | undefined } };
     expect(resolveSpriteState(baseState, plain)).toBe('a');
   });
   it('respects twoState.initial', () => {
     expect(resolveSpriteState(baseState, objA)).toBe('a');
-    const bInit = { ...objA, twoState: { ...objA.twoState!, initial: 'b' } };
+    const bInit = { ...objA, twoState: { ...objA.twoState!, initial: 'b' as const } };
     expect(resolveSpriteState(baseState, bInit)).toBe('b');
   });
   it('respects stored spriteStates override', () => {
-    const state = { ...baseState, spriteStates: { 'spr-a': 'b' } };
+    const state = { ...baseState, spriteStates: { 'spr-a': 'b' as const } };
     expect(resolveSpriteState(state, objA)).toBe('b');
   });
   it('returns a for objects without twoState', () => {
@@ -60,19 +60,19 @@ describe('applyEffects setSpriteState', () => {
     expect(res.state.spriteStates?.[ 'spr-a' ]).toBe('b');
   });
   it('toggles b -> a on second click (idempotent toggle)', () => {
-    const state = { ...baseState, spriteStates: { 'spr-a': 'b' } };
+    const state = { ...baseState, spriteStates: { 'spr-a': 'b' as const } };
     const eff: TransformEffect = { action: 'setSpriteState', objectId: 'spr-a' };
     const res = applyEffects(state, [eff], 'scene-1', ctx);
     expect(res.state.spriteStates?.[ 'spr-a' ]).toBe('a');
   });
   it('explicit a sets to a even when currently b', () => {
-    const state = { ...baseState, spriteStates: { 'spr-a': 'b' } };
+    const state = { ...baseState, spriteStates: { 'spr-a': 'b' as const } };
     const eff: TransformEffect = { action: 'setSpriteState', objectId: 'spr-a', spriteState: 'a' };
     const res = applyEffects(state, [eff], 'scene-1', ctx);
     expect(res.state.spriteStates?.[ 'spr-a' ]).toBe('a');
   });
   it('is idempotent: returns same state ref when nothing changes', () => {
-    const state = { ...baseState, spriteStates: { 'spr-a': 'a' } };
+    const state = { ...baseState, spriteStates: { 'spr-a': 'a' as const } };
     const eff: TransformEffect = { action: 'setSpriteState', objectId: 'spr-a', spriteState: 'a' };
     const res = applyEffects(state, [eff], 'scene-1', ctx);
     expect(res.state).toBe(state);

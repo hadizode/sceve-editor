@@ -6,6 +6,7 @@ import { ItemDatalist } from './ItemDatalist';
 import { RuleCard } from './RuleCard';
 import { UsabilitySection } from './UsabilitySection';
 import { DoorSection } from './DoorSection';
+import { TwoStateSection } from './TwoStateSection';
 import { EffectsEditor } from './EffectsEditor';
 import { btnCls, Card } from '../ui';
 import { Icon } from '../icons';
@@ -52,6 +53,8 @@ export function TransitionsEditor({ obj, set }: { obj: SceneObject; set: SetFn }
       <UsabilitySection obj={obj} set={set} />
       {/* -------- Door -------- */}
       <DoorSection obj={obj} set={set} />
+      {/* -------- Two states -------- */}
+      <TwoStateSection obj={obj} set={set} />
     </div>
   );
 }

@@ -17,6 +17,7 @@ function summarize(obj: SceneObject, t: TransformRule, trigger: Trigger): string
   if (t.newName) then.push(`becomes “${short(t.newName, 16)}”`);
   else if (t.newSpriteId) then.push('new look');
   if (t.filter) then.push('filter');
+  if (t.fade) then.push('fade');
   if (t.grantsItem) then.push(`gives ${t.grantsItem}`);
   if (t.effects?.length) then.push(`${t.effects.length} effect${t.effects.length > 1 ? 's' : ''}`);
   return `${when}${n ? ` · if ${n}` : ''} → ${then.join(', ') || obj.name}`;

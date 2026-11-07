@@ -2,6 +2,7 @@ import React from 'react';
 import { Block, Warn } from '../layout';
 import { Field, Hint, inputCls, btnCls, Sub } from '../../ui';
 import { ImgPick } from '../ImgPick';
+import { OpacityAnimEditor } from '../OpacityAnimEditor';
 import { EffectsEditor } from '../EffectsEditor';
 import { filterOrUndef } from '../helpers';
 import type { SceneObject, SpriteFilter, TransformRule } from '../../../shared/types';
@@ -76,6 +77,15 @@ export function ThenBlock({ obj, rule, trigger, upd }: { obj: SceneObject; rule:
             />
           </Field>
         </div>
+        {rule.newSpriteId ? (
+          <Field label="Cross-fade (fade)" stack>
+            <OpacityAnimEditor value={rule.fade} onChange={(v) => upd({ fade: v })} />
+          </Field>
+        ) : (
+          <Hint>
+            Set a "New image" above so this rule swaps the look — then the fade cross-fades between old and new.
+          </Hint>
+        )}
       </Sub>
       <Sub title="Items" defaultOpen={!!rule.grantsItem}>
         <Field label="Gives item" stack>
