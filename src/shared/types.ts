@@ -1,5 +1,6 @@
 import { clamp, nowIso, svgDataUrl, uid } from './utils';
 import { migrateLegacyGeometry, type Size } from './geometry';
+import type { OpacityAnim } from './opacity-anim';
 
 // ============ Basic types ============
 /**
@@ -52,13 +53,13 @@ export interface BackgroundLayer {
  * automatically (even in other rooms), change another room's background, or open a door so the
  * player can walk into another room.
  */
-export type EffectAction = 'transform' | 'background' | 'unlockDoor' | 'setUsable' | 'completeRoom';
+export type EffectAction = 'transform' | 'background' | 'unlockDoor' | 'setUsable' | 'completeRoom' | 'setSpriteState';
 
 export interface TransformEffect {
   action: EffectAction;
   /** Target scene id. Empty/missing = the scene the trigger happens in. */
   sceneId?: string;
-  /** Target object id (for `transform`) or view id (for `background` inside a close-up view). */
+  /** Target object id (for `transform`/`setSpriteState`) or view id (for `background` inside a close-up view). */
   objectId?: string;
   /** Which transform rule of the target object to apply automatically. Default 0 (the first one). */
   ruleIndex?: number;
@@ -68,6 +69,8 @@ export interface TransformEffect {
   doorObjectId?: string;
   /** For setUsable: true (default) = make target usable, false = lock it. Target = objectId (+ sceneId). */
   usable?: boolean;
+  /** For setSpriteState: 'a' | 'b' | 'toggle'. Defaults to 'toggle'. */
+  spriteState?: 'a' | 'b' | 'toggle';
   /** Optional toast shown when the effect fires. */
   message?: string;
 }
@@ -158,6 +161,8 @@ export interface TransformRule {
   effects?: TransformEffect[];
   /** Visual filter applied while this rule is the shown one (e.g. invert the colors). */
   filter?: SpriteFilter;
+  /** Cross-fade animation applied when this rule swaps the image. */
+  fade?: OpacityAnim;
 }
 
 /**
@@ -269,6 +274,8 @@ export interface SessionState {
   usable?: Record<string, boolean>;
   /** objectId -> number of motion (rotation) clicks performed so far. */
   motionSteps?: Record<string, number>;
+  /** objectId -> active two-state sprite state ('a' | 'b'). */
+  spriteStates?: Record<string, 'a' | 'b'>;
 }
 
 export interface Session {
@@ -292,6 +299,7 @@ export function createSessionState(firstSceneId: string): SessionState {
     openDoors: [],
     usable: {},
     motionSteps: {},
+    spriteStates: {},
   };
 }
 
@@ -368,6 +376,14 @@ export interface SceneObject {
   door?: DoorTarget;
   /** Hidden clue digit revealed once this sprite is discovered (feeds the final lock). */
   digit?: number;
+  /** Two-state sprite: cross-fades between two sprite refs. `a` and `b` are `sprite:<id>` refs. */
+  twoState?: {
+    a: string;
+    b: string;
+    initial?: 'a' | 'b';
+    anim?: OpacityAnim;
+    toggleOnClick?: boolean;
+  };
 }
 
 export interface Scene {
