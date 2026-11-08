@@ -32,9 +32,14 @@ export function RuleCard({ obj, ts, i, set }: { obj: SceneObject; ts: TransformR
 
   const setTrigger = (m: Trigger) => {
     setTriggerState(m);
-    if (m === 'item') upd({ conditions: mergeCond(rule.conditions, { autoApply: false }) });
-    else if (m === 'click') upd({ conditions: mergeCond(rule.conditions, { autoApply: false }) });
-    else upd({ requiresItem: '', conditions: mergeCond(rule.conditions, { autoApply: true }) });
+    if (m === 'click') {
+      upd({ conditions: mergeCond(rule.conditions, { autoApply: false }) });
+    } else if (m === 'item') {
+      // Toggle only works on a Click trigger
+      upd({ toggle: undefined, conditions: mergeCond(rule.conditions, { autoApply: false }) });
+    } else {
+      upd({ toggle: undefined, requiresItem: '', conditions: mergeCond(rule.conditions, { autoApply: true }) });
+    }
   };
 
   const move = (d: -1 | 1) => {
@@ -54,7 +59,7 @@ export function RuleCard({ obj, ts, i, set }: { obj: SceneObject; ts: TransformR
       </div>
       <WhenBlock obj={obj} rule={rule} index={i} trigger={trigger} setTrigger={setTrigger} upd={upd} />
       <IfBlock obj={obj} rule={rule} upd={upd} />
-      <ThenBlock obj={obj} rule={rule} trigger={trigger} upd={upd} />
+      <ThenBlock obj={obj} rule={rule} index={i} trigger={trigger} upd={upd} />
     </Card>
   );
 }

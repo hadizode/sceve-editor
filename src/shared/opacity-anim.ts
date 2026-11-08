@@ -33,4 +33,23 @@ export function opacityTransitionCss(anim?: OpacityAnim): string {
   return `opacity ${n.duration}ms ${n.easing}${delay}`;
 }
 
+/**
+ * Pick the fade to use when moving between two rule indexes of the same object.
+ * - Applying (i → j where j > i):  use rules[j]?.fade (the rule being applied).
+ * - Reverting  (i → j where j < i): use rules[i]?.fade (the rule being left).
+ * - Same index or missing fade: undefined.
+ * - Out-of-range / negative indexes: undefined (safe).
+ */
+export function swapFade(
+  rules: ReadonlyArray<{ fade?: OpacityAnim } | undefined | null>,
+  fromIdx: number,
+  toIdx: number,
+): OpacityAnim | undefined {
+  if (fromIdx < 0 || toIdx < 0) return undefined;
+  if (fromIdx >= rules.length || toIdx >= rules.length) return undefined;
+  if (toIdx > fromIdx) return rules[toIdx]?.fade;
+  if (toIdx < fromIdx) return rules[fromIdx]?.fade;
+  return undefined;
+}
+
 

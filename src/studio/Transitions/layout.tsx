@@ -40,10 +40,12 @@ export function Seg<T extends string>({
   value,
   options,
   onChange,
+  disabled,
 }: {
   value: T;
   options: { v: T; label: string; title?: string }[];
   onChange: (v: T) => void;
+  disabled?: boolean;
 }) {
   return (
     <div className="flex gap-0.5 bg-black/25 border border-line rounded-[4px] p-0.5">
@@ -51,10 +53,16 @@ export function Seg<T extends string>({
         <button
           key={o.v}
           type="button"
-          title={o.title}
+          disabled={disabled}
+          title={disabled ? undefined : o.title}
           aria-pressed={o.v === value}
-          onClick={() => onChange(o.v)}
-          className={`flex-1 h-6 rounded-[3px] text-[11px] ${o.v === value ? 'bg-primary text-white' : 'text-gray-300 hover:bg-white/10'}`}
+          aria-disabled={disabled || undefined}
+          onClick={disabled ? undefined : () => onChange(o.v)}
+          className={`flex-1 h-6 rounded-[3px] text-[11px] ${disabled
+            ? 'text-gray-600 bg-black/10'
+            : o.v === value
+              ? 'bg-primary text-white'
+              : 'text-gray-300 hover:bg-white/10'}`}
         >
           {o.label}
         </button>

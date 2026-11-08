@@ -49,18 +49,6 @@ export function WhenBlock({
         </>
       )}
       {trigger === 'click' && <Hint>Plain click. Add conditions below to make it wait for something.</Hint>}
-      {trigger === 'click' &&
-        index === (obj.transforms?.length ?? 0) - 1 &&
-        !!rule.newSpriteId && (
-          <label className="flex items-center gap-2 text-[11px] text-gray-300">
-            <input
-              type="checkbox"
-              checked={!!rule.toggle}
-              onChange={(e) => upd({ toggle: e.target.checked ? true : undefined })}
-            />
-            {'Toggle: each click switches back and forth'}
-          </label>
-        )}
       {trigger === 'auto' && (
         <>
           <Hint>

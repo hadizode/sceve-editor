@@ -1,12 +1,12 @@
 // ============ Player (Game) — plays the CURRENT studio project live ============
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import useImage from 'use-image';
 import { itemName, usePlayerStore } from '../stores/store';
 import type { Asset, Scene, SceneObject, SessionState, Sprite, View } from '../shared/types';
 import { getSprite, resolveSprite, transformRef } from '../shared/types';
 import { boxMatrix, cssMatrix, hitClipPath, motionAngle, pivotScene, placementMatrix } from '../shared/geometry';
 import { spriteFilterCss } from '../shared/types';
-import { normalizeOpacityAnim, opacityTransitionCss, type OpacityAnim } from '../shared/opacity-anim';
+import { normalizeOpacityAnim, swapFade, type OpacityAnim } from '../shared/opacity-anim';
 import { allRoomsComplete, checkTransformCondition } from '../shared/game-logic';
 
 /** Resolve a sprite/image ref to the concrete image URL ('' when the sprite has no image). */
@@ -97,6 +97,127 @@ function Lobby({ projectName }: { projectName: string }) {
  * is placed with `boxMatrix` (the same matrix Studio/Preview use), and the click shape is a CSS
  * clip-path built from the normalized hit polygon. Z-order = DOM order = scene array order.
  */
+// ============ SwapImage: cross-fades between two image URLs via a keyframe overlay ============
+// The CURRENT image layer is a normal <img src={url}> filling the box, always opacity 1,
+// never remounted (no key that changes with the url). On each swap a PREVIOUS-image overlay
+// <img> is mounted absolutely ABOVE the current layer at opacity 1 with a keyframe animation
+// `swap-fade-out` (opacity 1 → 0). The animation starts paused and runs only after the current
+// image fires onLoad (or immediately if img.complete is already true), so the fade actually
+// paints instead of snapping. The overlay is removed on animationEnd plus a safety timeout.
+// Each swap gets its own swapId so rapid toggling stacks correctly and never leaves a stale overlay.
+// If duration is 0, no overlay is mounted (instant swap).
+function SwapImage({ url, fade, swapId, name }: { url: string; fade: OpacityAnim | undefined; swapId: number; name: string }) {
+  const n = normalizeOpacityAnim(fade);
+  const instant = n.duration <= 0;
+  const curImg = useRef<HTMLImageElement>(null);
+  const overlayRef = useRef<HTMLImageElement | null>(null);
+  const animRef = useRef<Animation | null>(null);
+  const prevUrlRef = useRef<string | null>(null);
+
+  // Capture the previous URL during render, before it gets overwritten.
+  const prevUrl = prevUrlRef.current;
+  prevUrlRef.current = url;
+
+  const [overlayUrl, setOverlayUrl] = useState<string | null>(null);
+
+  // When swapId changes: schedule the overlay to appear (re-render), then animate it.
+  useEffect(() => {
+    if (instant || !prevUrl || prevUrl === url) {
+      setOverlayUrl(null);
+      return;
+    }
+    setOverlayUrl(prevUrl);
+  }, [swapId, prevUrl, url, instant]);
+
+  // When overlayUrl is set and the overlay  is in the DOM, start the WAAPI fade-out.
+  useEffect(() => {
+    if (!overlayUrl || instant) return;
+
+    const overlay = overlayRef.current;
+    if (!overlay) return;
+
+    overlay.src = overlayUrl;
+    overlay.style.opacity = '1';
+
+    const startAnim = async () => {
+      // Decode the current image first (capped at 300 ms) so the fade paints instead of snapping.
+      try {
+        await Promise.race([
+          curImg.current && typeof curImg.current.decode === 'function'
+            ? curImg.current.decode().catch(() => {})
+            : Promise.resolve(),
+          new Promise((resolve) => setTimeout(resolve, 300)),
+        ]);
+      } catch {}
+
+      const anim = overlay.animate([{ opacity: 1 }, { opacity: 0 }], {
+        duration: n.duration,
+        delay: n.delay,
+        easing: n.easing,
+        fill: 'forwards',
+      });
+      animRef.current = anim;
+      anim.finished.then(() => {
+        setOverlayUrl(null);
+        if (animRef.current === anim) animRef.current = null;
+      }).catch(() => {});
+    };
+
+    startAnim();
+
+    return () => {
+      if (animRef.current) {
+        animRef.current.cancel();
+        animRef.current = null;
+      }
+    };
+  }, [overlayUrl, instant, n.duration, n.delay, n.easing]);
+
+  // Cleanup on unmount.
+  useEffect(() => {
+    return () => {
+      if (animRef.current) {
+        animRef.current.cancel();
+        animRef.current = null;
+      }
+    };
+  }, []);
+
+  return (
+    <div className="absolute inset-0">
+      {!instant && overlayUrl && (
+        <img
+          ref={overlayRef}
+          src={overlayUrl}
+          alt={name}
+          draggable={false}
+          className="absolute inset-0 select-none"
+          style={{
+            width: '100%',
+            height: '100%',
+            maxWidth: 'none',
+            opacity: 1,
+            zIndex: 1,
+          }}
+        />
+      )}
+      <img
+        ref={curImg}
+        src={url}
+        alt={name}
+        draggable={false}
+        className="absolute inset-0 select-none"
+        style={{
+          width: '100%',
+          height: '100%',
+          maxWidth: 'none',
+          opacity: 1,
+        }}
+      />
+    </div>
+  );
+}
+
 function ObjSprite({
   obj,
   state,
@@ -157,55 +278,71 @@ function ObjSprite({
   const filterCss = shownOk ? spriteFilterCss(shown?.filter) : undefined;
 
   const hides = shownOk && !!shown?.hides;
-  const [hideOpacity, setHideOpacity] = useState(1);
   const [hideDone, setHideDone] = useState(false);
   const hidesPrev = useRef(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const hideAnimRef = useRef<Animation | null>(null);
 
-  // Keep the previously shown URL so a rule swap (or revert) can cross-fade between the two looks.
-  const prevRef = useRef<{ url: string; fade: OpacityAnim | undefined }>({ url, fade: shownOk ? shown?.fade : undefined });
-  const [xfade, setXfade] = useState<{ prev: string; next: string; anim: Required<OpacityAnim>; visible: boolean } | null>(null);
+  // Track the previously applied rule index and a swap counter so every image swap gets
+  // its own overlay (prevents stale layers on rapid toggling).
+  const prevTIndexRef = useRef(tIndex);
+  const [swapId, setSwapId] = useState(0);
+  const swapFadeAnim = useMemo(
+    () => swapFade(obj.transforms ?? [], prevTIndexRef.current, tIndex),
+    [obj.transforms, tIndex]
+  );
+  if (tIndex !== prevTIndexRef.current) {
+    setSwapId((s) => s + 1);
+    prevTIndexRef.current = tIndex;
+  }
 
-  // Start a cross-fade whenever the shown image changes; the animation of the rule being LEFT is used.
-  useEffect(() => {
-    if (!shownOk || !url) {
-      prevRef.current = { url, fade: shownOk ? shown?.fade : undefined };
-      setXfade(null);
-      return;
-    }
-    const prev = prevRef.current;
-    const anim = prev.fade ? normalizeOpacityAnim(prev.fade) : undefined;
-    if (prev.url && prev.url !== url && anim && anim.duration > 0 && (!xfade || xfade.next !== url)) {
-      setXfade({ prev: prev.url, next: url, anim, visible: false });
-      const raf = window.requestAnimationFrame(() =>
-        setXfade((c) => (c && c.next === url ? { ...c, visible: true } : c))
-      );
-      return () => window.cancelAnimationFrame(raf);
-    }
-    prevRef.current = { url, fade: shownOk ? shown?.fade : undefined };
-  }, [url, shownOk, shown?.fade, xfade?.next]);
-
-  // Drop the old layer once the cross-fade finished.
-  useEffect(() => {
-    if (!xfade) return;
-    const t = window.setTimeout(() => setXfade(null), xfade.anim.duration + xfade.anim.delay);
-    return () => window.clearTimeout(t);
-  }, [xfade]);
-
-  // `hides`: fade the whole box out instead of snapping away, then unmount after the transition.
+  // `hides`: fade the whole box out with WAAPI, then unmount after finished.
+  // Un-hiding fades back to 1 with WAAPI.
   useEffect(() => {
     if (!hides) {
-      setHideOpacity(1);
       setHideDone(false);
+      if (hidesPrev.current) {
+        // was hidden — fade back to 1 with the rule's fade
+        const anim = normalizeOpacityAnim(shown?.fade);
+        const box = boxRef.current;
+        if (box) {
+          hideAnimRef.current = box.animate([{ opacity: 0 }, { opacity: 1 }], {
+            duration: anim.duration,
+            delay: anim.delay,
+            easing: anim.easing,
+            fill: 'forwards',
+          });
+          hideAnimRef.current.finished.then(() => {
+            if (hideAnimRef.current) hideAnimRef.current = null;
+          }).catch(() => {});
+        }
+      }
       hidesPrev.current = false;
       return;
     }
     if (!hidesPrev.current && !hideDone) {
       const anim = normalizeOpacityAnim(shown?.fade);
-      setHideOpacity(0);
-      const t = window.setTimeout(() => setHideDone(true), anim.duration + (anim.delay ?? 0));
-      return () => window.clearTimeout(t);
+      const box = boxRef.current;
+      if (box) {
+        hideAnimRef.current = box.animate([{ opacity: 1 }, { opacity: 0 }], {
+          duration: anim.duration,
+          delay: anim.delay,
+          easing: anim.easing,
+          fill: 'forwards',
+        });
+        hideAnimRef.current.finished.then(() => {
+          setHideDone(true);
+          if (hideAnimRef.current) hideAnimRef.current = null;
+        }).catch(() => {});
+      }
     }
     hidesPrev.current = true;
+    return () => {
+      if (hideAnimRef.current) {
+        hideAnimRef.current.cancel();
+        hideAnimRef.current = null;
+      }
+    };
   }, [hides, shown?.fade, hideDone]);
 
   if (hidden || hideDone) return null;
@@ -299,9 +436,6 @@ function ObjSprite({
     transformOrigin: '0 0',
   };
 
-  // `hides` fades the whole box out with the same cross-fade animation.
-  const hideTransition = hides ? opacityTransitionCss(shown?.fade) : '';
-
   return (
     // Motion wrapper: rotate() around a transform-origin placed exactly at the pivot. Using a plain
     // rotation (instead of animating the full matrix) lets CSS interpolate along the ARC the object
@@ -320,52 +454,17 @@ function ObjSprite({
     >
       {/* the box: colour fill + image stretched to it + click area (clip-path = hit polygon). Mirrors with flipX/flipY. */}
       <div
+        ref={boxRef}
         className="absolute pointer-events-none"
         style={{
           ...boxStyle,
           filter: filterCss,
-          opacity: hideOpacity,
-          transition: hideTransition ? `${hideTransition}, filter .4s` : 'filter .4s',
+          transition: 'filter .4s',
         }}
       >
         {sp?.color && <div className="absolute inset-0" style={{ background: sp.color }} />}
 
-        {url && (
-          <>
-            {xfade && xfade.next === url ? (
-              <>
-                <img
-                  src={xfade.prev}
-                  alt={name}
-                  draggable={false}
-                  className="absolute inset-0 select-none"
-                  style={{ width: '100%', height: '100%', maxWidth: 'none' }}
-                />
-                <img
-                  src={url}
-                  alt={name}
-                  draggable={false}
-                  className="absolute inset-0 select-none"
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    maxWidth: 'none',
-                    opacity: xfade.visible ? 1 : 0,
-                    transition: opacityTransitionCss(xfade.anim),
-                  }}
-                />
-              </>
-            ) : (
-              <img
-                src={url}
-                alt={name}
-                draggable={false}
-                className="absolute inset-0 select-none"
-                style={{ width: '100%', height: '100%', maxWidth: 'none' }}
-              />
-            )}
-          </>
-        )}
+        {url && <SwapImage url={url} fade={swapFadeAnim} swapId={swapId} name={name} />}
 
         <div
           className={`absolute inset-0 ${pointerCls} ${

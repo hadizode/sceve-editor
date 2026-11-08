@@ -42,7 +42,7 @@ export function OpacityAnimEditor({
       <Field label="Delay (ms)" stack>
         <NumInput value={n.delay} min={0} step={50} onChange={(v) => write({ delay: v })} />
       </Field>
-      <p className="text-[10px] text-gray-500">0 = instant swap.</p>
+      <p className="text-[10px] text-gray-500">0 = instant swap, default 500 ms.</p>
     </div>
   );
 }

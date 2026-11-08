@@ -1,0 +1,88 @@
+{
+  "format": "escape-studio",
+  "version": 3,
+  "project": {
+    "id": "proj-fade-test",
+    "name": "Fade Toggle Test",
+    "description": "Verify cross-fade on toggle",
+    "scenes": ["scene-1"],
+    "finalLockDigits": "1",
+    "assets": ["asset-a", "asset-b"],
+    "sprites": ["spr-a", "spr-b"],
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z"
+  },
+  "scenes": [
+    {
+      "id": "scene-1",
+      "projectId": "proj-fade-test",
+      "title": "Fade Room",
+      "width": 400,
+      "height": 300,
+      "backgroundUrl": "",
+      "backgroundLayers": [],
+      "objects": [
+        {
+          "id": "obj-lamp",
+          "name": "Lamp",
+          "type": "sprite",
+          "spriteRef": "sprite:spr-a",
+          "x": 100,
+          "y": 100,
+          "width": 80,
+          "height": 80,
+          "rotation": 0,
+          "flipX": false,
+          "flipY": false,
+          "visible": true,
+          "locked": false,
+          "oneTimeUse": false,
+          "message": "The lamp glows.",
+          "digit": 1,
+          "transforms": [
+            {
+              "requiresItem": "",
+              "newSpriteId": "sprite:spr-b",
+              "fade": { "duration": 2000, "easing": "linear", "delay": 0 },
+              "toggle": true
+            }
+          ]
+        }
+      ],
+      "clueChain": ["obj-lamp"],
+      "exitNumber": 1
+    }
+  ],
+  "assets": [
+    {
+      "id": "asset-a",
+      "name": "red",
+      "url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MCIgaGVpZ2h0PSI4MCI+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsbD0iI2ZmMDAwMCIvPjwvc3ZnPg==",
+      "width": 80,
+      "height": 80,
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "asset-b",
+      "name": "blue",
+      "url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MCIgaGVpZ2h0PSI4MCI+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsbD0iIzAwMDAwZiIvPjwvc3ZnPg==",
+      "width": 80,
+      "height": 80,
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    }
+  ],
+  "sprites": [
+    {
+      "id": "spr-a",
+      "name": "red sprite",
+      "assetId": "asset:asset-a",
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "spr-b",
+      "name": "blue sprite",
+      "assetId": "asset:asset-b",
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    }
+  ]
+}
