@@ -339,6 +339,7 @@ function ObjSprite({
   const useItemOnObject = usePlayerStore((s) => s.useItemOnObject);
   const rotateObject = usePlayerStore((s) => s.rotateObject);
   const say = usePlayerStore((s) => s.setToast);
+  const tryOpenView = usePlayerStore((s) => s.tryOpenView);
 
   // Click-to-rotate motion: the accumulated step counter drives the angle around the motion pivot.
   const steps = state.motionSteps?.[obj.id] ?? 0;
@@ -432,8 +433,6 @@ function ObjSprite({
   const nextRule = obj.transforms?.[((state.transformsApplied ?? {})[obj.id] ?? -1) + 1];
   const onlyTransform =
     !obj.message && obj.digit === undefined && !obj.grantsItem && !obj.requiresItem?.length;
-
-  const tryOpenView = usePlayerStore((s) => s.tryOpenView);
 
   const handleClick = () => {
     if (!clickable) return;
@@ -1167,6 +1166,80 @@ function FinalLock() {
   );
 }
 
+// ---------- Silent Error Boundary for Player ----------
+interface SilentBoundaryProps {
+  children: React.ReactNode;
+}
+
+interface SilentBoundaryState {
+  hasError: boolean;
+  tries: number;
+}
+
+class SilentBoundary extends React.Component<SilentBoundaryProps, SilentBoundaryState> {
+  state: SilentBoundaryState = {
+    hasError: false,
+    tries: 0,
+  };
+
+  private internalKey = 0;
+  private recentErrors: number[] = [];
+
+  static getDerivedStateFromError(_: unknown): Partial<SilentBoundaryState> {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error('Player render error (auto-recovered):', error);
+    const now = Date.now();
+    this.recentErrors = this.recentErrors.filter((t) => now - t <= 2000);
+    this.recentErrors.push(now);
+
+    if (this.recentErrors.length > 3) {
+      this.setState((prev) => ({ tries: prev.tries + 1 }));
+      return;
+    }
+
+    this.internalKey++;
+    this.setState((prev) => ({
+      hasError: false,
+      tries: prev.tries + 1,
+    }));
+  }
+
+  private handleRetry = () => {
+    this.recentErrors = [];
+    this.internalKey++;
+    this.setState({ hasError: false, tries: 0 });
+  };
+
+  render() {
+    if (this.state.hasError && this.recentErrors.length > 3) {
+      return (
+        <div className="p-4 flex items-center justify-center text-center">
+          <button
+            type="button"
+            onClick={this.handleRetry}
+            className="px-4 py-2 rounded-xl bg-surface-lighter hover:bg-surface-hover text-white text-sm"
+          >
+            تلاش دوباره
+          </button>
+        </div>
+      );
+    }
+
+    if (this.state.hasError) {
+      return null;
+    }
+
+    return (
+      <React.Fragment key={this.internalKey}>
+        {this.props.children}
+      </React.Fragment>
+    );
+  }
+}
+
 // ---------- Main Player ----------
 export default function Player({ projectName }: { projectName: string }) {
   const loadFromStudio = usePlayerStore((s) => s.loadFromStudio);
@@ -1281,13 +1354,15 @@ export default function Player({ projectName }: { projectName: string }) {
         {tab === 'exit' ? (
           <FinalLock />
         ) : currentScene ? (
-          <SceneStage
-            key={currentScene.id}
-            scene={currentScene}
-            state={session.state}
-            assets={assets}
-            sprites={sprites}
-          />
+          <SilentBoundary key={currentScene.id}>
+            <SceneStage
+              key={currentScene.id}
+              scene={currentScene}
+              state={session.state}
+              assets={assets}
+              sprites={sprites}
+            />
+          </SilentBoundary>
         ) : (
           <div
             className="h-full flex items-center justify-center text-gray-500 text-sm"
@@ -1298,7 +1373,9 @@ export default function Player({ projectName }: { projectName: string }) {
         )}
       </div>
 
-      <InventoryPanel />
+      <SilentBoundary>
+        <InventoryPanel />
+      </SilentBoundary>
     </div>
   );
 }
