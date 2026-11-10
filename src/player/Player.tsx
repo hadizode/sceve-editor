@@ -6,8 +6,9 @@ import type { Asset, Scene, SceneObject, SessionState, Sprite, View } from '../s
 import { getSprite, resolveSprite, transformRef } from '../shared/types';
 import { boxMatrix, cssMatrix, hitClipPath, motionAngle, pivotScene, placementMatrix } from '../shared/geometry';
 import { spriteFilterCss } from '../shared/types';
-import { normalizeOpacityAnim, swapFade, type OpacityAnim } from '../shared/opacity-anim';
-import { allRoomsComplete, checkTransformCondition } from '../shared/game-logic';
+import { normalizeOpacityAnim, opacityTransitionCss, swapFade, type OpacityAnim } from '../shared/opacity-anim';
+import { allRoomsComplete, checkTransformCondition, isUsable } from '../shared/game-logic';
+import { findObject } from '../shared/view-tree';
 
 /** Resolve a sprite/image ref to the concrete image URL ('' when the sprite has no image). */
 const spriteSrc = (
@@ -218,6 +219,59 @@ function SwapImage({ url, fade, swapId, name }: { url: string; fade: OpacityAnim
   );
 }
 
+// ============ FadeImg: cross-fades between two image URLs via opacity layers ============
+// Keeps the previous url as a back layer and the new url as the front layer, both absolutely
+// positioned over the box. On a url change (with a non-zero fade duration) the front layer starts
+// at opacity 0 and is flipped to 1 after two requestAnimationFrames using `opacityTransitionCss(anim)`,
+// so the new image decodes/paints before becoming visible; the back layer is dropped after
+// duration + delay + 50 ms. When duration is 0 the swap is instant (no back layer).
+function FadeImg({ url, alt, anim }: { url: string; alt: string; anim?: OpacityAnim }) {
+  const n = normalizeOpacityAnim(anim);
+  const seq = useRef(0);
+  const [layers, setLayers] = useState<{ key: number; url: string }[]>([{ key: 0, url }]);
+
+  useEffect(() => {
+    setLayers((p) => {
+      if (p[p.length - 1].url === url) return p;
+      const next = { key: ++seq.current, url };
+      return n.duration <= 0 ? [next] : [...p, next];
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url]);
+
+  useEffect(() => {
+    if (layers.length < 2) return;
+    const t = window.setTimeout(() => setLayers((p) => p.slice(-1)), n.duration + n.delay + 80);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layers]);
+
+  const topEmpty = !layers[layers.length - 1].url;
+  return (
+    <>
+      {layers.map((l, i) => {
+        if (!l.url) return null;
+        const isTop = i === layers.length - 1;
+        const anim_ = isTop && i > 0
+          ? `fadeInImg ${n.duration}ms ${n.easing} ${n.delay}ms both`
+          : !isTop && topEmpty
+            ? `fadeOutImg ${n.duration}ms ${n.easing} ${n.delay}ms both`
+            : undefined;
+        return (
+          <img
+            key={l.key}
+            src={l.url}
+            alt={isTop ? alt : ''}
+            draggable={false}
+            className="absolute inset-0 select-none"
+            style={{ width: '100%', height: '100%', maxWidth: 'none', animation: anim_ }}
+          />
+        );
+      })}
+    </>
+  );
+}
+
 function ObjSprite({
   obj,
   state,
@@ -245,6 +299,7 @@ function ObjSprite({
   // (and checking inventory by itemId would wrongly hide every sibling sharing a pickupItemId).
   const hidden = !obj.visible || (!keepVisible && !!discovered && !obj.view);
   const scenesById = usePlayerStore((s) => s.scenes);
+  const usable = isUsable(state, obj, scenesById);
   const tIndex = (state.transformsApplied ?? {})[obj.id] ?? -1;
 
   // بالاترین ruleِ اجراشده که شرطش همین الان برقرار است
@@ -258,9 +313,24 @@ function ObjSprite({
   }
   const shownOk = !!shown;
 
-  const ref = shownOk && shown?.newSpriteId ? transformRef(shown.newSpriteId) : obj.spriteRef;
+  // Two-state sprites (a↔b) toggle client-side via React state so a click cross-fades between the
+  // two looks; a shown transform rule still wins when one is applied.
+  // `twoState` lives on normalized objects but isn't declared on the SceneObject interface, so
+  // widen the type here to read it without touching shared/types.
+  const o = obj as SceneObject & {
+    twoState?: { a: string; b: string; initial: 'a' | 'b'; anim?: OpacityAnim; toggleOnClick?: boolean } | undefined;
+  };
+  const [twoStateSide, setTwoStateSide] = useState(() => (o.twoState?.initial === 'b' ? 'b' : 'a'));
+  const ref = shownOk && shown?.newSpriteId
+    ? transformRef(shown.newSpriteId)
+    : o.twoState
+      ? twoStateSide === 'b'
+        ? o.twoState.b
+        : o.twoState.a
+      : obj.spriteRef;
   const sp = getSprite(ref, sprites);
   const url = spriteSrc(ref, sprites, assets);
+  const fadeAnim = shown?.fade ?? o.twoState?.anim;
   const name = (shownOk ? shown?.newName : undefined) || obj.name;
 
   const selectedItem = usePlayerStore((s) => s.selectedItem);
@@ -356,20 +426,63 @@ function ObjSprite({
     obj.pickupable === true ||
     !!obj.transforms?.length ||
     !!obj.motion ||
-    !!obj.door;
+    !!obj.door ||
+    !!o.twoState?.toggleOnClick;
 
   const nextRule = obj.transforms?.[((state.transformsApplied ?? {})[obj.id] ?? -1) + 1];
   const onlyTransform =
     !obj.message && obj.digit === undefined && !obj.grantsItem && !obj.requiresItem?.length;
 
+  const tryOpenView = usePlayerStore((s) => s.tryOpenView);
+
   const handleClick = () => {
     if (!clickable) return;
+
+    if (!usable) {
+      say(obj.unusableMessage || 'فعلاً قابل استفاده نیست');
+      return;
+    }
 
     // Doors take the player to another room. When an item is selected we try using it first
     // (e.g. unlocking), otherwise clicking walks straight through (clickObject handles the door).
     if (obj.door) {
       clickObject(obj.id, viewId);
       return;
+    }
+
+    // Close-up view: open freely when not gated, or when the selected item is one of the
+    // items required to open. A gated view with no valid selection shows the select-item
+    // toast instead of falling through to "use item on object".
+    if (obj.view && !nextRule) {
+      const required = Array.from(
+        new Set([...(obj.requiresItem ?? []), ...(obj.view?.requiresItem ?? [])])
+      );
+      const unlocked = (state.unlockedViews ?? []).includes(obj.id);
+      const gated = required.length > 0 && !unlocked;
+      if (!gated || !selectedItem || required.includes(selectedItem)) {
+        if (tryOpenView(obj.id, viewId)) onOpenView(obj.id);
+        return;
+      }
+      say('آیتم مناسب را از کیف خود انتخاب کنید');
+      return;
+    }
+
+    // Two-state toggle: flip between look a and look b, cross-fading through FadeImg.
+    // Return early only when the object is a pure two-state toggle (no message, digit, item
+    // grant, view, pickup, pending rule, or motion to also handle).
+    if (o.twoState?.toggleOnClick) {
+      setTwoStateSide((s) => (s === 'a' ? 'b' : 'a'));
+      if (
+        !obj.message &&
+        obj.digit === undefined &&
+        !obj.grantsItem &&
+        !obj.view &&
+        obj.pickupable !== true &&
+        !nextRule &&
+        !obj.motion
+      ) {
+        return;
+      }
     }
 
     if (selectedItem) {
@@ -424,7 +537,11 @@ function ObjSprite({
   // A sprite with neither image nor color is fully invisible — but still clickable
   // when it has game rules (invisible hotspot), and never shows a placeholder.
   const hasVisual = !!url || !!sp?.color;
-  const pointerCls = clickable ? 'cursor-pointer pointer-events-auto' : 'pointer-events-none';
+  const pointerCls = clickable
+    ? usable
+      ? 'cursor-pointer pointer-events-auto'
+      : 'cursor-not-allowed pointer-events-auto'
+    : 'pointer-events-none';
   const clipPath = hitClipPath(obj);
 
   const boxStyle: React.CSSProperties = {
@@ -464,11 +581,11 @@ function ObjSprite({
       >
         {sp?.color && <div className="absolute inset-0" style={{ background: sp.color }} />}
 
-        {url && <SwapImage url={url} fade={swapFadeAnim} swapId={swapId} name={name} />}
+        <FadeImg url={url} alt={name} anim={fadeAnim} />
 
         <div
           className={`absolute inset-0 ${pointerCls} ${
-            hasVisual && clickable ? 'hover:bg-amber-400/10' : ''
+            hasVisual && clickable && usable ? 'hover:bg-amber-400/10' : ''
           }`}
           style={clipPath ? { clipPath } : undefined}
           onClick={handleClick}
@@ -503,18 +620,18 @@ function SceneStage({
   assets: Record<string, Asset>;
   sprites: Record<string, Sprite>;
 }) {
-  const [openViewOf, setOpenViewOf] = useState<string | null>(null);
+  const [openViews, setOpenViews] = useState<string[]>([]);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [fit, setFit] = useState(1);
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const dragRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
 
+  // The current view owner is the last element of the stack.
+  const current = openViews[openViews.length - 1];
   // Resolve the open close-up view before computing fit, so the viewport fits
   // the view dimensions instead of always fitting the room dimensions.
-  const view: View | undefined = openViewOf
-    ? scene.objects.find((o) => o.id === openViewOf)?.view
-    : undefined;
+  const view: View | undefined = current ? findObject(scene.objects, current)?.view : undefined;
 
   const dimW = view?.width ?? scene.width;
   const dimH = view?.height ?? scene.height;
@@ -534,22 +651,23 @@ function SceneStage({
     return () => ro.disconnect();
   }, [dimW, dimH]);
 
-  // Reset zoom/pan whenever a view is opened or closed.
+  // Reset zoom/pan whenever the current view owner changes.
   useEffect(() => {
     setScale(1);
     setPan({ x: 0, y: 0 });
-  }, [openViewOf]);
+  }, [current]);
 
   // Safety reset when the underlying scene changes.
   useEffect(() => {
     setScale(1);
     setPan({ x: 0, y: 0 });
-    setOpenViewOf(null);
+    setOpenViews([]);
   }, [scene.id]);
 
   const onWheel = useCallback((e: React.WheelEvent) => {
     setScale((s) => Math.min(4, Math.max(0.5, s * (e.deltaY < 0 ? 1.1 : 0.9))));
   }, []);
+
 
   return (
     // wrapRef is the game VIEWPORT — the only element allowed to crop sprites.
@@ -585,8 +703,10 @@ function SceneStage({
             assets={assets}
             sprites={sprites}
             view={view}
+            ownerId={current}
             zoom={zoom}
-            onClose={() => setOpenViewOf(null)}
+            onOpenView={(objectId) => setOpenViews((vs) => [...vs, objectId])}
+            onClose={() => setOpenViews((vs) => vs.slice(0, -1))}
           />
         ) : (
           <div
@@ -603,7 +723,7 @@ function SceneStage({
               state={state}
               assets={assets}
               sprites={sprites}
-              onOpenView={setOpenViewOf}
+              onOpenView={(objectId) => setOpenViews((vs) => [...vs, objectId])}
             />
           </div>
         )}
@@ -653,7 +773,7 @@ function SceneContent({
   viewId?: string;
   onOpenView: (objectId: string) => void;
 }) {
-  const parent = viewId ? scene.objects.find((o) => o.id === viewId) : undefined;
+  const parent = viewId ? findObject(scene.objects, viewId) : undefined;
   const W = viewId ? (parent?.view?.width ?? scene.width) : scene.width;
   const H = viewId ? (parent?.view?.height ?? scene.height) : scene.height;
   const objects = viewId ? (parent?.view?.objects ?? []) : scene.objects;
@@ -665,7 +785,6 @@ function SceneContent({
   const bgUrl = spriteSrc(bgRef, sprites, assets);
   const bgSp = getSprite(bgRef, sprites);
   const [bg] = useImage(bgUrl || '', 'anonymous');
-
   // NOTE: no overflow-hidden here — sprite images may extend past the scene bounds; only the viewport crops.
   return (
     <div className="absolute inset-0 bg-surface-light" style={{ width: W, height: H }}>
@@ -674,7 +793,8 @@ function SceneContent({
         <img
           src={bgUrl}
           alt=""
-          className="absolute inset-0 w-full h-full object-cover select-none pointer-events-none"
+          className="absolute inset-0 w-full h-full select-none pointer-events-none"
+          style={{ objectFit: 'fill' }}
         />
       ) : bgSp?.color ? (
         <div className="absolute inset-0" style={{ background: bgSp.color }} />
@@ -694,7 +814,7 @@ function SceneContent({
                 src={u}
                 alt=""
                 className="absolute select-none pointer-events-none"
-                style={{ left: l.offsetX, top: l.offsetY, width: '100%', opacity: l.opacity }}
+                style={{ left: l.offsetX, top: l.offsetY, width: '100%', height: '100%', objectFit: 'fill', opacity: l.opacity }}
               />
             ) : (
               <div
@@ -732,7 +852,9 @@ function ViewOverlay({
   assets,
   sprites,
   view,
+  ownerId,
   zoom,
+  onOpenView,
   onClose,
 }: {
   scene: Scene;
@@ -740,13 +862,20 @@ function ViewOverlay({
   assets: Record<string, Asset>;
   sprites: Record<string, Sprite>;
   view: View;
+  ownerId?: string;
   zoom: number;
+  onOpenView: (objectId: string) => void;
   onClose: () => void;
 }) {
-  const locked = view.requiresItem?.length
-    ? !view.requiresItem.every((i) => state.inventory.includes(i))
-    : false;
+  const parentObj = ownerId ? findObject(scene.objects, ownerId) : undefined;
 
+  const required = Array.from(
+    new Set([...(parentObj?.requiresItem ?? []), ...(view.requiresItem ?? [])])
+  );
+  const unlocked = (state.unlockedViews ?? []).includes(ownerId ?? '');
+  // Lock screen only for a view that was never unlocked and still lacks a required item from
+  // the inventory — opening it once keeps it openable even if items are consumed later.
+  const locked = required.length > 0 && !unlocked && required.some((i) => !state.inventory.includes(i));
   const say = usePlayerStore((s) => s.setToast);
 
   if (locked) {
@@ -767,8 +896,6 @@ function ViewOverlay({
     );
   }
 
-  const parentObj = scene.objects.find((o) => o.view?.id === view.id);
-
   return (
     <div className="w-full h-full relative bg-surface border border-gray-700 rounded-xl">
       <div className="absolute inset-0 overflow-hidden rounded-xl">
@@ -786,8 +913,8 @@ function ViewOverlay({
             state={state}
             assets={assets}
             sprites={sprites}
-            viewId={parentObj?.id}
-            onOpenView={() => {}}
+            viewId={ownerId}
+            onOpenView={onOpenView}
           />
         </div>
       </div>
@@ -1051,6 +1178,14 @@ export default function Player({ projectName }: { projectName: string }) {
   const resetGame = usePlayerStore((s) => s.resetGame);
   const [tab, setTab] = useState<'rooms' | 'exit'>('rooms');
 
+  const [confirmReset, setConfirmReset] = useState(false);
+
+  useEffect(() => {
+    if (!confirmReset) return;
+    const t = window.setTimeout(() => setConfirmReset(false), 3000);
+    return () => window.clearTimeout(t);
+  }, [confirmReset]);
+
   useEffect(() => {
     loadFromStudio();
   }, [loadFromStudio]);
@@ -1118,21 +1253,26 @@ export default function Player({ projectName }: { projectName: string }) {
               : 'bg-surface-light text-amber-300 hover:bg-surface-lighter'
           }`}
         >
-          🔐 خروج
+           خروج
         </button>
 
         <button
           onClick={() => {
-            if (confirm('بازی از اول شروع شود؟ همه‌ی پیشرفت پاک می‌شود.')) {
-              setTab('rooms');
-              resetGame();
+            if (!confirmReset) {
+              setConfirmReset(true);
+              return;
             }
+            setConfirmReset(false);
+            setTab('rooms');
+            resetGame();
           }}
           title="ریست بازی"
           aria-label="ریست بازی"
-          className="px-3 py-1 rounded-lg text-xs whitespace-nowrap bg-red-900/40 text-red-300 hover:bg-red-800/50"
+          className={`px-3 py-1 rounded-lg text-xs whitespace-nowrap ${
+            confirmReset ? 'bg-red-600 text-white' : 'bg-red-900/40 text-red-300 hover:bg-red-800/50'
+          }`}
         >
-          🔄 ریست
+          {confirmReset ? '⚠️ مطمئنید؟ دوباره بزنید' : '🔄 ریست'}
         </button>
       </div>
 

@@ -1,8 +1,12 @@
 import React, { useRef } from 'react';
 import { useProjectAssets, useScene, useStudioStore } from '../stores/store';
 import { assetRef } from '../shared/types';
+import { findObject, objectPath } from '../shared/view-tree';
 import { fileToImage } from '../shared/utils';
-import { btnCls, btnDanger, btnPrimary, Field, inputCls, ListInput, NumInput, Section } from './ui';
+import { btnCls, btnDanger, btnPrimary, Field, Hint, inputCls, ListInput, NumInput, Section } from './ui';
+import { AssetPicker } from './AssetPicker';
+import { notify } from '../shared/notify';
+
 
 const st = () => useStudioStore.getState();
 
@@ -26,7 +30,7 @@ export function ViewTab() {
   const file = useRef<HTMLInputElement>(null);
 
   if (!scene) return null;
-  const parent = scene.objects.find((o) => o.id === (viewOf ?? selected[0]));
+  const parent = findObject(scene.objects, viewOf ?? selected[0]);
   if (!parent) {
     return (
       <div className="p-4 text-xs text-gray-400">
@@ -34,6 +38,8 @@ export function ViewTab() {
       </div>
     );
   }
+
+  const parentPath = objectPath(scene.objects, parent.id);
 
   const v = parent.view;
   if (!v) {
@@ -69,7 +75,12 @@ export function ViewTab() {
     <div className="p-3 space-y-2 text-xs">
       <div className="flex gap-1">
         {editing ? (
-          <button className={`${btnCls} flex-1`} onClick={() => st().exitView()}>← بازگشت به اتاق</button>
+          <button
+            className={`${btnCls} flex-1`}
+            onClick={() => st().exitView()}
+          >
+            {parentPath.length > 1 ? '← بازگشت به view والد' : '← بازگشت به اتاق'}
+          </button>
         ) : (
           <button className={`${btnPrimary} flex-1`} onClick={() => st().enterView(parent.id)}>✎ ویرایش محتوای view</button>
         )}
@@ -90,6 +101,7 @@ export function ViewTab() {
         </Field>
         <Field label="Items required to open" stack>
           <ListInput value={v.requiresItem} onChange={(x) => upd({ requiresItem: x }, 'req')} placeholder="key-gold" />
+          <Hint>The player must select the item from the inventory, then click the sprite.</Hint>
         </Field>
         <div className="grid grid-cols-2 gap-2">
           <Field label="Width" stack><NumInput value={v.width} min={50} onChange={(n) => upd({ width: Math.max(50, Math.round(n)) }, 'w')} /></Field>
@@ -97,10 +109,8 @@ export function ViewTab() {
         </div>
         <Field label="Background" stack>
           <div className="flex gap-1">
-            <select className={`${inputCls} flex-1`} value={bgId} onChange={(e) => void useAsBg(e.target.value)}>
-              <option value="">{v.backgroundUrl ? '(current)' : 'Pick from assets…'}</option>
-              {assets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
+            <AssetPicker assets={assets} value={bgId} onPick={(a) => void useAsBg(a.id)} />
+
             <button className={btnCls} onClick={() => file.current?.click()}>Upload</button>
           </div>
           <input
@@ -117,7 +127,7 @@ export function ViewTab() {
                 const a = st().addAsset(img);
                 upd({ backgroundUrl: st().useAssetSprite(assetRef(a.id), a.name), width: img.width, height: img.height }, 'bg');
               } catch (err) {
-                alert((err as Error).message);
+                notify((err as Error).message, "error");
               }
             }}
           />

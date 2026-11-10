@@ -75,6 +75,10 @@ interface SceneObject {
 type HitShape = { kind: 'box' } | { kind: 'polygon'; points: Pt[] }; // points normalized 0..1
 ```
 
+## Views
+
+An object may own a close-up view (`view`). Views **nest**: any object inside a view can itself own a view, up to `MAX_VIEW_DEPTH` (4) levels deep — an object at depth 4 cannot own another view. Object ids are unique per project, so throughout the runtime `viewId` always means the id of the object that OWNS the view (never the view's own id). Accordingly, session `discoveredObjects` keys are scene ids for room objects and owning-object ids for objects inside a view.
+
 ## Transforms
 
 A `TransformRule` defines how an object changes when a specific item is used on it:

@@ -1,4 +1,4 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   useCtx,
   useCurrentProject,
@@ -6,18 +6,26 @@ import {
   useScene,
   useStudioStore,
 } from '../stores/store';
-import { assetRef, TYPE_COLORS, type Asset, type BackgroundLayer } from '../shared/types';
+import { assetRef, resolveSprite, TYPE_COLORS, type Asset, type BackgroundLayer } from '../shared/types';
 import { validateProject, type Issue } from '../shared/validation';
 import { fileToImage, uid } from '../shared/utils';
 import { btnCls, Field, inputCls, NumInput } from './ui';
 import { useResolved } from './konva-bits';
 import { Icon, IconButton } from './icons';
+import { notify } from '../shared/notify';
+import { AssetPicker } from './AssetPicker';
+import { fitHitToImage, imageHasTransparency } from './hit-fit';
+
 
 const st = () => useStudioStore.getState();
 
-function Thumb({ url, className = '' }: { url: string; className?: string }) {
+function Thumb({ url, className = "", draggable, onDragStart }: { url: string; className?: string; draggable?: boolean; onDragStart?: (e: React.DragEvent) => void }) {
   const src = useResolved(url);
-  return src ? <img src={src} alt="" className={`object-contain ${className}`} /> : <div className={`bg-gray-800 ${className}`} />;
+  return src ? (
+    <img src={src} alt="" className={`object-contain ${className}`} draggable={draggable} onDragStart={onDragStart} />
+  ) : (
+    <div className={`bg-gray-800 ${className}`} draggable={draggable} onDragStart={onDragStart} />
+  );
 }
 
 /** Real pixel size of an image (stored asset sizes can be placeholders, e.g. 80×80 for seed assets). */
@@ -44,7 +52,7 @@ async function pickImages(e: React.ChangeEvent<HTMLInputElement>) {
     try {
       out.push(await fileToImage(f));
     } catch (err) {
-      alert(`${f.name}: ${(err as Error).message}`);
+      notify(`${f.name}: ${(err as Error).message}`, "error");
     }
   }
   return out;
@@ -147,17 +155,8 @@ export function BackgroundPanel() {
       <button className={`${btnCls} w-full inline-flex items-center justify-center gap-1`} onClick={() => file.current?.click()}>
         <Icon name="upload" size={12} /> Upload image (sets size)
       </button>
-      <select
-        className={inputCls}
-        value={current}
-        onChange={(e) => {
-          const a = assets.find((x) => x.id === e.target.value);
-          if (a) void applyBackground(a);
-        }}
-      >
-        <option value="">{bg ? '(current background)' : 'Pick from assets…'}</option>
-        {assets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-      </select>
+      <AssetPicker assets={assets} value={current} onPick={applyBackground} />
+
       {bg && <Thumb url={bg} className="w-full h-16 rounded" />}
       {bg && (
         <button className={`${btnCls} w-full`} onClick={() => ctx && st().setBackground('', ctx.width, ctx.height)}>Clear background</button>
@@ -216,10 +215,8 @@ function BackgroundLayers() {
       <input ref={file} type="file" accept="image/*" multiple className="hidden" onChange={upload} />
       <div className="flex gap-1 mt-2">
         <button className={`${btnCls} flex-1`} onClick={() => file.current?.click()}>+ Upload layer</button>
-        <select className={`${inputCls} flex-1`} value="" onChange={(e) => { const a = assets.find((x) => x.id === e.target.value); if (a) add(st().useAssetSprite(assetRef(a.id), a.name), a.name); }}>
-          <option value="">From assets…</option>
-          {assets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </select>
+        <AssetPicker assets={assets} value="" onPick={(a) => add(st().useAssetSprite(assetRef(a.id), a.name), a.name)} />
+
       </div>
     </div>
   );
@@ -263,36 +260,79 @@ export function AssetsPanel() {
   const assets = useProjectAssets();
   const file = useRef<HTMLInputElement>(null);
   const selected = useStudioStore((s) => s.selectedObjectIds);
+  const [query, setQuery] = useState('');
+
+  const filtered = useMemo(
+    () => assets.filter((a) => a.name.toLowerCase().includes(query.toLowerCase())),
+    [assets, query],
+  );
+
   const upload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     for (const img of await pickImages(e)) st().addAsset(img);
   };
+
+  const handleDelete = (id: string) => {
+    const res = st().deleteAsset(id);
+    if (!res.ok) notify(`Used by ${res.usedBy} object(s) - can't delete`, 'error');
+  };
+
   return (
     <div className="p-3">
       <div className="flex items-center justify-between mb-2">
-        <h3 className="font-bold text-cyan-300 text-sm">Assets ({assets.length})</h3>
+        <h3 className="font-bold text-cyan-300 text-sm">Assets ({filtered.length} / {assets.length})</h3>
+        <div className="flex items-center gap-1">
+          <input
+            className={inputCls}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search assets…"
+            dir="ltr"
+          />
+          {query && (
+            <button type="button" className={btnCls} onClick={() => setQuery('')}>✕</button>
+          )}
+        </div>
         <button className="inline-flex items-center gap-1 bg-cyan-700 hover:bg-cyan-600 text-white px-2 py-0.5 rounded text-xs" onClick={() => file.current?.click()}>
           <Icon name="upload" size={11} /> Upload
         </button>
         <input ref={file} type="file" accept="image/*" multiple className="hidden" onChange={upload} />
       </div>
       <p className="text-xs text-gray-500 mb-2">Drag an asset onto the canvas, or use the buttons. Images dropped on the canvas are added automatically.</p>
-      <div className="grid grid-cols-2 gap-2">
-        {assets.map((a) => (
-          <div key={a.id} className="bg-surface-light rounded p-1.5" draggable onDragStart={(e) => e.dataTransfer.setData('application/x-asset-id', a.id)}>
-            <Thumb url={assetRef(a.id)} className="w-full h-16 rounded" />
-            <div className="text-[11px] text-gray-300 truncate mt-1" title={a.name}>{a.name}</div>
-            <div className="flex gap-0.5 mt-1">
-              <IconButton solid icon="plus" title="Add to room" className="!w-auto flex-1" onClick={() => st().addObjectFromAsset(a.id)} />
-              <IconButton solid icon="image" title="Use on selected object" disabled={selected.length === 0} className="!w-auto flex-1" onClick={() => st().updateObjects(Object.fromEntries(selected.map((i) => [i, { spriteRef: st().useAssetSprite(assetRef(a.id), a.name) }])))} />
-              <button className={`${btnCls} flex-1 px-0`} title="Use as background" onClick={() => void applyBackground(a)}>BG</button>
-              <IconButton solid danger icon="trash" title="Delete asset" className="!w-auto flex-1" onClick={() => { if (!st().deleteAsset(a.id)) alert('This asset is still used in the project.'); }} />
+      {filtered.length === 0 ? (
+        <p className="text-xs text-gray-500 text-center py-2">No assets found.</p>
+      ) : (
+        <div className="grid grid-cols-2 gap-2">
+          {filtered.map((a) => (
+            <div key={a.id} className="bg-surface-light rounded p-1.5">
+              <Thumb
+                url={assetRef(a.id)}
+                className="w-full h-16 rounded"
+                draggable
+                onDragStart={(e) => e.dataTransfer.setData('application/x-asset-id', a.id)}
+              />
+              <div className="text-[11px] text-gray-300 truncate mt-1" title={a.name}>{a.name}</div>
+              <div className="flex gap-0.5 mt-1">
+                <IconButton solid icon="plus" title="Add to room" className="!w-auto flex-1" onClick={async () => {
+                  st().addObjectFromAsset(a.id);
+                  const objId = st().selectedObjectIds[0];
+                  if (!objId) return;
+                  const src = resolveSprite(assetRef(a.id), st().sprites, st().assets);
+                  if (src && await imageHasTransparency(src)) {
+                    await fitHitToImage(objId);
+                  }
+                }} />
+                <IconButton solid icon="image" title="Use on selected object" disabled={selected.length === 0} className="!w-auto flex-1" onClick={() => st().updateObjects(Object.fromEntries(selected.map((i) => [i, { spriteRef: st().useAssetSprite(assetRef(a.id), a.name) }])))} />
+                <button className={`${btnCls} flex-1 px-0`} title="Use as background" onClick={() => void applyBackground(a)}>BG</button>
+                <IconButton solid danger icon="trash" title="Delete asset" className="!w-auto flex-1" onClick={() => handleDelete(a.id)} />
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
+
 
 // ============ Clue chain ============
 export function ChainPanel() {

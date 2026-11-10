@@ -6,6 +6,8 @@ import { fileToImage } from '../../shared/utils';
 import { st } from './helpers';
 import { btnCls, inputCls } from '../ui';
 import { IconButton } from '../icons';
+import { AssetPicker } from '../AssetPicker';
+import { notify } from '../../shared/notify';
 
 /** Picks an image (or a colour-only / invisible sprite). Stores FULL `sprite:` refs. */
 export function ImgPick({ value, onChange }: { value?: string; onChange: (ref: string | undefined) => void }) {
@@ -15,8 +17,12 @@ export function ImgPick({ value, onChange }: { value?: string; onChange: (ref: s
   const ref = value ? transformRef(value) : '';
   const current = ref ? sprites[ref.slice(7)] : undefined;
   const isBlank = !!current && !current.assetId;
-  const selectValue = !value ? '' : current ? current.assetId || '__blank__' : value;
+  const currentAssetId = current?.assetId?.startsWith('asset:') ? current.assetId.slice(6) : '';
   const src = useResolved(ref);
+  const extra = [
+    { label: '— unchanged —', onClick: () => onChange(undefined) },
+    { label: '■ Colour only / invisible', onClick: () => onChange(spriteRef(st().addSprite(blankSprite('Blank')).id)) },
+  ];
   return (
     <div className="space-y-1">
       <input
@@ -32,27 +38,18 @@ export function ImgPick({ value, onChange }: { value?: string; onChange: (ref: s
             const a = st().addAsset(await fileToImage(f));
             onChange(st().useAssetSprite(assetRef(a.id), a.name));
           } catch (err) {
-            alert((err as Error).message);
+            notify((err as Error).message, 'error');
           }
         }}
       />
       <div className="flex gap-1 items-center">
         <IconButton icon="upload" solid title="Upload image" onClick={() => file.current?.click()} />
-        <select
-          className={`${inputCls} flex-1`}
-          value={selectValue}
-          onChange={(e) => {
-            const v = e.target.value;
-            if (v === '') onChange(undefined);
-            else if (v === '__blank__') onChange(spriteRef(st().addSprite(blankSprite('Blank')).id));
-            else if (v.startsWith('asset:')) onChange(st().useAssetSprite(v));
-            else onChange(v);
-          }}
-        >
-          <option value="">— unchanged —</option>
-          <option value="__blank__">■ Colour only / invisible</option>
-          {assets.map((a) => <option key={a.id} value={assetRef(a.id)}>{a.name}</option>)}
-        </select>
+        <AssetPicker
+          assets={assets}
+          value={currentAssetId}
+          onPick={(a) => onChange(st().useAssetSprite(assetRef(a.id), a.name))}
+          extra={extra}
+        />
         {src ? (
           <img src={src} alt="" className="w-8 h-8 rounded object-contain bg-black/30 shrink-0" />
         ) : isBlank && current?.color ? (
@@ -75,3 +72,4 @@ export function ImgPick({ value, onChange }: { value?: string; onChange: (ref: s
     </div>
   );
 }
+

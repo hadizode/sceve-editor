@@ -1,4 +1,5 @@
 import { livePoint } from './geometry';
+import { allObjectsDeep } from './view-tree';
 import type { PositionReq, Scene, SceneObject, SessionState, TransformCondition, TransformEffect } from './types';
 
 // ============ Effects / Transitions Engine ============
@@ -18,8 +19,23 @@ const pushMsg = (ctx: EffectCtx, m?: string) => {
   if (m && !ctx.messages.includes(m)) ctx.messages.push(m);
 };
 
-/** All objects of a scene including nested close-up view objects (effect targets live anywhere). */
-const allObjectsOf = (sc: Scene): SceneObject[] => [...sc.objects, ...sc.objects.flatMap((o) => (o.view ? o.view.objects : []))];
+/** All objects of a scene including objects inside any nested close-up view (effect targets live anywhere). */
+const allObjectsOf = (sc: Scene): SceneObject[] => allObjectsDeep(sc.objects);
+
+/**
+ * Deep lookup for the target of a `background` effect: the object whose id matches `objectId`,
+ * or the object that owns the view whose id matches `objectId`.
+ */
+function findViewHolder(objects: SceneObject[], objectId: string): SceneObject | undefined {
+  for (const o of objects) {
+    if (o.id === objectId || (o.view && o.view.id === objectId)) return o;
+    if (o.view) {
+      const hit = findViewHolder(o.view.objects, objectId);
+      if (hit) return hit;
+    }
+  }
+  return undefined;
+}
 
 // ============ Conditions ============
 // A rule can carry extra gating beyond its `requiresItem`: e.g. "only fire once ALL three fuses AND
@@ -227,7 +243,7 @@ function applyEffect(state: SessionState, eff: TransformEffect, triggerSceneId: 
     // objectId may point at a close-up view inside the scene → override that view's background instead.
     let key = targetScene?.id ?? scopeId;
     if (eff.objectId) {
-      const holder = targetScene?.objects.find((o) => o.view && (o.view.id === eff.objectId || o.id === eff.objectId));
+      const holder = targetScene ? findViewHolder(targetScene.objects, eff.objectId) : undefined;
       if (holder?.view) key = holder.view.id;
     }
     if (!targetScene && !state.backgrounds?.[key]) return state;
@@ -260,10 +276,7 @@ function applyEffect(state: SessionState, eff: TransformEffect, triggerSceneId: 
 
   // --- automatically apply / revert / toggle a transform rule on another object ---
   if (eff.action !== 'transform' || !targetScene) return state;
-  const list = [
-    ...targetScene.objects,
-    ...targetScene.objects.flatMap((o) => (o.view ? o.view.objects : [])),
-  ];
+  const list = allObjectsDeep(targetScene.objects);
   const obj = list.find((o) => o.id === eff.objectId);
   if (!obj?.transforms?.length) return state;
   const idx = eff.ruleIndex ?? 0;
@@ -679,6 +692,26 @@ export function allRoomsComplete(state: SessionState, scenes: Scene[]): boolean 
 */
 
 // ============ Doors / Room transitions ============
+
+/**
+ * Gate for opening an object's close-up view. Pure — never mutates `state`.
+ * Required = unique union of the object's own `requiresItem` and its view's `requiresItem`.
+ */
+export function canOpenView(
+  state: SessionState,
+  obj: SceneObject,
+  selectedItem: string | null
+): { ok: true } | { ok: false; message: string } {
+  const required = Array.from(
+    new Set([...(obj.requiresItem ?? []), ...(obj.view?.requiresItem ?? [])])
+  );
+  if (required.length === 0 || (state.unlockedViews ?? []).includes(obj.id)) return { ok: true };
+  if (required.some((i) => !state.inventory.includes(i)))
+    return { ok: false, message: 'برای باز کردن این مورد به آیتم نیاز دارید' };
+  if (selectedItem === null || !required.includes(selectedItem))
+    return { ok: false, message: 'آیتم مناسب را از کیف خود انتخاب کنید' };
+  return { ok: true };
+}
 
 /** Is the player allowed to walk through this door right now? */
 export function canUseDoor(state: SessionState, obj: SceneObject): boolean {

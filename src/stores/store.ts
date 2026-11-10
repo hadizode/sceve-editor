@@ -24,16 +24,19 @@ import {
   type Sprite,
   type View,
 } from '../shared/types';
+import { MAX_VIEW_DEPTH, allObjectsDeep, findObject, mapObject, objectPath, viewObjects } from '../shared/view-tree';
 import { SEED_ASSETS, SEED_PROJECT, SEED_SCENES, SEED_SPRITES } from '../shared/seed-data';
 import { idbStorage } from '../shared/idb';
-import { sceneRefs, sceneUrls } from '../shared/validation';
+import { countAssetUsage, sceneRefs, sceneUrls } from '../shared/validation';
 import { nowIso, uid, type LoadedImage } from '../shared/utils';
 import {
   allRoomsComplete,
   applyItemToObject,
+  canOpenView,
   canUseDoor,
   discoverObject,
   evaluateAutoTransforms,
+  isUsable,
   pickupObject as pickupObj,
   tryEnterDoor,
   validateFinalLock,
@@ -52,7 +55,7 @@ export interface EditContext {
 
 export function getContext(scene: Scene | undefined, viewOf: string | null): EditContext | null {
   if (!scene) return null;
-  const view = viewOf ? scene.objects.find((o) => o.id === viewOf)?.view : undefined;
+  const view = viewOf ? findObject(scene.objects, viewOf)?.view : undefined;
   if (view) {
     return { objects: view.objects, width: view.width, height: view.height, backgroundUrl: view.backgroundUrl, layers: [], view };
   }
@@ -63,7 +66,7 @@ const setObjectsIn = (scene: Scene, viewOf: string | null, objects: SceneObject[
   if (!viewOf) return { ...scene, objects };
   return {
     ...scene,
-    objects: scene.objects.map((o) => (o.id === viewOf && o.view ? { ...o, view: { ...o.view, objects } } : o)),
+    objects: mapObject(scene.objects, viewOf, (o) => (o.view ? { ...o, view: { ...o.view, objects } } : o)),
   };
 };
 
@@ -131,12 +134,12 @@ interface StudioState {
   // views
   enterView: (objectId: string) => void;
   exitView: () => void;
-  addView: (objectId: string) => void;
+  addView: (objectId: string) => boolean;
   removeView: (objectId: string) => void;
   updateView: (objectId: string, patch: Partial<View>, key?: string) => void;
   // assets
   addAsset: (img: LoadedImage) => Asset;
-  deleteAsset: (id: string) => boolean;
+  deleteAsset: (id: string) => { ok: true } | { ok: false; usedBy: number };
   /** Returns the sprite ref (`sprite:<id>`) to assign to an object. Reuses a sprite that already points at this asset. */
   useAssetSprite: (assetIdOrRef: string, name?: string) => string;
   updateSprite: (id: string, patch: Partial<Sprite>) => void;
@@ -302,7 +305,9 @@ export const useStudioStore = create<StudioState>()(
           currentSceneId: snap.sceneId,
           selectedObjectIds: [],
           editingViewOf:
-            s.editingViewOf && s.currentSceneId === snap.sceneId && snap.scene.objects.some((o) => o.id === s.editingViewOf && o.view)
+            s.editingViewOf &&
+            s.currentSceneId === snap.sceneId &&
+            findObject(snap.scene.objects, s.editingViewOf)?.view
               ? s.editingViewOf
               : null,
         } as Partial<StudioState>);
@@ -548,8 +553,8 @@ export const useStudioStore = create<StudioState>()(
             viewOf
               ? {
                   ...scene,
-                  objects: scene.objects.map((o) =>
-                    o.id === viewOf && o.view ? { ...o, view: { ...o.view, backgroundUrl: url, width: w, height: h } } : o
+                  objects: mapObject(scene.objects, viewOf, (o) =>
+                    o.view ? { ...o, view: { ...o.view, backgroundUrl: url, width: w, height: h } } : o
                   ),
                 }
               : { ...scene, backgroundUrl: url, width: w, height: h }
@@ -700,33 +705,59 @@ export const useStudioStore = create<StudioState>()(
         enterView: (objectId) => {
           const s = get();
           const scene = s.currentSceneId ? s.scenes[s.currentSceneId] : undefined;
-          if (scene?.objects.some((o) => o.id === objectId && o.view)) set({ editingViewOf: objectId, selectedObjectIds: [] });
+          if (scene && findObject(scene.objects, objectId)?.view) set({ editingViewOf: objectId, selectedObjectIds: [] });
         },
-        exitView: () => set((s) => ({ editingViewOf: null, selectedObjectIds: s.editingViewOf ? [s.editingViewOf] : [] })),
-        addView: (objectId) => {
-          edit(undefined, (scene) => ({
+        exitView: () => set((s) => {
+          const cur = s.editingViewOf;
+          if (!cur) return { editingViewOf: null, selectedObjectIds: [] };
+          const scene = s.currentSceneId ? s.scenes[s.currentSceneId] : undefined;
+          const path = scene ? objectPath(scene.objects, cur) : [];
+          // Go up one level: the parent owner of the view we leave (or null at the top).
+          return {
+            editingViewOf: path.length >= 2 ? path[path.length - 2] : null,
+            selectedObjectIds: [cur],
+          };
+        }),
+        addView: (objectId): boolean => {
+          const s = get();
+          const scene = s.currentSceneId ? s.scenes[s.currentSceneId] : undefined;
+          if (!scene) return false;
+          // Views nest MAX_VIEW_DEPTH levels deep: an object at depth MAX_VIEW_DEPTH may not own a view.
+          if (objectPath(scene.objects, objectId).length - 1 >= MAX_VIEW_DEPTH) return false;
+          return edit(undefined, (scene) => ({
             ...scene,
-            objects: scene.objects.map((o) =>
-              o.id === objectId && !o.view
-                ? {
+            objects: mapObject(scene.objects, objectId, (o) =>
+              o.view
+                ? o
+                : {
                     ...o,
                     view: { id: uid('view'), title: `${o.name} – Close-up`, backgroundUrl: o.spriteRef, width: 400, height: 400, objects: [] },
                   }
-                : o
             ),
           }));
         },
         removeView: (objectId) => {
-          if (get().editingViewOf === objectId) set({ editingViewOf: null });
+          const s = get();
+          const scene = s.currentSceneId ? s.scenes[s.currentSceneId] : undefined;
+          const cur = s.editingViewOf;
+          let nextEditing = cur;
+          if (cur && scene) {
+            // If we are editing this owner's view (or a view nested inside it), move up to the owner's parent.
+            if (objectPath(scene.objects, cur).includes(objectId)) {
+              const ownerPath = objectPath(scene.objects, objectId);
+              nextEditing = ownerPath.length >= 2 ? ownerPath[ownerPath.length - 2] : null;
+            }
+          }
+          if (nextEditing !== cur) set({ editingViewOf: nextEditing });
           edit(undefined, (scene) => ({
             ...scene,
-            objects: scene.objects.map((o) => (o.id === objectId ? { ...o, view: undefined } : o)),
+            objects: mapObject(scene.objects, objectId, (o) => ({ ...o, view: undefined })),
           }));
         },
         updateView: (objectId, patch, key) => {
           edit(key, (scene) => ({
             ...scene,
-            objects: scene.objects.map((o) => (o.id === objectId && o.view ? { ...o, view: { ...o.view, ...patch } } : o)),
+            objects: mapObject(scene.objects, objectId, (o) => (o.view ? { ...o, view: { ...o.view, ...patch } } : o)),
           }));
         },
 
@@ -741,20 +772,25 @@ export const useStudioStore = create<StudioState>()(
         },
         deleteAsset: (id) => {
           const s = get();
-          const project = s.projects.find((p) => p.id === s.currentProjectId);
-          if (!project) return false;
-          // Scenes reference `sprite:<id>`, not `asset:<id>` — so also look through the sprites that point at this asset.
-          const refs = new Set(project.scenes.flatMap((sid) => (s.scenes[sid] ? sceneRefs(s.scenes[sid]) : [])));
+          const usedBy = countAssetUsage(id, s.assets, s.sprites, s.scenes);
+          if (usedBy > 0) return { ok: false, usedBy };
           const aref = `asset:${id}`;
-          const used =
-            refs.has(aref) || Object.values(s.sprites).some((sp) => sp.assetId === aref && refs.has(spriteRef(sp.id)));
-          if (used) return false;
+          const orphanSprites = Object.entries(s.sprites)
+            .filter(([, sp]) => sp.assetId === aref)
+            .filter(([sid]) => !Object.values(s.scenes).some((sc) => sceneRefs(sc).includes(spriteRef(sid))))
+            .map(([sid]) => sid);
           set((st) => {
             const assets = { ...st.assets };
             delete assets[id];
-            return { assets, projects: st.projects.map((p) => ({ ...p, assets: p.assets.filter((a) => a !== id) })) };
+            const sprites = { ...st.sprites };
+            for (const sid of orphanSprites) delete sprites[sid];
+            return {
+              assets,
+              sprites,
+              projects: st.projects.map((p) => ({ ...p, assets: p.assets.filter((a) => a !== id) })),
+            };
           });
-          return true;
+          return { ok: true };
         },
 
         // ---------- sprites ----------
@@ -841,6 +877,7 @@ interface PlayerState {
   setToast: (t: string | null) => void;
   switchScene: (id: string) => void;
   clickObject: (objectId: string, viewId?: string) => void;
+  tryOpenView: (objectId: string, viewId?: string) => boolean;
   rotateObject: (objectId: string, viewId?: string) => void;
   pickup: (objectId: string, viewId?: string) => void;
   useItemOnObject: (itemId: string | null, objectId: string, viewId?: string) => void;
@@ -854,18 +891,13 @@ let toastTimer: number | undefined;
 /** objectId → timestamp of the last rotation click. Guards against double-clicks mid-animation. */
 const lastRotateAt = new Map<string, number>();
 
-/** All object ids in a scene/view *including* nested close-up view objects. */
+/** Objects of the scene, or of the close-up view owned by `viewId` (the owner is looked up at any depth). */
+const viewObjs = (scene: Scene, viewId?: string): SceneObject[] => viewObjects(scene, viewId ?? '');
+
+/** All object ids in a scene (every nesting level) or in the close-up view owned by `viewId`. */
 export function scopeIds(scene: Scene, viewId?: string): Set<string> {
-  if (viewId) {
-    const v = scene.objects.find((o) => o.id === viewId)?.view;
-    return new Set(v ? v.objects.map((o) => o.id) : []);
-  }
-  const s = new Set<string>();
-  for (const o of scene.objects) {
-    s.add(o.id);
-    o.view?.objects.forEach((v) => s.add(v.id));
-  }
-  return s;
+  if (viewId) return new Set(viewObjects(scene, viewId).map((o) => o.id));
+  return new Set(allObjectsDeep(scene.objects).map((o) => o.id));
 }
 
 /**
@@ -876,7 +908,10 @@ export function scopeIds(scene: Scene, viewId?: string): Set<string> {
 function pruneDiscovered(scenes: Record<string, Scene>, discovered: Record<string, string[]>): Record<string, string[]> {
   const viewScopes = new Map<string, Set<string>>();
   for (const sc of Object.values(scenes)) {
-    for (const o of sc.objects) if (o.view) viewScopes.set(o.id, new Set(o.view.objects.map((v) => v.id)));
+    viewScopes.set(sc.id, new Set(allObjectsDeep(sc.objects).map((o) => o.id)));
+    for (const o of allObjectsDeep(sc.objects)) {
+      if (o.view) viewScopes.set(o.id, new Set(o.view.objects.map((v) => v.id)));
+    }
   }
   const out: Record<string, string[]> = {};
   for (const [key, ids] of Object.entries(discovered)) {
@@ -991,20 +1026,36 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
 
     resetGame: () => {
       const g = get();
-      if (!g.session) return;
-      const first = Object.keys(g.scenes)[0];
+      lastRotateAt.clear();
+      try { localStorage.removeItem(PLAYER_KEY); } catch {}
+      // Always read fresh studio data (live, unsaved edits included) — never a stale snapshot.
+      const st = useStudioStore.getState();
+      const project = st.projects.find((p) => p.id === (g.session?.projectId ?? st.currentProjectId));
+      if (!project) return;
+      const scenes = Object.fromEntries(
+        project.scenes.map((id) => [id, st.scenes[id]]).filter(([, s]) => !!s)
+      );
+      const first = project.scenes[0];
       set({
-        session: {
-          ...g.session,
-          started: false,
-          complete: false,
-          players: g.session.players.map((p) => ({ ...p, ready: false })),
-          state: createSessionState(first),
-        },
+        scenes,
+        assets: st.assets,
+        sprites: st.sprites,
         selectedItem: null,
         lockInput: '',
+        toast: null,
+        session: {
+          id: uid('sess'),
+          projectId: project.id,
+          token: `local-${project.id}`,
+          players: [
+            { telegramId: 'you', name: 'شما', online: true, ready: false },
+            { telegramId: 'bot-demo', name: 'هم‌تیمی (دمو)', online: false, ready: false },
+          ],
+          started: false,
+          complete: false,
+          state: createSessionState(first),
+        },
       });
-      persistPlayer(get());
     },
 
     setPlayerReady: (telegramId = 'you') => {
@@ -1032,8 +1083,12 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
       const g = get();
       const scene = sceneOfCurrent();
       if (!g.session || !scene) return;
-      const objs = viewId ? scene.objects.find((o) => o.id === viewId)?.view?.objects ?? [] : scene.objects;
+      const objs = viewObjs(scene, viewId);
       const obj = objs.find((o) => o.id === objectId);
+      if (obj && !isUsable(g.session.state, obj, g.scenes)) {
+        say(obj.unusableMessage || 'فعلاً قابل استفاده نیست');
+        return;
+      }
       // Doors take the player into another room (locked doors only show a message).
       if (obj?.door) {
         const rooms = Object.values(g.scenes).filter((sc) => sc.projectId === g.session!.projectId);
@@ -1051,6 +1106,38 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     },
 
     /**
+     * Try to open an object's close-up view. Uses the same deep lookup `clickObject` uses
+     * (`viewObjs` → `viewObjects`), so it works for objects at any nesting depth.
+     * Returns false (and shows the gate message) when the view cannot be opened right now.
+     */
+    tryOpenView: (objectId, viewId) => {
+      const g = get();
+      const scene = sceneOfCurrent();
+      if (!g.session || !scene) return false;
+      const objs = viewObjs(scene, viewId);
+      const obj = objs.find((o) => o.id === objectId);
+      if (!obj) return false;
+      const res = canOpenView(g.session.state, obj, g.selectedItem);
+      if (!res.ok) {
+        say(res.message);
+        return false;
+      }
+      // Remember that the view has been opened so it stays openable even if items are consumed later.
+      const required = Array.from(
+        new Set([...(obj.requiresItem ?? []), ...(obj.view?.requiresItem ?? [])])
+      );
+      const unlocked = (g.session.state.unlockedViews ?? []).includes(obj.id);
+      if (required.length > 0 && !unlocked) {
+        commit({
+          ...g.session.state,
+          unlockedViews: [...(g.session.state.unlockedViews ?? []), obj.id],
+        });
+      }
+      set({ selectedItem: null });
+      return true;
+    },
+
+    /**
      * One motion click: bump the object's rotation step counter. The renderer animates around the
      * pivot; position-gated rules re-evaluate through commit() → evaluateAutoTransforms.
      */
@@ -1058,9 +1145,10 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
       const g = get();
       const scene = sceneOfCurrent();
       if (!g.session || !scene) return;
-      const objs = viewId ? scene.objects.find((o) => o.id === viewId)?.view?.objects ?? [] : scene.objects;
+      const objs = viewObjs(scene, viewId);
       const obj = objs.find((o) => o.id === objectId);
-      const m = obj?.motion;
+      if (!obj || !isUsable(g.session.state, obj, g.scenes)) return;
+      const m = obj.motion;
       if (!m) return;
       const cur = g.session.state.motionSteps?.[objectId] ?? 0;
       // A non-toggle motion stops dead at maxSteps (e.g. a clock hand that cannot pass 12 clicks).
@@ -1079,7 +1167,7 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
       const g = get();
       const scene = sceneOfCurrent();
       if (!g.session || !scene) return;
-      const objs = viewId ? scene.objects.find((o) => o.id === viewId)?.view?.objects ?? [] : scene.objects;
+      const objs = viewObjs(scene, viewId);
       // Pickups can fire transition effects too (open doors, change other rooms…).
       const res = pickupObj(g.session.state, viewId || scene.id, objectId, objs, { scenesById: g.scenes });
       if (res.message) say(res.message);
@@ -1090,7 +1178,7 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
       const g = get();
       const scene = sceneOfCurrent();
       if (!g.session || !scene) return;
-      const objs = viewId ? scene.objects.find((o) => o.id === viewId)?.view?.objects ?? [] : scene.objects;
+      const objs = viewObjs(scene, viewId);
       // Transform rules may carry effects that reach other objects/rooms — pass the whole project in.
       const res = applyItemToObject(g.session.state, viewId || scene.id, objectId, itemId, objs, { scenesById: g.scenes });
       if (res.message) say(res.message, res.success ? 5000 : 3000);

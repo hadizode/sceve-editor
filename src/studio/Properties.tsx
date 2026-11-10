@@ -1,5 +1,5 @@
-import React, { useRef } from 'react';
-import { useCtx, useSpriteSrc, useStudioStore } from '../stores/store';
+import React, { useRef, useState } from 'react';
+import { useCtx, useProjectAssets, useSpriteSrc, useSprites, useStudioStore } from '../stores/store';
 import { assetRef, type RotateMotion, type SceneObject } from '../shared/types';
 import { fileToImage } from '../shared/utils';
 import { Icon, IconButton } from './icons';
@@ -7,6 +7,9 @@ import type { IconName } from './icons';
 import { DoorSection } from './Transitions';
 import { NumInput } from './ui';
 import {rotateBoxAboutPivot} from '../shared/geometry';
+import { AssetPicker } from './AssetPicker';
+import { notify } from '../shared/notify';
+import { fitHitToImage } from './hit-fit';
 
 // ============ Small UI primitives ============
 const inputCls =
@@ -123,13 +126,16 @@ export function PropertiesPanel() {
         <div className="flex items-center gap-0.5">
           <IconButton icon={obj.visible ? 'eye' : 'eyeOff'} title={obj.visible ? 'Visible (click to hide)' : 'Hidden (click to show)'} active={!obj.visible} onClick={() => set({ visible: !obj.visible })} />
           <IconButton icon={obj.locked ? 'lock' : 'unlock'} title={obj.locked ? 'Locked (click to unlock)' : 'Lock'} active={!!obj.locked} onClick={() => set({ locked: !obj.locked })} />
-          {!inView && !isDoor && (
+          {!isDoor && (
             <IconButton
               icon={obj.view ? 'search' : 'viewAdd'}
               title={obj.view ? `Edit interactive view (${obj.view.objects.length} objects)` : 'Add interactive view'}
               active={!!obj.view}
               onClick={() => {
-                if (!obj.view) st().addView(obj.id);
+                if (!obj.view && !st().addView(obj.id)) {
+                  notify('Maximum view nesting reached');
+                  return;
+                }
                 st().enterView(obj.id);
               }}
             />
@@ -152,12 +158,12 @@ export function PropertiesPanel() {
             const a = st().addAsset(await fileToImage(f));
             set({ spriteRef: st().useAssetSprite(assetRef(a.id), a.name) });
           } catch (err) {
-            alert((err as Error).message);
+            notify((err as Error).message, "error");
           }
         }}
       />
 
-      <SpritePicker src={src} file={file} />
+      <SpritePicker src={src} file={file} obj={obj} set={set} />
       <TransformSection obj={obj} ctx={ctx} />
       <HitSection obj={obj} ctx={ctx} />
       {!isDoor && <MotionSection obj={obj} ctx={ctx} />}
@@ -169,7 +175,7 @@ export function PropertiesPanel() {
         <>
           <InteractionSection obj={obj} ctx={ctx} />
           <PickupSection obj={obj} ctx={ctx} />
-          {!inView && obj.view && (
+          {obj.view && (
             <Section
               title="Interactive View"
               badge={obj.view.objects.length}
@@ -192,7 +198,21 @@ export function PropertiesPanel() {
 }
 
 // ============ Sprite picker ============
-function SpritePicker({ src, file }: { src: string; file: React.RefObject<HTMLInputElement> }) {
+function SpritePicker({
+  src,
+  file,
+  obj,
+  set,
+}: {
+  src: string;
+  file: React.RefObject<HTMLInputElement>;
+  obj: SceneObject;
+  set: (patch: Partial<SceneObject>) => void;
+}) {
+  const sprites = useSprites();
+  const assets = useProjectAssets();
+  const sprite = obj.spriteRef.startsWith('sprite:') ? sprites[obj.spriteRef.slice(7)] : undefined;
+  const currentAssetId = sprite?.assetId?.startsWith('asset:') ? sprite.assetId.slice(6) : '';
   return (
     <Section title="Sprite">
       <div className="flex items-center gap-2">
@@ -201,9 +221,15 @@ function SpritePicker({ src, file }: { src: string; file: React.RefObject<HTMLIn
           <Icon name="upload" size={12} /> Upload image
         </button>
       </div>
+      <AssetPicker
+        assets={assets}
+        value={currentAssetId}
+        onPick={(a) => set({ spriteRef: st().useAssetSprite(assetRef(a.id), a.name) })}
+      />
     </Section>
   );
 }
+
 
 // ============ Transform ============
 function TransformSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
@@ -244,7 +270,10 @@ function TransformSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
 
 // ============ Hit area ============
 function HitSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
-  const { setPts, set } = ctx;
+  const { setPts, set, src } = ctx;
+  const [detail, setDetail] = useState(24);
+  const [alphaCutoff, setAlphaCutoff] = useState(20);
+  const [includeAllParts, setIncludeAllParts] = useState(false);
   const pts = obj.hit?.kind === 'polygon' ? obj.hit.points : [];
 
   const removeAt = (i: number) => setPts(pts.filter((_, j) => j !== i));
@@ -254,6 +283,16 @@ function HitSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
     const next = [...pts];
     next.splice(i + 1, 0, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
     setPts(next);
+  };
+
+  const fitToImage = async () => {
+    const res = await fitHitToImage(obj.id, {
+      threshold: alphaCutoff,
+      maxPoints: detail,
+      includeAllParts,
+    });
+    if (res === 'noimage') notify('Could not load image to fit hit area');
+    else if (res === 'rect') notify('The image fills its box - using a rectangle');
   };
 
   return (
@@ -268,6 +307,41 @@ function HitSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
         <IconButton solid icon="shape5" title="Pentagon" onClick={() => setPts(regularPolygon(5))} />
         <IconButton solid icon="shape6" title="Hexagon" onClick={() => setPts(regularPolygon(6))} />
         <IconButton solid icon="shape8" title="Octagon" onClick={() => setPts(regularPolygon(8))} />
+      </div>
+      <div className="flex gap-1 mt-2">
+        <button
+          className={`${btnCls} flex-1`}
+          disabled={!src}
+          onClick={fitToImage}
+        >
+          <Icon name="image" size={12} /> Fit to image
+        </button>
+        <Field label="Detail">
+          <input
+            type="range"
+            min="6"
+            max="48"
+            step="1"
+            className="w-[72px] cursor-pointer accent-primary"
+            value={detail}
+            onChange={(e) => setDetail(Number(e.target.value))}
+          />
+        </Field>
+        <Field label="Alpha cutoff">
+          <input
+            type="range"
+            min="1"
+            max="200"
+            step="1"
+            className="w-[72px] cursor-pointer accent-primary"
+            value={alphaCutoff}
+            onChange={(e) => setAlphaCutoff(Number(e.target.value))}
+          />
+        </Field>
+        <label className="flex items-center gap-2 mt-[6px] cursor-pointer text-[10px] text-gray-300">
+          <input type="checkbox" checked={includeAllParts} onChange={(e) => setIncludeAllParts(e.target.checked)} />
+          Include all parts
+        </label>
       </div>
       {pts.length >= 3 ? (
         <div className="space-y-1">

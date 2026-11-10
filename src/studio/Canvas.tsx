@@ -4,6 +4,7 @@ import { Stage, Layer, Image as KImage, Rect, Text, Transformer, Shape, Circle }
 import { apply, boxBounds, boxMatrix, invert, konvaHitFunc, konvaNodeAttrs, patchFromNode, pivotScene,rotateBoxAboutPivot, boxCenter, polygonScene, type Pt } from '../shared/geometry';
 import { useCtx, useScene, useStudioStore } from '../stores/store';
 import { type SceneObject } from '../shared/types';
+import { findObject, objectPath } from '../shared/view-tree';
 import { clamp, fileToImage } from '../shared/utils';
 import { Bg, useSrc, useSpriteOf } from './konva-bits';
 import { isTyping, useElementSize } from './ui';
@@ -633,11 +634,40 @@ export default function Canvas() {
       )}
 
       {/* overlays */}
-      {ctx?.view && (
-        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 bg-amber-700/90 text-white text-xs px-3 py-1.5 rounded-lg shadow">
-          <span>🔍 Editing view: {ctx.view.title}</span>
+      {ctx?.view && viewOf && scene && (
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1 bg-amber-700/90 text-white text-xs px-3 py-1.5 rounded-lg shadow">
+          {[scene.title, ...objectPath(scene.objects, viewOf).map((id) => findObject(scene.objects, id)?.name || id)].map(
+            (crumb, i) => {
+              const path = objectPath(scene.objects, viewOf);
+              const isLast = i === path.length;
+              const ownerId = path[i - 1];
+              return (
+                <span key={i} className="flex items-center gap-1">
+                  {!isLast && (
+                    <button
+                      className="text-amber-200 hover:text-white underline underline-offset-2 hover:no-underline"
+                      onClick={() => {
+                        if (i === 0) {
+                          for (let k = 0; k < path.length; k++) st().exitView();
+                        } else {
+                          st().enterView(ownerId!);
+                        }
+                      }}
+                    >
+                      {crumb}
+                    </button>
+                  )}
+                  {isLast ? (
+                    <span>{crumb}</span>
+                  ) : (
+                    <span className="mx-1">›</span>
+                  )}
+                </span>
+              );
+            }
+          )}
           <button className="bg-black/30 hover:bg-black/50 px-2 py-0.5 rounded" onClick={() => st().exitView()}>
-            ← Back to room
+            ← Back
           </button>
         </div>
       )}

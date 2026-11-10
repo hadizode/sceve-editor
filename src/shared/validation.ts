@@ -1,5 +1,6 @@
 import type { Asset, Project, Scene, SceneObject, Sprite, TransformEffect } from './types';
-import { getSprite, transformRef } from './types';
+import { assetRef, getSprite, spriteRef, transformRef } from './types';
+import { allObjectsDeep, objectPath } from './view-tree';
 
 export interface Issue {
   level: 'error' | 'warning';
@@ -10,7 +11,7 @@ export interface Issue {
 }
 
 export function flattenObjects(scene: Scene): SceneObject[] {
-  return scene.objects.flatMap((o) => [o, ...(o.view?.objects ?? [])]);
+  return allObjectsDeep(scene.objects);
 }
 
 /** Every item id a player can actually get somewhere in the project. */
@@ -29,17 +30,17 @@ export function obtainableItems(scenes: Scene[]): Set<string> {
 /** Every sprite/image reference used by a scene (objects, views, layers, backgrounds, transforms). */
 export function sceneRefs(scene: Scene): string[] {
   const refs: string[] = [scene.backgroundUrl, ...scene.backgroundLayers.map((l) => l.spriteRef)];
-  for (const o of scene.objects) {
-    refs.push(o.spriteRef);
-    o.transforms?.forEach((t) => t.newSpriteId && refs.push(transformRef(t.newSpriteId)));
-    if (o.view) {
-      refs.push(o.view.backgroundUrl);
-      o.view.objects.forEach((v) => {
-        refs.push(v.spriteRef);
-        v.transforms?.forEach((t) => t.newSpriteId && refs.push(transformRef(t.newSpriteId)));
-      });
+  const walk = (objs: SceneObject[]): void => {
+    for (const o of objs) {
+      refs.push(o.spriteRef);
+      o.transforms?.forEach((t) => t.newSpriteId && refs.push(transformRef(t.newSpriteId)));
+      if (o.view) {
+        refs.push(o.view.backgroundUrl);
+        walk(o.view.objects);
+      }
     }
-  }
+  };
+  walk(scene.objects);
   return refs.filter(Boolean);
 }
 
@@ -70,8 +71,7 @@ export function validateProject(
       issues.push({ level, message: `[${scene.title}] ${message}`, sceneId: scene.id, objectId });
     };
     const all = flattenObjects(scene);
-    const topIdOf = (o: SceneObject) =>
-      scene.objects.find((t) => t.id === o.id || t.view?.objects.some((v) => v.id === o.id))?.id;
+    const topIdOf = (o: SceneObject) => objectPath(scene.objects, o.id)[0];
 
     if (!all.some((o) => o.digit !== undefined)) at('Room has no object with a digit', 'error');
 
@@ -202,4 +202,20 @@ export function validateProject(
     }
   }
   return issues;
+}
+/** Count how many references (objects, views, layers, transforms, backgrounds) across all scenes point at sprites that use this asset. Pure helper. */
+export function countAssetUsage(assetId: string, assets: Record<string, Asset>, sprites: Record<string, Sprite>, scenes: Record<string, Scene>): number {
+  const ref = assetRef(assetId);
+  let n = 0;
+  for (const scene of Object.values(scenes)) {
+    for (const r of sceneRefs(scene)) {
+      if (r.startsWith('sprite:')) {
+        const s = sprites[r.slice(7)];
+        if (s && s.assetId === ref) n++;
+      } else if (r.startsWith('asset:') && r === ref) {
+        n++;
+      }
+    }
+  }
+  return n;
 }

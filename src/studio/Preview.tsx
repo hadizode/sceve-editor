@@ -69,7 +69,7 @@ export default function Preview() {
   const size = useElementSize(ref);
   const [found, setFound] = useState<Set<string>>(new Set());
   const [msg, setMsg] = useState<string | null>(null);
-  const [view, setView] = useState<View | null>(null);
+  const [views, setViews] = useState<View[]>([]);
   const timer = useRef<number>();
 
   if (!scene) return <div className="p-8 text-center text-gray-400">No room to preview</div>;
@@ -81,8 +81,9 @@ export default function Preview() {
   };
 
   const click = (o: SceneObject) => {
-    if (o.view) {
-      setView(o.view);
+    const v = o.view;
+    if (v) {
+      setViews((vs) => [...vs, v]);
       return;
     }
     setFound((f) => new Set(f).add(o.id));
@@ -90,6 +91,7 @@ export default function Preview() {
   };
 
   const scale = Math.max(0.05, Math.min(1, (size.w - 32) / scene.width, (size.h - 32) / scene.height));
+  const view = views[views.length - 1];
   const vScale = view ? Math.min(1, 500 / view.width, 400 / view.height) : 1;
 
   return (
@@ -124,7 +126,7 @@ export default function Preview() {
                 className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-xs"
                 onClick={() => {
                   if (view.closeMessage) say(view.closeMessage);
-                  setView(null);
+                  setViews((vs) => vs.slice(0, -1));
                 }}
               >
                 ✕ Close
@@ -138,10 +140,7 @@ export default function Preview() {
               objects={view.objects}
               found={found}
               scale={vScale}
-              onObjectClick={(o) => {
-                setFound((f) => new Set(f).add(o.id));
-                say(o.message || o.name);
-              }}
+              onObjectClick={click}
               sprites={sprites}
               assets={assets}
             />

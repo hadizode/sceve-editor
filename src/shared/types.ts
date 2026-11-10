@@ -1,6 +1,7 @@
 import { clamp, nowIso, svgDataUrl, uid } from './utils';
 import { migrateLegacyGeometry, type Size } from './geometry';
 import { normalizeOpacityAnim, type OpacityAnim } from './opacity-anim';
+import { MAX_VIEW_DEPTH } from './view-tree';
 
 // ============ Basic types ============
 /**
@@ -276,6 +277,8 @@ export interface SessionState {
   usable?: Record<string, boolean>;
   /** objectId -> number of motion (rotation) clicks performed so far. */
   motionSteps?: Record<string, number>;
+  /** Object ids that own a close-up view which has been opened at least once. */
+  unlockedViews?: string[];
 }
 
 export interface Session {
@@ -299,6 +302,7 @@ export function createSessionState(firstSceneId: string): SessionState {
     openDoors: [],
     usable: {},
     motionSteps: {},
+    unlockedViews: [],
   };
 }
 
@@ -685,7 +689,8 @@ function normalizeEffects(list: any, reg: SpriteRegistry): TransformEffect[] | u
   for (const e of list) {
     if (!e || typeof e !== 'object') continue;
     const action = str(e.action) as EffectAction;
-    if (action !== 'transform' && action !== 'background' && action !== 'unlockDoor' && action !== 'setUsable' && action !== 'completeRoom') continue;
+    if (action !== 'transform' && action !== 'background' && action !== 'unlockDoor' && action !== 'setUsable' && action !== 'completeRoom' && action !== 'setSpriteState') continue;
+    const spriteState = e.spriteState === 'a' || e.spriteState === 'b' || e.spriteState === 'toggle' ? e.spriteState : undefined;
     out.push({
       action,
       sceneId: str(e.sceneId) || undefined,
@@ -696,6 +701,7 @@ function normalizeEffects(list: any, reg: SpriteRegistry): TransformEffect[] | u
       usable: e.usable === false ? false : undefined,
       mode: e.mode === 'apply' || e.mode === 'revert' || e.mode === 'toggle' ? e.mode : undefined,
       message: str(e.message) || undefined,
+      ...(spriteState ? { spriteState } : {}),
     });
   }
   return out.length ? out : undefined;
@@ -717,11 +723,11 @@ function normalizeTransform(r: any, reg: SpriteRegistry): TransformRule {
     conditions: normalizeConditions(r?.conditions),
     effects: normalizeEffects(r?.effects, reg),
     filter: normalizeFilter(r?.filter),
-    fade: r?.fade ? normalizeOpacityAnim(r.fade) : undefined,
+    fade: typeof r?.fade === 'object' && r.fade !== null ? normalizeOpacityAnim(r.fade) : undefined,
   };
 }
 
-function normalizeView(r: any, reg: SpriteRegistry): View {
+function normalizeView(r: any, reg: SpriteRegistry, depth = 0): View {
   const req = strList(r?.requiresItem);
   return {
     id: str(r?.id) || uid('view'),
@@ -729,7 +735,7 @@ function normalizeView(r: any, reg: SpriteRegistry): View {
     backgroundUrl: reg.register(r?.backgroundUrl ?? r?.backgroundSprite),
     width: Math.max(1, num(r?.width, 400)),
     height: Math.max(1, num(r?.height, 400)),
-    objects: Array.isArray(r?.objects) ? r.objects.map((o: any) => normalizeObject(o, reg, 1)) : [],
+    objects: Array.isArray(r?.objects) ? r.objects.map((o: any) => normalizeObject(o, reg, depth + 1)) : [],
     requiresItem: req.length ? req : undefined,
     closeMessage: str(r?.closeMessage) || undefined,
   };
@@ -745,6 +751,23 @@ export function normalizeHit(raw: any): HitShape | undefined {
 }
 
 const LEGACY_GEOM_KEYS = ['scaleX', 'scaleY', 'imageOffsetX', 'imageOffsetY', 'framePolygon', 'hitArea'];
+
+/**
+ * Inline `twoState` data on an object (legacy two-image cross-fade model): kept as-is on the
+ * sprite rather than merged into transform rules. `a`/`b` are registered sprite refs; everything
+ * else is validated conservatively. Returns `undefined` when the input is not an object.
+ */
+function normalizeTwoState(raw: any, reg: SpriteRegistry): { a: string; b: string; initial: 'a' | 'b'; anim?: OpacityAnim; toggleOnClick?: boolean } | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const out: { a: string; b: string; initial: 'a' | 'b'; anim?: OpacityAnim; toggleOnClick?: boolean } = {
+    a: reg.register(raw.a),
+    b: reg.register(raw.b),
+    initial: raw.initial === 'b' ? 'b' : 'a',
+  };
+  if (typeof raw.anim === 'object' && raw.anim !== null) out.anim = raw.anim;
+  if (raw.toggleOnClick === true) out.toggleOnClick = true;
+  return out;
+}
 
 export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): SceneObject {
   const o = raw ?? {};
@@ -782,6 +805,8 @@ export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): Scene
         hit: normalizeHit(o.hit),
       };
 
+  const twoState = normalizeTwoState(o.twoState, reg);
+
   return {
     id: str(o.id) || uid('obj'),
     name: str(o.name) || 'Object',
@@ -802,7 +827,7 @@ export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): Scene
     requiresItem: req.length ? req : undefined,
     grantsItem: str(o.grantsItem) || undefined,
     soundUrl: str(o.soundUrl) || undefined,
-    view: depth === 0 && o.view ? normalizeView(o.view, reg) : undefined,
+    view: depth < MAX_VIEW_DEPTH && o.view ? normalizeView(o.view, reg, depth) : undefined,
     // Legacy 'inventory' objects were auto-pickupable — keep that behavior when importing old bundles.
     pickupable: o.pickupable === true || legacyType === 'inventory' ? true : undefined,
     pickupItemId: str(o.pickupItemId) || undefined,
@@ -823,6 +848,7 @@ export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): Scene
     transforms:
       Array.isArray(o.transforms) && o.transforms.length ? o.transforms.map((t: any) => normalizeTransform(t, reg)) : undefined,
     motion: normalizeMotion(o.motion),
+    ...(twoState ? { twoState } : {}),
   };
 }
 
