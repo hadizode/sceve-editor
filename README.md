@@ -264,16 +264,6 @@ Each transform advances the object to the next state. The `currentTransform` pro
 - **CSS:** 26.81 kB (minified) → **5.90 kB** (gzip)
 - **Build time:** ~6 seconds ✅ (target: < 10s)
 
-## Play-Only Build (Telegram Mini App)
-
-`npm run build:play` produces a read-only Player for a single exported project — no Studio UI. Before running it, export a project from the Studio and save it as `public/project.json`:
-
-1. Open the project in the Studio and use **Export** to download its JSON bundle (format `escape-studio`, version 3).
-2. Save that file as `public/project.json`.
-3. Run `npm run build:play` — the output in `dist-play/` includes `project.json` and serves the Player lobby for that project.
-
-The Play build fetches `/project.json` at runtime and replaces any stale IndexedDB copy with the bundle before opening the Player.
-
 ## Tech Stack
 
 - React 18 + TypeScript (strict)

@@ -5,7 +5,6 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:play": "vite build --mode play --outDir dist-play",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
