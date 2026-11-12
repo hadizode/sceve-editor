@@ -1,7 +1,10 @@
+/// <reference types="vite/client" />
+
 import React, { Component, type ReactNode } from "react";
 import ReactDOM from "react-dom/client";
 import "./index.css";
 import App from "./App.tsx";
+import PlayApp from "./PlayApp.tsx";
 
 // If anything throws during render/mount, show the error instead of a silent blank page.
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -40,6 +43,6 @@ if (!rootEl) {
 
 ReactDOM.createRoot(rootEl).render(
   <ErrorBoundary>
-    <App />
+    {import.meta.env.MODE === "play" ? <PlayApp /> : <App />}
   </ErrorBoundary>
 );

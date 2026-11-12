@@ -111,8 +111,10 @@ function prereqVisible(req: { sceneId?: string; objectId: string; minRule?: numb
   const applied = state.transformsApplied?.[req.objectId] ?? -1;
   if (applied < (req.minRule ?? 0)) return false;
   // The prerequisite's own highest fired rule must itself be showing (its conditions hold).
-  const idx = Math.min(applied, (obj?.transforms?.length ?? 1) - 1);
-  const shown = obj?.transforms?.[idx];
+  const minRule = req.minRule ?? 0;
+  if (minRule < 0) return true;
+  const rules = obj?.transforms ?? [];
+  const shown = rules[Math.min(minRule, rules.length - 1)];
   if (!shown) return true; // nothing to display-gate (e.g. discovery-only prereq) → recorded fire counts
   return checkTransformCondition(shown.conditions, state, scenesById, depth + 1);
 }
