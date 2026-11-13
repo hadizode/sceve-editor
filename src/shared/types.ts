@@ -379,6 +379,14 @@ export interface SceneObject {
   door?: DoorTarget;
   /** Hidden clue digit revealed once this sprite is discovered (feeds the final lock). */
   digit?: number;
+  /** Num pad overlay: clicking this object opens an inventory-style number pad. */
+  numpad?: boolean;
+  /** Number range min (default 1). */
+  numpadMin?: number;
+  /** Number range max (default 9). */
+  numpadMax?: number;
+  /** Font family for the numpad numbers. */
+  numpadFont?: string;
 }
 
 export interface Scene {

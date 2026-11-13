@@ -10,21 +10,24 @@ const initialState: Pick<
   PlayerState,
   | 'session' | 'scenes' | 'currentSceneId' | 'sessionState'
   | 'toast' | 'selectedItem' | 'gameStarted' | 'gameComplete' | 'lockInput'
-> = {
-  session: null,
-  scenes: {},
-  currentSceneId: '',
-  sessionState: {
-    currentSceneId: '',
-    discoveredObjects: {},
-    inventory: [],
-    completedScenes: [],
-  },
-  toast: null,
-  selectedItem: null,
-  gameStarted: false,
-  gameComplete: false,
-  lockInput: '',
+  | 'numpadOpen' | 'numpadObjectId'
+  > = {
+      session: null,
+      scenes: {},
+      currentSceneId: '',
+      sessionState: {
+        currentSceneId: '',
+        discoveredObjects: {},
+        inventory: [],
+        completedScenes: [],
+      },
+      toast: null,
+      selectedItem: null,
+      gameStarted: false,
+      gameComplete: false,
+      lockInput: '',
+      numpadOpen: false,
+      numpadObjectId: null,
 };
 
 export const usePlayerStore = create<PlayerState>()((...a) => ({
@@ -33,6 +36,12 @@ export const usePlayerStore = create<PlayerState>()((...a) => ({
   ...createInteractionsSlice(...a),
   ...createLockSlice(...a),
   ...createUiSlice(...a),
+  openNumpad: (objectId: string) => {
+    a[0]((s) => ({ numpadOpen: true, numpadObjectId: objectId, selectedItem: null }));
+  },
+  closeNumpad: () => {
+    a[0]((s) => ({ numpadOpen: false, numpadObjectId: null, selectedItem: null }));
+  },
 }));
 
 export type { PlayerState };

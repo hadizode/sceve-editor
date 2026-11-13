@@ -867,6 +867,8 @@ interface PlayerState {
   sprites: Record<string, Sprite>;
   selectedItem: string | null;
   lockInput: string;
+  numpadOpen: boolean;
+  numpadObjectId: string | null;
   toast: string | null;
 
   loadFromStudio: () => void;
@@ -874,6 +876,8 @@ interface PlayerState {
   resetGame: () => void;
   setPlayerReady: (telegramId?: string) => void;
   selectItem: (id: string | null) => void;
+  openNumpad: (objectId: string) => void;
+  closeNumpad: () => void;
   setToast: (t: string | null) => void;
   switchScene: (id: string) => void;
   clickObject: (objectId: string, viewId?: string) => void;
@@ -968,6 +972,8 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     sprites: {},
     selectedItem: null,
     lockInput: '',
+    numpadOpen: false,
+    numpadObjectId: null,
     toast: null,
 
     /** Load the current project from the studio store (live, unsaved edits included). */
@@ -1071,6 +1077,8 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     },
 
     selectItem: (id) => set({ selectedItem: id }),
+    openNumpad: (objectId: string) => set({ numpadOpen: true, numpadObjectId: objectId, selectedItem: null }),
+    closeNumpad: () => set({ numpadOpen: false, numpadObjectId: null, selectedItem: null }),
     setToast: say,
 
     switchScene: (id) => {

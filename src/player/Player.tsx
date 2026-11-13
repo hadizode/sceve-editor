@@ -340,6 +340,7 @@ function ObjSprite({
   const rotateObject = usePlayerStore((s) => s.rotateObject);
   const say = usePlayerStore((s) => s.setToast);
   const tryOpenView = usePlayerStore((s) => s.tryOpenView);
+  const openNumpad = usePlayerStore((s) => s.openNumpad);
 
   // Click-to-rotate motion: the accumulated step counter drives the angle around the motion pivot.
   const steps = state.motionSteps?.[obj.id] ?? 0;
@@ -428,6 +429,7 @@ function ObjSprite({
     !!obj.transforms?.length ||
     !!obj.motion ||
     !!obj.door ||
+    !!obj.numpad ||
     !!o.twoState?.toggleOnClick;
 
   const nextRule = obj.transforms?.[((state.transformsApplied ?? {})[obj.id] ?? -1) + 1];
@@ -439,6 +441,14 @@ function ObjSprite({
 
     if (!usable) {
       say(obj.unusableMessage || 'فعلاً قابل استفاده نیست');
+      return;
+    }
+
+    // Numpad object: when no item is already selected, clicking opens the number-pad overlay.
+    // The player picks a number, then clicks another sprite → a transform rule whose
+    // requiresItem matches that number fires (like "use item" with the number as item id).
+    if (obj.numpad && !selectedItem) {
+      openNumpad(obj.id);
       return;
     }
 
@@ -1049,6 +1059,106 @@ function InventoryPanel() {
     </div>
   );
 }
+//+++++++++++ NumPad UI +++++++++++
+
+/**
+ * numpad interactive ui is as same as inventory but its contains numbers that set in studio(praperties.tsx),
+ * if a sprit with enabled numpad argument clicked ; a panel or pad appears right on the inventory (overlay the inventory),
+ * numbes in panel can be selected then clicked on some sprit and a rule fires . 
+ */
+function NumsPadUI() {
+  const numpadOpen = usePlayerStore((s) => s.numpadOpen);
+  const numpadObjectId = usePlayerStore((s) => s.numpadObjectId);
+  const selectedNumpadNum = usePlayerStore((s) => s.selectedItem);
+  const closeNumpad = usePlayerStore((s) => s.closeNumpad);
+  const selectItem = usePlayerStore((s) => s.selectItem);
+  const scenes = usePlayerStore((s) => s.scenes);
+  const session = usePlayerStore((s) => s.session);
+
+  if (!numpadOpen || !numpadObjectId || !session) return null;
+
+  const currentSceneId = session.state.currentSceneId;
+  const scene = scenes[currentSceneId];
+  if (!scene) return null;
+
+  const findObj = (objs: SceneObject[]): SceneObject | undefined => {
+    for (const o of objs) {
+      if (o.id === numpadObjectId) return o;
+      if (o.view) {
+        const inner = findObj(o.view.objects);
+        if (inner) return inner;
+      }
+    }
+    return undefined;
+  };
+
+  const sourceObj = findObj(scene.objects);
+  if (!sourceObj?.numpad) return null;
+
+  const min = sourceObj.numpadMin ?? 1;
+  const max = sourceObj.numpadMax ?? 9;
+  const font = sourceObj.numpadFont ?? 'monospace';
+  const count = Math.max(0, max - min + 1);
+  const selected = selectedNumpadNum ? parseInt(selectedNumpadNum, 10) : null;
+
+  const isNumpadSelected = (n: number) => selected === n;
+
+  return (
+    <div
+      className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[200] w-full max-w-md pointer-events-auto"
+      dir="rtl"
+    >
+      <div className="bg-surface border border-amber-500/50 rounded-2xl p-4 space-y-3 shadow-2xl">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-bold text-amber-300 uppercase tracking-wider">
+            پد عددی
+          </h3>
+          <button
+            onClick={closeNumpad}
+            className="p-1 hover:bg-amber-900/30 rounded"
+            title="بستن"
+          >
+            ✕
+          </button>
+        </div>
+
+        <p className="text-[10px] text-gray-400 text-center">
+          عددی را انتخاب کنید، سپس روی یک شیء کلیک کنید تا قانون اجرا شود
+        </p>
+
+        <div className={`grid grid-cols-5 gap-1.5 p-2 bg-black/40 border border-amber-500/30 rounded-xl`}>
+          {[...Array(count).keys()].map((i) => {
+            const n = min + i;
+            const active = isNumpadSelected(n);
+            return (
+              <button
+                key={n}
+                onClick={() => {
+                  selectItem(String(n));
+                  closeNumpad();
+                }}
+                className={`aspect-square rounded-lg border text-[16px] font-bold transition-all ${
+                  active
+                    ? 'bg-amber-500 border-amber-300 text-black shadow-[0_0_12px_rgba(251,191,36,0.6)]'
+                    : `border-amber-500/30 text-amber-400 hover:bg-amber-900/30 font-${font.replace('-', '')}`
+                }`}
+                title={`عدد ${n}`}
+              >
+                {faDigits(String(n))}
+              </button>
+            );
+          })}
+        </div>
+
+        {selected !== null && (
+          <p className="text-[10px] text-amber-300 text-center animate-pulse">
+            عدد {faDigits(String(selected))} انتخاب شد — روی یک شیء کلیک کنید
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ---------- Final lock ----------
 function FinalLock() {
@@ -1368,7 +1478,7 @@ export default function Player({ projectName }: { projectName: string }) {
             className="h-full flex items-center justify-center text-gray-500 text-sm"
             dir="rtl"
           >
-            اتاقی وجود ندارد — در استودیو بسازید.
+            اتاقی وجود ندارد.
           </div>
         )}
       </div>
@@ -1376,6 +1486,7 @@ export default function Player({ projectName }: { projectName: string }) {
       <SilentBoundary>
         <InventoryPanel />
       </SilentBoundary>
+      <NumsPadUI />
     </div>
   );
 }

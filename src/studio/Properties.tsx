@@ -174,6 +174,7 @@ export function PropertiesPanel() {
       ) : (
         <>
           <InteractionSection obj={obj} ctx={ctx} />
+          <NumsPadSection obj={obj} ctx={ctx} />
           <PickupSection obj={obj} ctx={ctx} />
           {obj.view && (
             <Section
@@ -441,6 +442,93 @@ function MotionSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
             Clock hand (30°, pivot bottom-center)
           </button>
           <p className="text-[10px] text-gray-500">Tip: drag the orange pivot dot on the canvas to move the rotation centre.</p>
+        </>
+      )}
+    </Section>
+  );
+}
+// ++++++++++++ NumsPad ++++++++++++++++
+/**
+ * a nums pad appears by click or pick up item. numbers can be custome but defulat is (1-9).
+ * even fonts ans styles can be diffrent , nums pad is another kind of inventory UI also it positioned in the same place as it ;
+ * as overlay the inventory ui . numbers can be pick and puted in the place or just write as normal.
+ */
+
+function NumsPadSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
+  const { set } = ctx;
+  const enabled = !!obj.numpad;
+  const min = obj.numpadMin ?? 1;
+  const max = obj.numpadMax ?? 9;
+  const font = obj.numpadFont ?? 'monospace';
+
+  const FONTS: { value: string; label: string }[] = [
+    { value: 'monospace', label: 'Monospace' },
+    { value: 'sans-serif', label: 'Sans-serif' },
+    { value: 'serif', label: 'Serif' },
+  ];
+
+  const count = Math.max(0, max - min + 1);
+
+  return (
+    <Section title="Num Pad">
+      <label className="flex items-center gap-2 text-gray-300">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => set({ numpad: e.target.checked })}
+        />
+        Enable numpad overlay (inventory-style numbers)
+      </label>
+
+      {enabled && (
+        <>
+          <div className="grid grid-cols-2 gap-1.5">
+            <Field label="Number range from">
+              <NumInput value={min} step={1} min={0} onChange={(n) => set({ numpadMin: n })} />
+            </Field>
+            <Field label="to">
+              <NumInput value={max} step={1} min={0} onChange={(n) => set({ numpadMax: n })} />
+            </Field>
+          </div>
+          <Field label="Font">
+            <select
+              className={inputCls}
+              value={font}
+              onChange={(e) => set({ numpadFont: e.target.value || undefined })}
+            >
+              {FONTS.map((f) => (
+                <option key={f.value} value={f.value} style={{ fontFamily: f.value }}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          {/* Inventory-style preview: numbers instead of items */}
+          <div className="mt-3 space-y-2">
+            <p className="text-[10px] text-gray-400 uppercase tracking-wider">
+              Preview — inventory overlay
+            </p>
+            <div className="grid grid-cols-5 gap-1.5 p-2 bg-black/40 border border-white/10 rounded">
+              {[...Array(count).keys()].map((i) => {
+                const n = min + i;
+                return (
+                  <button
+                    key={n}
+                    className={`aspect-square bg-[#2a2a2a] border border-white/20 rounded-lg text-[15px] font-bold text-gray-200 ${font ? `font-${font.replace('-', '')}` : ''}`}
+                    title={`Number ${n}`}
+                  >
+                    {n}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[10px] text-gray-500">
+              Pick a number, then click an item → acts like <b>"use item"</b> with that number as
+              the item id. Set up what happens in the <b>Transitions</b> tab using
+              <code>requiresItem</code> equal to the number (e.g. <code>"5"</code>).
+            </p>
+          </div>
         </>
       )}
     </Section>

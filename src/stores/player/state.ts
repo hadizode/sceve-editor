@@ -11,12 +11,17 @@ export interface PlayerState {
   gameStarted: boolean;
   gameComplete: boolean;
   lockInput: string;
+  /** Num pad overlay state */
+  numpadOpen: boolean;
+  numpadObjectId: string | null;
   // Actions
   initSession: (session: Session, scenes: Record<string, Scene>) => void;
   clickObject: (objectId: string) => void;
   useItemOnObject: (itemId: string, objectId: string) => void;
   pickupObject: (objectId: string) => void;
   selectItem: (itemId: string | null) => void;
+  openNumpad: (objectId: string) => void;
+  closeNumpad: () => void;
   setToast: (msg: string | null) => void;
   startGame: () => void;
   setPlayerReady: () => void;

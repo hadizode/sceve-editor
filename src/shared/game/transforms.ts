@@ -19,7 +19,11 @@ export function applyItemToObject(
   const obj = objects.find(o => o.id === objectId);
   if (!obj) return { newState: state, success: false, message: 'مورد یافت نشد' };
 
-  if (!state.inventory.includes(itemId)) {
+  // Numpad numbers (numeric strings) act like virtual items — they don't need to be in
+  // inventory, they are picked from the numpad overlay and used directly on objects.
+  const hasItem = state.inventory.includes(itemId);
+  const isNumpadNum = /^\d+$/.test(itemId);
+  if (!hasItem && !isNumpadNum) {
     return { newState: state, success: false, message: 'شما این آیتم را ندارید' };
   }
 
