@@ -21,6 +21,22 @@ export interface SessionState {
   inventory: string[];
   completedScenes: string[];
   finalLockEntered?: string;
+  // objectId -> indexes of every transform rule that has fired
+  rulesFired?: Record<string, number[]>;
+  // objectId -> highest fired transform-rule index (kept for backward compat)
+  transformsApplied?: Record<string, number>;
+}
+
+/** Fresh, empty session state. */
+export function createSessionState(): SessionState {
+  return {
+    currentSceneId: '',
+    discoveredObjects: {},
+    inventory: [],
+    completedScenes: [],
+    rulesFired: {},
+    transformsApplied: {},
+  };
 }
 
 export const SessionStateSchema: z.ZodType<SessionState> = z.object({
@@ -29,6 +45,8 @@ export const SessionStateSchema: z.ZodType<SessionState> = z.object({
   inventory: z.array(z.string()),
   completedScenes: z.array(z.string()),
   finalLockEntered: z.string().optional(),
+  rulesFired: z.record(z.string(), z.array(z.number())).optional(),
+  transformsApplied: z.record(z.string(), z.number()).optional(),
 });
 
 export interface Session {
