@@ -534,7 +534,10 @@ export function applyItemToObject(
     return { newState: state, success: false, message: obj.unusableMessage || 'فعلاً قابل استفاده نیست' };
   }
 
-  if (itemId && !state.inventory.includes(itemId)) {
+  // Numpad numbers (numeric strings) act like virtual items: they are picked from the
+  // numpad overlay and used directly on objects, so they never need to be in the inventory
+  // and are never consumed.
+  if (itemId && !state.inventory.includes(itemId) && !/^\d+$/.test(itemId)) {
     return { newState: state, success: false, message: 'شما این آیتم را ندارید' };
   }
 

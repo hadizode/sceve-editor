@@ -22,6 +22,15 @@ export function obtainableItems(scenes: Scene[]): Set<string> {
       if (o.grantsItem) s.add(o.grantsItem);
       if (o.pickupable) s.add(o.pickupItemId || o.id);
       o.transforms?.forEach((t) => t.grantsItem && s.add(t.grantsItem));
+      // Numpad numbers act like virtual items: every String(n) in a numpad sprite's range
+      // can be "picked" and used on objects, so it counts as obtainable.
+      if (o.numpad && typeof o.numpadMin === 'number' && typeof o.numpadMax === 'number') {
+        const lo = Math.max(0, Math.min(99, Math.round(o.numpadMin)));
+        const hi = Math.max(0, Math.min(99, Math.round(o.numpadMax)));
+        if (lo <= hi) {
+          for (let n = lo; n <= hi; n++) s.add(String(n));
+        }
+      }
     }
   }
   return s;

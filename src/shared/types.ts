@@ -381,12 +381,22 @@ export interface SceneObject {
   digit?: number;
   /** Num pad overlay: clicking this object opens an inventory-style number pad. */
   numpad?: boolean;
+  /** 'click' (default): open the pad when the sprite is clicked. 'pickup': open it right after the sprite is picked up. */
+  numpadTrigger?: 'click' | 'pickup';
+  /** 'pick' (default): pick a number from the pad, then click a target. 'type': type the code into this sprite itself. */
+  numpadMode?: 'pick' | 'type';
   /** Number range min (default 1). */
   numpadMin?: number;
   /** Number range max (default 9). */
   numpadMax?: number;
-  /** Font family for the numpad numbers. */
+  /** Font family for the numpad numbers (applied as an inline font-family, not a Tailwind class). */
   numpadFont?: string;
+  /** Hex color for the numpad key text. */
+  numpadColor?: string;
+  /** Hex background color for the numpad keys. */
+  numpadBg?: string;
+  /** Numpad key size in px (24-96). */
+  numpadSize?: number;
 }
 
 export interface Scene {
@@ -777,12 +787,22 @@ function normalizeTwoState(raw: any, reg: SpriteRegistry): { a: string; b: strin
   return out;
 }
 
+/** True when `v` is a CSS hex color (#rgb, #rgba, #rrggbb, #rrggbbaa). */
+const isHex = (v: unknown): boolean => typeof v === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(v);
+
 export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): SceneObject {
   const o = raw ?? {};
   // Old bundles had decoration/inventory/container types — everything is one unified sprite now.
   const legacyType = typeof o.type === 'string' ? o.type : '';
   const req = strList(o.requiresItem);
   const spriteRefValue = reg.register(o.spriteRef ?? o.imageUrl);
+
+  // Num pad: clamp range to ints 0-99, enforce min <= max and at most 20 keys.
+  const npMin = clamp(Math.round(num(o.numpadMin, 1)), 0, 99);
+  const npMax = clamp(Math.round(num(o.numpadMax, 9)), 0, 99);
+  const npLo = Math.min(npMin, npMax);
+  const npHi = Math.max(npMin, npMax);
+  const npHiCapped = npHi - npLo + 1 > 20 ? npLo + 19 : npHi;
 
   const x = num(o.x, 0);
   const y = num(o.y, 0);
@@ -856,6 +876,15 @@ export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): Scene
     transforms:
       Array.isArray(o.transforms) && o.transforms.length ? o.transforms.map((t: any) => normalizeTransform(t, reg)) : undefined,
     motion: normalizeMotion(o.motion),
+    numpad: o.numpad === true,
+    numpadTrigger: o.numpadTrigger === 'pickup' ? 'pickup' : 'click',
+    numpadMode: o.numpadMode === 'type' ? 'type' : 'pick',
+    numpadMin: npLo,
+    numpadMax: npHiCapped,
+    numpadFont: str(o.numpadFont) || undefined,
+    numpadColor: isHex(o.numpadColor) ? o.numpadColor : undefined,
+    numpadBg: isHex(o.numpadBg) ? o.numpadBg : undefined,
+    numpadSize: clamp(Math.round(num(o.numpadSize, 40)), 24, 96),
     ...(twoState ? { twoState } : {}),
   };
 }

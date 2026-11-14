@@ -70,6 +70,16 @@ interface SceneObject {
   door?: DoorTarget;             // clicking enters another room
   digit?: number;                // 0-9 clue digit (feeds the final lock)
   view?: View;                   // interactive close-up view (see below)
+  // --- Num pad ---
+  numpad?: boolean;              // clicking (or picking up) opens an inventory-style number pad
+  numpadTrigger?: 'click' | 'pickup';   // 'click' (default): open on click; 'pickup': open right after pickup
+  numpadMode?: 'pick' | 'type';         // 'pick' (default): pick a number then click a target; 'type': type into this sprite
+  numpadMin?: number;            // number range min (default 1)
+  numpadMax?: number;            // number range max (default 9)
+  numpadFont?: string;           // inline font-family for the numbers
+  numpadColor?: string;          // hex key text color
+  numpadBg?: string;             // hex key background color
+  numpadSize?: number;           // key size in px (24-96)
 }
 
 type HitShape = { kind: 'box' } | { kind: 'polygon'; points: Pt[] }; // points normalized 0..1
@@ -297,7 +307,10 @@ Older exports stored images as a raw `imageUrl` on each object. `normalizeBundle
 3. No duplicate object ids (within a scene, including view objects)
 4. Every clue-chain item must reference an existing object
 5. Clue chain's last object should define a `digit` (warning if missing)
-6. Every `requiresItem` on an object/transform must be obtainable somewhere (granted by a pickup or transform)
+6. Every `requiresItem` on an object/transform must be obtainable somewhere (granted by a pickup or transform).
+   Numpad numbers (`"1"`…`"9"` per a numpad sprite's `numpadMin`/`numpadMax`) are virtual items and count
+   as obtainable, so a numeric `requiresItem` inside any numpad range is valid; outside every range it
+   is an error.
 7. Transform `conditions.transformedObjects` must point at real objects that actually have transform rules (and `minRule` must be within range)
 8. `conditions.itemsInInventory` items must be obtainable
 9. `conditions.positions` must point at real objects; objects with position requirements but no `motion` get a warning (they never move)
@@ -305,6 +318,31 @@ Older exports stored images as a raw `imageUrl` on each object. `normalizeBundle
 11. Sprites with no image/color and no transforms get a warning (invisible forever)
 12. Sprites referenced anywhere must exist; their assets must exist
 13. Objects fully outside the room bounds get a warning (overflow sprites intentionally exempt)
+
+## Num Pad
+
+A sprite with `numpad: true` opens an inventory-style number pad that overlays the inventory bar
+(never the scene). It supports two modes:
+
+- **Pick** (default): the player taps a number key to select it (highlighted; tapping again
+  deselects; the pad stays open), then clicks a target sprite. The number acts like an "use item"
+  with the number as the item id — a transform rule whose `requiresItem` equals that number fires,
+  even though the number is never in the inventory and is never consumed. A successful use clears the
+  selection; the pad stays open until the ✕ button or a room change.
+- **Type**: the sprite is a lock. Opening binds the pad to that sprite; each typed digit calls
+  `useItemOnObject` with the digit, which fires the next transform rule whose `requiresItem`
+  matches that digit, in order. One slot per numeric transform rule fills as its rule is applied.
+  A wrong digit shows the existing "wrong item" toast and does not advance the chain.
+
+Trigger:
+- `numpadTrigger: 'click'` (default): the pad opens when the sprite is clicked.
+- `numpadTrigger: 'pickup'`: the pad opens immediately after the sprite is picked up (type mode is
+  then unavailable, since the sprite leaves the scene).
+
+Settings: `numpadMin`/`numpadMax` (ints 0-99, min ≤ max, at most 20 keys), `numpadFont`
+(inline font-family), `numpadColor`/`numpadBg` (hex), `numpadSize` (px, 24-96). All numpad fields
+are persisted and survive `normalizeBundle`/`normalizeScene` round trips and the hydrate migration.
+The pad closes on room change.
 
 ## Game Flow
 

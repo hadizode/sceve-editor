@@ -869,6 +869,7 @@ interface PlayerState {
   lockInput: string;
   numpadOpen: boolean;
   numpadObjectId: string | null;
+  numpadViewId: string | null;
   toast: string | null;
 
   loadFromStudio: () => void;
@@ -876,7 +877,7 @@ interface PlayerState {
   resetGame: () => void;
   setPlayerReady: (telegramId?: string) => void;
   selectItem: (id: string | null) => void;
-  openNumpad: (objectId: string) => void;
+  openNumpad: (objectId: string, viewId?: string) => void;
   closeNumpad: () => void;
   setToast: (t: string | null) => void;
   switchScene: (id: string) => void;
@@ -954,7 +955,15 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
       s = res.state;
       msgs.push(...res.messages);
     }
-    set({ session: { ...g.session, state: s } });
+    // Close the numpad overlay whenever the player changes room so it never
+    // stays flagged open or reappears after coming back.
+    const sceneChanged = g.session.state.currentSceneId !== s.currentSceneId;
+    set({
+      session: { ...g.session, state: s },
+      ...(sceneChanged
+        ? { numpadOpen: false, numpadObjectId: null, numpadViewId: null, selectedItem: null }
+        : {}),
+    });
     persistPlayer(get());
     for (const m of msgs) say(m, 5000);
   };
@@ -974,6 +983,7 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     lockInput: '',
     numpadOpen: false,
     numpadObjectId: null,
+    numpadViewId: null,
     toast: null,
 
     /** Load the current project from the studio store (live, unsaved edits included). */
@@ -1025,6 +1035,9 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
         },
         selectedItem: null,
         lockInput: '',
+        numpadOpen: false,
+        numpadObjectId: null,
+        numpadViewId: null,
       });
       persistPlayer(get());
       say('بازی شروع شد! موفق باشید 🎮');
@@ -1049,6 +1062,9 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
         selectedItem: null,
         lockInput: '',
         toast: null,
+        numpadOpen: false,
+        numpadObjectId: null,
+        numpadViewId: null,
         session: {
           id: uid('sess'),
           projectId: project.id,
@@ -1077,14 +1093,16 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     },
 
     selectItem: (id) => set({ selectedItem: id }),
-    openNumpad: (objectId: string) => set({ numpadOpen: true, numpadObjectId: objectId, selectedItem: null }),
-    closeNumpad: () => set({ numpadOpen: false, numpadObjectId: null, selectedItem: null }),
+    openNumpad: (objectId: string, viewId?: string) =>
+      set({ numpadOpen: true, numpadObjectId: objectId, numpadViewId: viewId ?? null, selectedItem: null }),
+    closeNumpad: () => set({ numpadOpen: false, numpadObjectId: null, numpadViewId: null, selectedItem: null }),
     setToast: say,
 
     switchScene: (id) => {
       const g = get();
       if (!g.session || !g.scenes[id]) return;
       commit({ ...g.session.state, currentSceneId: id });
+      set({ numpadOpen: false, numpadObjectId: null, numpadViewId: null, selectedItem: null });
     },
 
     clickObject: (objectId, viewId) => {
@@ -1176,10 +1194,18 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
       const scene = sceneOfCurrent();
       if (!g.session || !scene) return;
       const objs = viewObjs(scene, viewId);
+      const obj = objs.find((o) => o.id === objectId);
       // Pickups can fire transition effects too (open doors, change other rooms…).
       const res = pickupObj(g.session.state, viewId || scene.id, objectId, objs, { scenesById: g.scenes });
       if (res.message) say(res.message);
-      if (res.success) commit(res.newState);
+      if (res.success) {
+        commit(res.newState);
+        // Trigger B: picking up a numpad sprite (trigger === 'pickup') opens the pad in pick mode
+        // right after pickup. The sprite leaves the scene, so type mode is not offered here.
+        if (obj?.numpad && obj.numpadTrigger === 'pickup') {
+          get().openNumpad(objectId);
+        }
+      }
     },
 
     useItemOnObject: (itemId, objectId, viewId) => {

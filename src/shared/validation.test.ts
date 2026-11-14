@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { countAssetUsage, sceneRefs } from './validation';
-import type { Asset, Scene, Sprite, SceneObject, View } from './types';
+import { countAssetUsage, obtainableItems, sceneRefs, validateProject } from './validation';
+import type { Asset, Project, Scene, Sprite, SceneObject, View } from './types';
 import { assetRef, spriteRef } from './types';
 
 const mkAsset = (id: string): Asset => ({ id, name: id, url: '', width: 10, height: 10, createdAt: 't' });
@@ -112,5 +112,88 @@ describe('sceneRefs', () => {
     const refs = sceneRefs(scene);
     expect(refs).toContain('sprite:root-bg');
     expect(refs).toContain('asset:bg-view');
+  });
+});
+
+describe('numpad validation', () => {
+  const mkObj = (id: string, partial: Record<string, unknown> = {}): any => ({
+    id,
+    name: id,
+    spriteRef: 'sprite:' + id,
+    x: 0,
+    y: 0,
+    width: 10,
+    height: 10,
+    rotation: 0,
+    visible: true,
+    locked: false,
+    oneTimeUse: false,
+    ...partial,
+  });
+
+  const mkScene = (objects: any[]): any => ({
+    id: 's1',
+    projectId: 'p',
+    title: 'R',
+    width: 400,
+    height: 300,
+    backgroundUrl: '',
+    backgroundLayers: [],
+    objects,
+    clueChain: ['digit'],
+    exitNumber: 1,
+  });
+
+  const project: Project = {
+    id: 'p',
+    name: 'P',
+    description: '',
+    scenes: ['s1'],
+    finalLockDigits: '',
+    assets: [],
+    sprites: [],
+    createdAt: 't',
+    updatedAt: 't',
+  };
+  const sprites: Record<string, any> = {};
+  for (const id of ['digit', 'pad', 'lock']) {
+    sprites[id] = { id, name: id, assetId: '', createdAt: 't' };
+  }
+
+  it('counts every numpad number in range as obtainable', () => {
+    const objects = [
+      mkObj('digit', { digit: 1 }),
+      mkObj('pad', { numpad: true, numpadMin: 3, numpadMax: 6 }),
+    ];
+    const obtainable = obtainableItems([mkScene(objects)]);
+    for (const n of ['3', '4', '5', '6']) expect(obtainable.has(n)).toBe(true);
+    expect(obtainable.has('2')).toBe(false);
+    expect(obtainable.has('7')).toBe(false);
+  });
+
+  it('accepts a numeric requiresItem covered by a numpad sprite', () => {
+    const objects = [
+      mkObj('digit', { digit: 1 }),
+      mkObj('pad', { numpad: true, numpadMin: 1, numpadMax: 9 }),
+      mkObj('lock', { transforms: [{ requiresItem: '5', newSpriteId: 'sprite:x' }] }),
+    ];
+    const scenes = { s1: mkScene(objects) };
+    const issues = validateProject(project, scenes, {}, sprites);
+    expect(
+      issues.some((i) => i.level === 'error' && i.message.includes('"5"')),
+    ).toBe(false);
+  });
+
+  it('flags a numeric requiresItem outside every numpad range', () => {
+    const objects = [
+      mkObj('digit', { digit: 1 }),
+      mkObj('pad', { numpad: true, numpadMin: 1, numpadMax: 4 }),
+      mkObj('lock', { transforms: [{ requiresItem: '9', newSpriteId: 'sprite:x' }] }),
+    ];
+    const scenes = { s1: mkScene(objects) };
+    const issues = validateProject(project, scenes, {}, sprites);
+    expect(
+      issues.some((i) => i.level === 'error' && i.message.includes('"9"')),
+    ).toBe(true);
   });
 });

@@ -68,6 +68,7 @@ src/
 - ✅ Room navigation via doors, online/offline player indicators
 - ✅ Persistence (IndexedDB) save & resume
 - ✅ Mobile-first touch UX, ARIA labels on all buttons
+- ✅ **Num Pad overlay** — inventory-style number pad over the inventory bar (never the scene), in pick mode (choose a number, then click a target like "use item") or type mode (type digits into a lock sprite, one slot per numeric transform rule); opens on sprite click or immediately after pickup; closes on room change
 
 ### Studio Canvas Controls
 | Action | Control |
@@ -230,6 +231,22 @@ transforms: [
 ```
 
 Each transform advances the object to the next state. The `currentTransform` property tracks which state the object is in.
+
+### Num Pad
+
+Objects can be configured with a numpad that opens an inventory-style number overlay over the inventory bar:
+
+- `numpad: boolean` - enable the numpad overlay
+- `numpadTrigger: 'click' | 'pickup'` - `'click'` (default) opens it when the sprite is clicked; `'pickup'` opens it right after the sprite is picked up (type mode is then unavailable, since the sprite leaves the scene)
+- `numpadMode: 'pick' | 'type'` - `'pick'` (default): choose a number, then click a target sprite — acts like "use item" with that number as the item id; `'type'`: the sprite is a lock and each typed digit fires the next numeric transform rule in order
+- `numpadMin` / `numpadMax` - number range (ints 0-99, min ≤ max, at most 20 keys; default 1-9)
+- `numpadFont` - inline font-family for the numbers
+- `numpadColor` / `numpadBg` - hex key text / background color
+- `numpadSize` - key size in px (24-96; default 40)
+
+Numpad numbers are virtual items: they never need to be in the inventory and are never consumed. A numeric `requiresItem` on a transform rule matches a numpad number, so a lock whose rules require `"1"`…`"4"` can be opened by typing those digits in type mode, or by picking each number in pick mode and clicking the lock.
+
+All numpad fields are persisted and survive export/import and the hydrate migration; the pad closes on room change.
 
 ## Controls
 

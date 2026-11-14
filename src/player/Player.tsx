@@ -9,6 +9,7 @@ import { spriteFilterCss } from '../shared/types';
 import { normalizeOpacityAnim, opacityTransitionCss, swapFade, type OpacityAnim } from '../shared/opacity-anim';
 import { allRoomsComplete, checkTransformCondition, isUsable } from '../shared/game-logic';
 import { findObject } from '../shared/view-tree';
+import { NumPadKeys } from '../shared/NumPadKeys';
 
 /** Resolve a sprite/image ref to the concrete image URL ('' when the sprite has no image). */
 const spriteSrc = (
@@ -334,13 +335,19 @@ function ObjSprite({
   const name = (shownOk ? shown?.newName : undefined) || obj.name;
 
   const selectedItem = usePlayerStore((s) => s.selectedItem);
+  const numpadOpen = usePlayerStore((s) => s.numpadOpen);
   const clickObject = usePlayerStore((s) => s.clickObject);
   const pickup = usePlayerStore((s) => s.pickup);
   const useItemOnObject = usePlayerStore((s) => s.useItemOnObject);
   const rotateObject = usePlayerStore((s) => s.rotateObject);
   const say = usePlayerStore((s) => s.setToast);
   const tryOpenView = usePlayerStore((s) => s.tryOpenView);
-  const openNumpad = usePlayerStore((s) => s.openNumpad);
+  // The zustand `PlayerState` interface (in `src/stores/player/state.ts`, which must not be touched)
+  // declares fewer params than the implementations actually accept, so cast to pass `viewId` through.
+  const openNumpad = usePlayerStore((
+    s,
+  ) => s.openNumpad as (objectId: string, viewId?: string) => void);
+  const closeNumpad = usePlayerStore((s) => s.closeNumpad);
 
   // Click-to-rotate motion: the accumulated step counter drives the angle around the motion pivot.
   const steps = state.motionSteps?.[obj.id] ?? 0;
@@ -444,12 +451,14 @@ function ObjSprite({
       return;
     }
 
-    // Numpad object: when no item is already selected, clicking opens the number-pad overlay.
-    // The player picks a number, then clicks another sprite → a transform rule whose
-    // requiresItem matches that number fires (like "use item" with the number as item id).
-    if (obj.numpad && !selectedItem) {
-      openNumpad(obj.id);
-      return;
+    // Numpad object: opening the pad is additive — it never blocks the sprite's own click
+    // behaviour (message, digit, grantsItem, view, pickup, door). With trigger 'click' the pad
+    // opens when the sprite is clicked; with trigger 'pickup' it opens right after pickup
+    // (handled in `pickup`). Tapping a key selects the number as `selectedItem`; the pad stays
+    // open until ✕ or a room change. Clicking a sprite while a number is selected uses it on
+    // that sprite (handled by the `selectedItem` branch below).
+    if (obj.numpad && obj.numpadTrigger === 'click' && !selectedItem) {
+      openNumpad(obj.id, viewId);
     }
 
     // Doors take the player to another room. When an item is selected we try using it first
@@ -534,8 +543,9 @@ function ObjSprite({
       return;
     }
 
-    // transform-only object with no message: show a hint instead of staying silent
-    if (nextRule && onlyTransform) {
+    // transform-only object with no message: show a hint instead of staying silent.
+    // Never show it merely because a numpad was opened on this sprite.
+    if (nextRule && onlyTransform && !(obj.numpad && numpadOpen)) {
       say('برای استفاده از این مورد، آیتم مناسب را از کیف خود انتخاب کنید');
       return;
     }
@@ -1069,9 +1079,15 @@ function InventoryPanel() {
 function NumsPadUI() {
   const numpadOpen = usePlayerStore((s) => s.numpadOpen);
   const numpadObjectId = usePlayerStore((s) => s.numpadObjectId);
-  const selectedNumpadNum = usePlayerStore((s) => s.selectedItem);
+  const numpadViewId = usePlayerStore((s) => s.numpadViewId);
+  const selectedItem = usePlayerStore((s) => s.selectedItem);
   const closeNumpad = usePlayerStore((s) => s.closeNumpad);
   const selectItem = usePlayerStore((s) => s.selectItem);
+  // The zustand `PlayerState` interface (in `src/stores/player/state.ts`, which must not be touched)
+  // declares fewer params than the implementations actually accept, so cast to pass `viewId` through.
+  const useItemOnObject = usePlayerStore((
+    s,
+  ) => s.useItemOnObject as (itemId: string, objectId: string, viewId?: string) => void);
   const scenes = usePlayerStore((s) => s.scenes);
   const session = usePlayerStore((s) => s.session);
 
@@ -1095,67 +1111,72 @@ function NumsPadUI() {
   const sourceObj = findObj(scene.objects);
   if (!sourceObj?.numpad) return null;
 
+  // With trigger 'pickup' the sprite leaves the scene on pickup, so type mode is forced to pick.
+  const mode = sourceObj.numpadTrigger === 'pickup' ? 'pick' : (sourceObj.numpadMode ?? 'pick');
   const min = sourceObj.numpadMin ?? 1;
   const max = sourceObj.numpadMax ?? 9;
-  const font = sourceObj.numpadFont ?? 'monospace';
-  const count = Math.max(0, max - min + 1);
-  const selected = selectedNumpadNum ? parseInt(selectedNumpadNum, 10) : null;
+  const font = sourceObj.numpadFont ?? 'Vazirmatn';
+  const color = sourceObj.numpadColor ?? '#ffffff';
+  const bg = sourceObj.numpadBg ?? '#3a3a3a';
+  const size = sourceObj.numpadSize ?? 40;
 
-  const isNumpadSelected = (n: number) => selected === n;
+  const selected = selectedItem ?? null;
+  const state = session.state;
+  const applied = (state.transformsApplied ?? {})[numpadObjectId] ?? -1;
+
+  // Type mode: one slot per transform rule whose `requiresItem` is numeric.
+  const numericRules = (sourceObj.transforms ?? [])
+    .map((t, j) => ({ t, j }))
+    .filter(({ t }) => /^\d+$/.test(t.requiresItem ?? ''));
+
+  const pressKey = (n: string) => {
+    if (mode === 'type') {
+      useItemOnObject(n, numpadObjectId, numpadViewId ?? undefined);
+    } else {
+      selectItem(selected === n ? null : n);
+    }
+  };
 
   return (
     <div
-      className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[200] w-full max-w-md pointer-events-auto"
+      className="absolute bottom-0 left-0 right-0 z-20 w-full bg-surface border-t border-gray-700 px-3 py-2 flex flex-col gap-1 max-h-[192px] overflow-y-auto"
       dir="rtl"
     >
-      <div className="bg-surface border border-amber-500/50 rounded-2xl p-4 space-y-3 shadow-2xl">
-        <div className="flex items-center justify-between">
-          <h3 className="text-xs font-bold text-amber-300 uppercase tracking-wider">
-            پد عددی
-          </h3>
-          <button
-            onClick={closeNumpad}
-            className="p-1 hover:bg-amber-900/30 rounded"
-            title="بستن"
-          >
-            ✕
-          </button>
-        </div>
+      <div className="flex w-full items-center justify-between">
+        <h4 className="text-xs font-bold text-gray-200 uppercase tracking-wider">پد عددی</h4>
+        <button
+          type="button"
+          onClick={closeNumpad}
+          className="p-1 rounded hover:bg-gray-700/50"
+          title="بستن"
+        >
+          ✕
+        </button>
+      </div>
 
-        <p className="text-[10px] text-gray-400 text-center">
-          عددی را انتخاب کنید، سپس روی یک شیء کلیک کنید تا قانون اجرا شود
-        </p>
-
-        <div className={`grid grid-cols-5 gap-1.5 p-2 bg-black/40 border border-amber-500/30 rounded-xl`}>
-          {[...Array(count).keys()].map((i) => {
-            const n = min + i;
-            const active = isNumpadSelected(n);
+      {mode === 'type' && numericRules.length > 0 && (
+        <div className="flex gap-1.5">
+          {numericRules.map(({ t, j }) => {
+            const filled = j <= applied;
             return (
-              <button
-                key={n}
-                onClick={() => {
-                  selectItem(String(n));
-                  closeNumpad();
-                }}
-                className={`aspect-square rounded-lg border text-[16px] font-bold transition-all ${
-                  active
-                    ? 'bg-amber-500 border-amber-300 text-black shadow-[0_0_12px_rgba(251,191,36,0.6)]'
-                    : `border-amber-500/30 text-amber-400 hover:bg-amber-900/30 font-${font.replace('-', '')}`
-                }`}
-                title={`عدد ${n}`}
+              <div
+                key={j}
+                className="w-6 h-6 rounded border flex items-center justify-center text-[10px] text-gray-400 bg-black/20"
               >
-                {faDigits(String(n))}
-              </button>
+                {filled ? t.requiresItem : ''}
+              </div>
             );
           })}
         </div>
+      )}
 
-        {selected !== null && (
-          <p className="text-[10px] text-amber-300 text-center animate-pulse">
-            عدد {faDigits(String(selected))} انتخاب شد — روی یک شیء کلیک کنید
-          </p>
-        )}
-      </div>
+      <NumPadKeys min={min} max={max} selected={selected} onPress={pressKey} size={size} font={font} color={color} bg={bg} />
+
+      {mode === 'pick' && selected !== null && (
+        <p className="text-[10px] text-amber-300 text-center animate-pulse">
+          عدد {selected} انتخاب شد — روی یک شیء کلیک کنید
+        </p>
+      )}
     </div>
   );
 }
@@ -1483,10 +1504,12 @@ export default function Player({ projectName }: { projectName: string }) {
         )}
       </div>
 
-      <SilentBoundary>
-        <InventoryPanel />
-      </SilentBoundary>
-      <NumsPadUI />
+      <div className="relative w-full">
+        <SilentBoundary>
+          <InventoryPanel />
+        </SilentBoundary>
+        <NumsPadUI />
+      </div>
     </div>
   );
 }

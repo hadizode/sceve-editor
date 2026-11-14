@@ -10,6 +10,7 @@ import {rotateBoxAboutPivot} from '../shared/geometry';
 import { AssetPicker } from './AssetPicker';
 import { notify } from '../shared/notify';
 import { fitHitToImage } from './hit-fit';
+import { NumPadKeys } from '../shared/NumPadKeys';
 
 // ============ Small UI primitives ============
 const inputCls =
@@ -457,17 +458,48 @@ function MotionSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
 function NumsPadSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
   const { set } = ctx;
   const enabled = !!obj.numpad;
+  const trigger = obj.numpadTrigger ?? 'click';
+  const mode = obj.numpadMode ?? 'pick';
   const min = obj.numpadMin ?? 1;
   const max = obj.numpadMax ?? 9;
-  const font = obj.numpadFont ?? 'monospace';
+  const font = obj.numpadFont ?? 'Vazirmatn';
+  const color = obj.numpadColor ?? '#ffffff';
+  const bg = obj.numpadBg ?? '#3a3a3a';
+  const size = obj.numpadSize ?? 40;
+
+  // With trigger 'pickup' the sprite leaves the scene on pickup, so type mode is unavailable.
+  const forcePick = trigger === 'pickup';
+  const count = Math.max(0, max - min + 1);
 
   const FONTS: { value: string; label: string }[] = [
+    { value: 'Vazirmatn', label: 'Vazirmatn' },
     { value: 'monospace', label: 'Monospace' },
     { value: 'sans-serif', label: 'Sans-serif' },
     { value: 'serif', label: 'Serif' },
   ];
 
-  const count = Math.max(0, max - min + 1);
+  const seg = (
+    active: boolean,
+    label: string,
+    disabled: boolean,
+    onClick: () => void,
+  ) => (
+    <button
+      type="button"
+      aria-pressed={active}
+      disabled={disabled}
+      onClick={onClick}
+      className={`flex-1 rounded-lg border px-2 py-1 text-[11px] font-medium transition-all ${
+        active
+          ? 'bg-indigo-600 border-indigo-500 text-white'
+          : disabled
+            ? 'border-gray-600/40 text-gray-500 bg-black/20 pointer-events-none'
+            : 'border-gray-600 hover:border-indigo-500 hover:bg-surface-lighter text-gray-300'
+      }`}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <Section title="Num Pad">
@@ -482,14 +514,70 @@ function NumsPadSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
 
       {enabled && (
         <>
+          <Field label="Trigger">
+            <div className="flex gap-1">
+              {seg(
+                trigger === 'click',
+                'Click',
+                false,
+                () => set({ numpadTrigger: 'click' }),
+              )}
+              {seg(
+                trigger === 'pickup',
+                'After pickup',
+                false,
+                () => set({ numpadTrigger: 'pickup', numpadMode: 'pick' }),
+              )}
+            </div>
+            <p className="text-[10px] text-gray-500">
+              ‘Click’ opens the pad when the sprite is clicked. ‘After pickup’ opens it immediately
+              after the sprite is picked up — the sprite leaves the scene, so type mode is then
+              unavailable.
+            </p>
+          </Field>
+
+          <Field label="Mode">
+            <div className="flex gap-1">
+              {seg(
+                forcePick ? true : mode === 'pick',
+                'Pick a number',
+                forcePick,
+                () => set({ numpadMode: 'pick' }),
+              )}
+              {seg(
+                forcePick ? false : mode === 'type',
+                'Type a code',
+                forcePick,
+                () => {
+                  if (!forcePick) set({ numpadMode: 'type' });
+                },
+              )}
+            </div>
+            <p className="text-[10px] text-gray-500">
+              ‘Pick’: choose a number, then click a target sprite — acts like “use item” with that\n
+              number as the item id. ‘Type’: the sprite is a lock — each typed digit fires the next\n
+              numeric transform rule in order.
+            </p>
+          </Field>
+
           <div className="grid grid-cols-2 gap-1.5">
             <Field label="Number range from">
-              <NumInput value={min} step={1} min={0} onChange={(n) => set({ numpadMin: n })} />
+              <NumInput value={min} step={1} min={0} max={99} onChange={(n) => set({ numpadMin: n })} />
             </Field>
             <Field label="to">
-              <NumInput value={max} step={1} min={0} onChange={(n) => set({ numpadMax: n })} />
+              <NumInput value={max} step={1} min={0} max={99} onChange={(n) => set({ numpadMax: n })} />
             </Field>
           </div>
+          <Field label="Key size (px)">
+            <input
+              type="number"
+              min={24}
+              max={96}
+              className={inputCls}
+              value={size}
+              onChange={(e) => set({ numpadSize: e.target.value ? Number(e.target.value) : undefined })}
+            />
+          </Field>
           <Field label="Font">
             <select
               className={inputCls}
@@ -503,30 +591,44 @@ function NumsPadSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
               ))}
             </select>
           </Field>
+          <Field label="Key text color">
+            <input
+              type="color"
+              className="w-full h-8 border border-gray-600 rounded bg-transparent p-0 cursor-pointer"
+              value={color}
+              onChange={(e) => set({ numpadColor: e.target.value || undefined })}
+            />
+          </Field>
+          <Field label="Key background">
+            <input
+              type="color"
+              className="w-full h-8 border border-gray-600 rounded bg-transparent p-0 cursor-pointer"
+              value={bg}
+              onChange={(e) => set({ numpadBg: e.target.value || undefined })}
+            />
+          </Field>
 
-          {/* Inventory-style preview: numbers instead of items */}
+          {/* Live preview using the same key grid component the Player renders. */}
           <div className="mt-3 space-y-2">
             <p className="text-[10px] text-gray-400 uppercase tracking-wider">
-              Preview — inventory overlay
+              Preview — same key grid as the player
             </p>
-            <div className="grid grid-cols-5 gap-1.5 p-2 bg-black/40 border border-white/10 rounded">
-              {[...Array(count).keys()].map((i) => {
-                const n = min + i;
-                return (
-                  <button
-                    key={n}
-                    className={`aspect-square bg-[#2a2a2a] border border-white/20 rounded-lg text-[15px] font-bold text-gray-200 ${font ? `font-${font.replace('-', '')}` : ''}`}
-                    title={`Number ${n}`}
-                  >
-                    {n}
-                  </button>
-                );
-              })}
+            <div className="flex items-end gap-2">
+              <NumPadKeys
+                min={min}
+                max={max}
+                selected={null}
+                onPress={() => {}}
+                size={size}
+                font={font}
+                color={color}
+                bg={bg}
+              />
             </div>
             <p className="text-[10px] text-gray-500">
-              Pick a number, then click an item → acts like <b>"use item"</b> with that number as
-              the item id. Set up what happens in the <b>Transitions</b> tab using
-              <code>requiresItem</code> equal to the number (e.g. <code>"5"</code>).
+              Numeric ids are virtual items — they never need to be in the inventory and are never
+              consumed. Set up what happens in the <b>Transitions</b> tab using <code>requiresItem</code>
+              equal to the number (e.g. <code>"5"</code>).
             </p>
           </div>
         </>
