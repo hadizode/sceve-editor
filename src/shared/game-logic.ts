@@ -1,6 +1,6 @@
 import { livePoint } from './geometry';
 import { allObjectsDeep } from './view-tree';
-import type { PositionReq, Scene, SceneObject, SessionState, TransformCondition, TransformEffect } from './types';
+import type { PositionReq, Scene, SceneObject, SessionState, TransformCondition, TransformEffect, TransformRule } from './types';
 
 // ============ Effects / Transitions Engine ============
 // A strong, separate part of the game logic: when something happens (a transform fires, an item is
@@ -70,6 +70,60 @@ export function checkPositions(reqs: PositionReq[] | undefined, state: SessionSt
 
 /** True when every prerequisite of the condition is satisfied by the current session state.
  * `depth` guards against recursive display checks on cyclic condition graphs. */
+
+/**
+ * Indexes of every transform rule of `objectId` that has already fired.
+ * Older sessions only tracked the highest applied index (`transformsApplied`); for those we
+ * derive the list as "0..max all fired", which matches the historical sequential firing model.
+ */
+export function firedOf(state: SessionState, objectId: string): number[] {
+  const explicit = state.rulesFired?.[objectId];
+  if (explicit) return explicit;
+  const max = state.transformsApplied?.[objectId] ?? -1;
+  if (max < 0) return [];
+  return Array.from({ length: max + 1 }, (_, i) => i);
+}
+
+/**
+ * Record that one or more rule indexes of `objectId` fired. `transformsApplied` is kept in sync
+ * as the highest fired index (the visually applied look). Returns the same state ref when nothing
+ * actually changed.
+ */
+export function markFired(state: SessionState, objectId: string, indexes: number[]): SessionState {
+  if (!indexes.length) return state;
+  const prev = firedOf(state, objectId);
+  const merged = Array.from(new Set([...prev, ...indexes])).sort((a, b) => a - b);
+  const newMax = merged.length ? Math.max(...merged, state.transformsApplied?.[objectId] ?? -1) : -1;
+  return {
+    ...state,
+    rulesFired: { ...(state.rulesFired ?? {}), [objectId]: merged },
+    transformsApplied: { ...(state.transformsApplied ?? {}), [objectId]: newMax },
+  };
+}
+
+/**
+ * Every rule of `obj` that can fire RIGHT NOW on an item use / click:
+ * not yet fired, its conditions hold, and it is either free (empty `requiresItem`) or its item
+ * requirement matches the used `itemId` (null = plain click, so only free rules match).
+ */
+export function pendingRules(
+  obj: SceneObject,
+  state: SessionState,
+  itemId: string | null,
+  scenesById?: Record<string, Scene>
+): { index: number; rule: TransformRule }[] {
+  const fired = firedOf(state, obj.id);
+  const hits: { index: number; rule: TransformRule }[] = [];
+  for (const [index, rule] of (obj.transforms ?? []).entries()) {
+    if (fired.includes(index)) continue;
+    const free = !rule.requiresItem;
+    if (!free && rule.requiresItem !== itemId) continue;
+    if (!checkTransformCondition(rule.conditions, state, scenesById)) continue;
+    hits.push({ index, rule });
+  }
+  return hits;
+}
+
 export function checkTransformCondition(
   cond: TransformCondition | undefined,
   state: SessionState,
@@ -82,8 +136,11 @@ export function checkTransformCondition(
   }
   if (!checkPositions(cond.positions, state, scenesById)) return false;
   for (const req of cond.transformedObjects ?? []) {
-    const applied = state.transformsApplied?.[req.objectId] ?? -1;
-    if (applied < (req.minRule ?? 0)) return false;
+    // A transformedObjects prerequisite now checks whether the named rule index has
+    // actually FIRED (recorded in rulesFired), not just whether some higher rule applied.
+    // This lets an author chain rules on the same object: rule B with
+    // { objectId: self, minRule: 0 } only succeeds once rule 0 has fired.
+    if (!firedOf(state, req.objectId).includes(req.minRule ?? 0)) return false;
     // If the author pinned the prerequisite to a specific room, make sure the object really lives there.
     if (req.sceneId && scenesById) {
       const sc = scenesById[req.sceneId];
@@ -108,9 +165,9 @@ function prereqVisible(req: { sceneId?: string; objectId: string; minRule?: numb
   if (depth > 24) return false; // cycle guard
   const sc = req.sceneId ? scenesById[req.sceneId] : Object.values(scenesById).find((s) => allObjectsOf(s).some((o) => o.id === req.objectId));
   const obj = sc ? allObjectsOf(sc).find((o) => o.id === req.objectId) : undefined;
+  // The prerequisite's own shown (visually applied) rule = the HIGHEST fired index.
   const applied = state.transformsApplied?.[req.objectId] ?? -1;
-  if (applied < (req.minRule ?? 0)) return false;
-  // The prerequisite's own highest fired rule must itself be showing (its conditions hold).
+  if (!firedOf(state, req.objectId).includes(req.minRule ?? 0)) return false;
   const idx = Math.min(applied, (obj?.transforms?.length ?? 1) - 1);
   const shown = obj?.transforms?.[idx];
   if (!shown) return true; // nothing to display-gate (e.g. discovery-only prereq) → recorded fire counts
@@ -214,8 +271,7 @@ export function conditionFailMessage(cond: TransformCondition | undefined, state
     if (!state.inventory.includes(it)) return `⏳ هنوز همه شرایط فراهم نشده — آیتم «${it}» در کیف شما نیست`;
   }
   for (const req of cond.transformedObjects ?? []) {
-    const applied = state.transformsApplied?.[req.objectId] ?? -1;
-    if (applied < (req.minRule ?? 0)) return '⏳ هنوز همه شرایط فراهم نشده — اول بقیه موارد را فعال کنید';
+    if (!firedOf(state, req.objectId).includes(req.minRule ?? 0)) return '⏳ هنوز همه شرایط فراهم نشده — اول بقیه موارد را فعال کنید';
   }
   if (!checkPositions(cond.positions, state, scenesById)) return '⏳ هنوز همه شرایط فراهم نشده — موقعیت درست نیست';
   return '';
@@ -541,102 +597,108 @@ export function applyItemToObject(
     return { newState: state, success: false, message: 'شما این آیتم را ندارید' };
   }
 
-  // Clicking on an object whose LAST rule is a toggle rule and is already applied switches back
-  // to the previous look (rule index - 1; -1 = the original look). Auto-apply rules ignore toggle.
+  // Clicking on an object whose LAST rule is a toggle rule that has already FIRED switches back:
+  // remove ONLY that index from rulesFired and set transformsApplied to the new highest fired
+  // index (or -1 when nothing is left). Auto-apply rules ignore toggle.
   if (!itemId && obj.transforms?.length) {
-    const currentTransform = (state.transformsApplied ?? {})[objectId] ?? -1;
-    const lastRule = obj.transforms[obj.transforms.length - 1];
-    if (
-      currentTransform >= 0 &&
-      currentTransform === obj.transforms.length - 1 &&
-      lastRule?.toggle &&
-      !lastRule.conditions?.autoApply
-    ) {
-      const nextState: SessionState = {
-        ...state,
-        transformsApplied: { ...(state.transformsApplied ?? {}), [objectId]: currentTransform - 1 },
-      };
-      return { newState: nextState, success: true, message: 'با موفقیت استفاده شد', transformed: true };
+    const lastIndex = obj.transforms.length - 1;
+    const lastRule = obj.transforms[lastIndex];
+    if (lastRule?.toggle && !lastRule.conditions?.autoApply) {
+      const fired = firedOf(state, objectId);
+      if (fired.includes(lastIndex)) {
+        const remaining = fired.filter((i) => i !== lastIndex);
+        const nextState: SessionState = {
+          ...state,
+          rulesFired: { ...(state.rulesFired ?? {}), [objectId]: remaining },
+          transformsApplied: {
+            ...(state.transformsApplied ?? {}),
+            [objectId]: remaining.length ? Math.max(...remaining) : -1,
+          },
+        };
+        return { newState: nextState, success: true, message: 'با موفقیت استفاده شد', transformed: true };
+      }
     }
   }
 
-  // Check if this object has transforms and the *next* rule matches.
-  // Progress is tracked in session state (`transformsApplied`), never on the editable object.
-  // An empty `requiresItem` means "no item required" — the rule fires with a plain click.
+  // Fire EVERY pending rule at once — not just the "next" one. One click completes all free rules
+  // whose conditions hold (plus all rules matching the used item). Progress is tracked in session
+  // state (`rulesFired` / `transformsApplied`), never on the editable object.
   let needsItem = false;
   if (obj.transforms && obj.transforms.length > 0) {
-    const currentTransform = (state.transformsApplied ?? {})[objectId] ?? -1;
-    const nextTransformIndex = currentTransform + 1;
+    const hits = pendingRules(obj, state, itemId, ctx?.scenesById);
 
-    if (nextTransformIndex < obj.transforms.length) {
-      const rule = obj.transforms[nextTransformIndex];
-      const free = !rule.requiresItem; // empty = no item required
-      // Extra gating conditions ("only once ALL these objects are transformed / items held").
-      const condOk = checkTransformCondition(rule.conditions, state, ctx?.scenesById);
+    if (hits.length) {
+      // Every hit was chosen against the SAME starting state; apply their bookkeeping together.
+      let newState: SessionState = { ...state };
+      const messages: string[] = [];
+      const hitIndexes: number[] = [];
+      const allEffects: TransformEffect[] = [];
 
-      if (condOk && (free || (itemId !== null && rule.requiresItem === itemId))) {
-        // Apply transform
-        let newInventory = [...state.inventory];
+      for (const { index, rule } of hits) {
+        hitIndexes.push(index);
 
         // Consume the item only when the rule actually required one (default: true)
-        if (!free && rule.consumesItem !== false) {
-          newInventory = removeOne(newInventory, rule.requiresItem);
+        if (rule.requiresItem && rule.consumesItem !== false) {
+          newState = { ...newState, inventory: removeOne(newState.inventory, rule.requiresItem) };
         }
 
-        // Grant new item if specified
-        if (rule.grantsItem && !newInventory.includes(rule.grantsItem)) {
-          newInventory.push(rule.grantsItem);
+        // Grant new item if not already in the inventory
+        if (rule.grantsItem && !newState.inventory.includes(rule.grantsItem)) {
+          newState = { ...newState, inventory: [...newState.inventory, rule.grantsItem] };
         }
 
         // Mark as discovered if triggersDiscovery
-        let newDiscoveredObjects = state.discoveredObjects;
         if (rule.triggersDiscovery) {
-          const sceneDiscovered = state.discoveredObjects[sceneId] || [];
+          const sceneDiscovered = newState.discoveredObjects[sceneId] || [];
           if (!sceneDiscovered.includes(objectId)) {
-            newDiscoveredObjects = {
-              ...state.discoveredObjects,
-              [sceneId]: [...sceneDiscovered, objectId],
+            newState = {
+              ...newState,
+              discoveredObjects: { ...newState.discoveredObjects, [sceneId]: [...sceneDiscovered, objectId] },
             };
           }
         }
 
-        const newState: SessionState = {
-          ...state,
-          inventory: newInventory,
-          discoveredObjects: newDiscoveredObjects,
-          transformsApplied: { ...(state.transformsApplied ?? {}), [objectId]: nextTransformIndex },
-        };
-
-        // Transition engine: the rule may reach outside this object — auto-transform other
-        // objects (even in other rooms), change another room's background, or open a door.
-        let finalState = newState;
-        let effectMsg: string | undefined;
-        if (rule.effects?.length && ctx?.scenesById) {
-          const res = applyEffects(newState, rule.effects, sceneId, ctx.scenesById);
-          finalState = res.state;
-          effectMsg = res.messages.join(' • ') || undefined;
-        }
-
-        return {
-          newState: finalState,
-          success: true,
-          message: [rule.newMessage, effectMsg].filter(Boolean).join(' • ') || 'با موفقیت استفاده شد',
-          transformed: true,
-        };
+        if (rule.newMessage && !messages.includes(rule.newMessage)) messages.push(rule.newMessage);
+        if (rule.effects?.length) allEffects.push(...rule.effects);
       }
-      needsItem = true;
+
+      // Record every fired index once (updates rulesFired + the transformsApplied max).
+      newState = markFired(newState, objectId, hitIndexes);
+
+      // Transition engine: run ALL concatenated effects once, after the bookkeeping above.
+      let finalState = newState;
+      if (allEffects.length && ctx?.scenesById) {
+        const res = applyEffects(newState, allEffects, sceneId, ctx.scenesById);
+        finalState = res.state;
+        for (const m of res.messages) if (!messages.includes(m)) messages.push(m);
+      }
+
+      return {
+        newState: finalState,
+        success: true,
+        message: messages.join(' • ') || 'با موفقیت استفاده شد',
+        transformed: true,
+      };
     }
+
+    // No hits: nothing could fire right now — an item is needed when any unfired rule still exists.
+    const fired = firedOf(state, objectId);
+    needsItem = obj.transforms.some((_, i) => !fired.includes(i));
   }
 
+  // Unmet rules → explain what is still missing: the FIRST unfired rule whose item matches (or
+  // whose requiresItem is empty) and whose conditions fail.
+  const condMsg = (obj.transforms ?? [])
+    .map((t, i) =>
+      !firedOf(state, objectId).includes(i) &&
+      (!t.requiresItem || (itemId !== null && t.requiresItem === itemId)) &&
+      !checkTransformCondition(t.conditions, state, ctx?.scenesById)
+        ? conditionFailMessage(t.conditions, state, ctx?.scenesById)
+        : ''
+    )
+    .find(Boolean);
+
   if (!itemId) {
-    // A matching item but unmet conditions → explain what is still missing.
-    const condMsg = obj.transforms
-      ?.map((t, i) =>
-        ((state.transformsApplied ?? {})[objectId] ?? -1) + 1 === i && !checkTransformCondition(t.conditions, state, ctx?.scenesById)
-          ? conditionFailMessage(t.conditions, state, ctx?.scenesById)
-          : ''
-      )
-      .find(Boolean);
     return {
       newState: state,
       success: false,
@@ -646,11 +708,9 @@ export function applyItemToObject(
     };
   }
 
-  // Item selected but the next rule's conditions are not met yet → tell the player why.
-  const nextIdx = ((state.transformsApplied ?? {})[objectId] ?? -1) + 1;
-  const nextRule = obj.transforms?.[nextIdx];
-  if (nextRule && !checkTransformCondition(nextRule.conditions, state, ctx?.scenesById)) {
-    return { newState: state, success: false, message: conditionFailMessage(nextRule.conditions, state, ctx?.scenesById) || 'هنوز شرایط لازم فراهم نشده است' };
+  // Item selected but its matching rule's conditions are not met yet → tell the player why.
+  if (condMsg) {
+    return { newState: state, success: false, message: condMsg || 'هنوز شرایط لازم فراهم نشده است' };
   }
 
   // Fallback: check requiresItem (old behavior for containers)

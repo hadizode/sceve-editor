@@ -613,18 +613,6 @@ function ObjSprite({
           title={name}
         />
       </div>
-
-      {/* digit badge: placed with the same box but WITHOUT flip, so the number never mirrors */}
-      {obj.digit !== undefined && discovered && (
-        <div
-          className="absolute pointer-events-none"
-          style={{ ...boxStyle, transform: cssMatrix(placementMatrix(obj)) }}
-        >
-          <div className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-amber-500 text-black text-xs font-bold flex items-center justify-center shadow">
-            {faDigits(String(obj.digit))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

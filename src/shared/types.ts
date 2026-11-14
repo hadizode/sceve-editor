@@ -269,6 +269,13 @@ export interface SessionState {
   completedScenes: string[];
   /** objectId -> index of the last applied transform rule (-1 = none) */
   transformsApplied: Record<string, number>;
+  /**
+   * objectId -> indexes of every transform rule that has fired (not just the max).
+   * Lets authors chain rules on the SAME object explicitly: rule B may require
+   * `transformedObjects:[{ objectId: self, minRule: 0 }]`, which only holds once rule 0 fired.
+   * Missing (older saves) = derived from `transformsApplied`, as if 0..max all fired.
+   */
+  rulesFired?: Record<string, number[]>;
   /** sceneId/viewId -> background sprite ref overridden by an effect (e.g. "the lights turn on") */
   backgrounds?: Record<string, string>;
   /** Door object ids opened by effects — a door can also be gated only by items. */
@@ -298,6 +305,7 @@ export function createSessionState(firstSceneId: string): SessionState {
     inventory: [],
     completedScenes: [],
     transformsApplied: {},
+    rulesFired: {},
     backgrounds: {},
     openDoors: [],
     usable: {},
