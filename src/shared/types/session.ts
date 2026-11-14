@@ -21,6 +21,8 @@ export interface SessionState {
   inventory: string[];
   completedScenes: string[];
   finalLockEntered?: string;
+  // objectId -> sorted list of transform-rule indexes that have fired for it.
+  rulesFired?: Record<string, number[]>;
 }
 
 export const SessionStateSchema: z.ZodType<SessionState> = z.object({
@@ -29,6 +31,7 @@ export const SessionStateSchema: z.ZodType<SessionState> = z.object({
   inventory: z.array(z.string()),
   completedScenes: z.array(z.string()),
   finalLockEntered: z.string().optional(),
+  rulesFired: z.record(z.string(), z.array(z.number().int().min(0))).optional(),
 });
 
 export interface Session {

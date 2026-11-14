@@ -44,15 +44,59 @@ export const SpriteAnimationSchema: z.ZodType<SpriteAnimation> = z.object({
   startFrame: z.number().int().min(0).optional(),
 });
 
+// ============ Transform Conditions ============
+// A rule's conditions gate when it may fire. All present fields must hold.
+export interface TransformConditions {
+  // Item IDs that must all be in the inventory.
+  itemsInInventory?: string[];
+  // Other objects that must already have fired at least one of their rules
+  // (or the rule with index >= minRule). Use objectId 'self' to chain onto
+  // this object's own fired rules: e.g. rule B with
+  // { transformedObjects: [{ objectId: 'self', minRule: 0 }] } only fires
+  // after rule 0 of the same object has fired.
+  transformedObjects?: { objectId: string; minRule?: number }[];
+  // The referenced object(s) must be visible/discovered in the scene.
+  prereqVisible?: boolean;
+  // Position constraints evaluated against other objects (by id).
+  checkPositions?: { belowObjectId?: string; aboveObjectId?: string };
+  // When set, the rule fires automatically (no item needed) once satisfied.
+  autoApply?: boolean;
+}
+
+export const TransformConditionsSchema: z.ZodType<TransformConditions> = z.object({
+  itemsInInventory: z.array(z.string()).optional(),
+  transformedObjects: z.array(z.object({
+    objectId: z.string(),
+    minRule: z.number().int().min(0).optional(),
+  })).optional(),
+  prereqVisible: z.boolean().optional(),
+  checkPositions: z.object({
+    belowObjectId: z.string().optional(),
+    aboveObjectId: z.string().optional(),
+  }).optional(),
+  autoApply: z.boolean().optional(),
+});
+
+// ============ Effect emitted by a fired rule ============
+export interface TransformEffect {
+  kind: string;                  // e.g. 'sound' | 'toast' | ...
+  [key: string]: unknown;
+}
+
+export const TransformEffectSchema: z.ZodType<TransformEffect> = z.record(z.string(), z.any()) as unknown as z.ZodType<TransformEffect>;
+
 // ============ Transform Rule (when item is used on object) ============
 export interface TransformRule {
-  requiresItem: string;        // item ID that must be used
+  requiresItem: string;        // item ID that must be used ('' = no item needed)
   newImageUrl?: string;        // new image after transform
   newName?: string;            // new name after transform
   newMessage?: string;         // message shown after transform
   grantsItem?: string;         // item granted after transform
   consumesItem?: boolean;      // whether the used item is consumed (default: true)
   triggersDiscovery?: boolean; // whether this counts as discovering the object
+  toggle?: boolean;            // clicking again un-fires the rule (reverts state)
+  effects?: TransformEffect[]; // side-effects applied when the rule fires
+  conditions?: TransformConditions; // gating conditions for firing
 }
 
 export const TransformRuleSchema: z.ZodType<TransformRule> = z.object({
@@ -63,6 +107,9 @@ export const TransformRuleSchema: z.ZodType<TransformRule> = z.object({
   grantsItem: z.string().optional(),
   consumesItem: z.boolean().optional(),
   triggersDiscovery: z.boolean().optional(),
+  toggle: z.boolean().optional(),
+  effects: z.array(TransformEffectSchema).optional(),
+  conditions: TransformConditionsSchema.optional(),
 });
 
 // ============ View (Interactive Scene within an Object) ============
@@ -107,7 +154,7 @@ export interface SceneObject {
   pickupItemId?: string;       // the item ID added to inventory when picked up
   pickupMessage?: string;      // message shown when picked up
   transforms?: TransformRule[]; // rules for transforming when items are used on this
-  currentTransform?: number;   // index of current transform state (-1 = original)
+  currentTransform?: number;   // legacy: index of current transform state (-1 = original)
 }
 
 export const SceneObjectSchema: z.ZodType<SceneObject> = z.object({
