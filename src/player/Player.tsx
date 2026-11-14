@@ -9,7 +9,7 @@ import { spriteFilterCss } from '../shared/types';
 import { normalizeOpacityAnim, opacityTransitionCss, swapFade, type OpacityAnim } from '../shared/opacity-anim';
 import { allRoomsComplete, checkTransformCondition, isUsable } from '../shared/game-logic';
 import { findObject } from '../shared/view-tree';
-import { NumPadKeys } from '../shared/NumPadKeys';
+import { NumsPadOverlay, useNumpadSource } from './NumsPadOverlay';
 
 /** Resolve a sprite/image ref to the concrete image URL ('' when the sprite has no image). */
 const spriteSrc = (
@@ -335,7 +335,6 @@ function ObjSprite({
   const name = (shownOk ? shown?.newName : undefined) || obj.name;
 
   const selectedItem = usePlayerStore((s) => s.selectedItem);
-  const numpadOpen = usePlayerStore((s) => s.numpadOpen);
   const clickObject = usePlayerStore((s) => s.clickObject);
   const pickup = usePlayerStore((s) => s.pickup);
   const useItemOnObject = usePlayerStore((s) => s.useItemOnObject);
@@ -543,9 +542,12 @@ function ObjSprite({
       return;
     }
 
+    // A numpad sprite that only carries transform rules (a lock) did its job by opening the pad:
+    // no "select an item" hint and no "already discovered" toast.
+    if (obj.numpad && obj.numpadTrigger === 'click' && onlyTransform) return;
+
     // transform-only object with no message: show a hint instead of staying silent.
-    // Never show it merely because a numpad was opened on this sprite.
-    if (nextRule && onlyTransform && !(obj.numpad && numpadOpen)) {
+    if (nextRule && onlyTransform) {
       say('برای استفاده از این مورد، آیتم مناسب را از کیف خود انتخاب کنید');
       return;
     }
@@ -1069,117 +1071,6 @@ function InventoryPanel() {
     </div>
   );
 }
-//+++++++++++ NumPad UI +++++++++++
-
-/**
- * numpad interactive ui is as same as inventory but its contains numbers that set in studio(praperties.tsx),
- * if a sprit with enabled numpad argument clicked ; a panel or pad appears right on the inventory (overlay the inventory),
- * numbes in panel can be selected then clicked on some sprit and a rule fires . 
- */
-function NumsPadUI() {
-  const numpadOpen = usePlayerStore((s) => s.numpadOpen);
-  const numpadObjectId = usePlayerStore((s) => s.numpadObjectId);
-  const numpadViewId = usePlayerStore((s) => s.numpadViewId);
-  const selectedItem = usePlayerStore((s) => s.selectedItem);
-  const closeNumpad = usePlayerStore((s) => s.closeNumpad);
-  const selectItem = usePlayerStore((s) => s.selectItem);
-  // The zustand `PlayerState` interface (in `src/stores/player/state.ts`, which must not be touched)
-  // declares fewer params than the implementations actually accept, so cast to pass `viewId` through.
-  const useItemOnObject = usePlayerStore((
-    s,
-  ) => s.useItemOnObject as (itemId: string, objectId: string, viewId?: string) => void);
-  const scenes = usePlayerStore((s) => s.scenes);
-  const session = usePlayerStore((s) => s.session);
-
-  if (!numpadOpen || !numpadObjectId || !session) return null;
-
-  const currentSceneId = session.state.currentSceneId;
-  const scene = scenes[currentSceneId];
-  if (!scene) return null;
-
-  const findObj = (objs: SceneObject[]): SceneObject | undefined => {
-    for (const o of objs) {
-      if (o.id === numpadObjectId) return o;
-      if (o.view) {
-        const inner = findObj(o.view.objects);
-        if (inner) return inner;
-      }
-    }
-    return undefined;
-  };
-
-  const sourceObj = findObj(scene.objects);
-  if (!sourceObj?.numpad) return null;
-
-  // With trigger 'pickup' the sprite leaves the scene on pickup, so type mode is forced to pick.
-  const mode = sourceObj.numpadTrigger === 'pickup' ? 'pick' : (sourceObj.numpadMode ?? 'pick');
-  const min = sourceObj.numpadMin ?? 1;
-  const max = sourceObj.numpadMax ?? 9;
-  const font = sourceObj.numpadFont ?? 'Vazirmatn';
-  const color = sourceObj.numpadColor ?? '#ffffff';
-  const bg = sourceObj.numpadBg ?? '#3a3a3a';
-  const size = sourceObj.numpadSize ?? 40;
-
-  const selected = selectedItem ?? null;
-  const state = session.state;
-  const applied = (state.transformsApplied ?? {})[numpadObjectId] ?? -1;
-
-  // Type mode: one slot per transform rule whose `requiresItem` is numeric.
-  const numericRules = (sourceObj.transforms ?? [])
-    .map((t, j) => ({ t, j }))
-    .filter(({ t }) => /^\d+$/.test(t.requiresItem ?? ''));
-
-  const pressKey = (n: string) => {
-    if (mode === 'type') {
-      useItemOnObject(n, numpadObjectId, numpadViewId ?? undefined);
-    } else {
-      selectItem(selected === n ? null : n);
-    }
-  };
-
-  return (
-    <div
-      className="absolute bottom-0 left-0 right-0 z-20 w-full bg-surface border-t border-gray-700 px-3 py-2 flex flex-col gap-1 max-h-[192px] overflow-y-auto"
-      dir="rtl"
-    >
-      <div className="flex w-full items-center justify-between">
-        <h4 className="text-xs font-bold text-gray-200 uppercase tracking-wider">پد عددی</h4>
-        <button
-          type="button"
-          onClick={closeNumpad}
-          className="p-1 rounded hover:bg-gray-700/50"
-          title="بستن"
-        >
-          ✕
-        </button>
-      </div>
-
-      {mode === 'type' && numericRules.length > 0 && (
-        <div className="flex gap-1.5">
-          {numericRules.map(({ t, j }) => {
-            const filled = j <= applied;
-            return (
-              <div
-                key={j}
-                className="w-6 h-6 rounded border flex items-center justify-center text-[10px] text-gray-400 bg-black/20"
-              >
-                {filled ? t.requiresItem : ''}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      <NumPadKeys min={min} max={max} selected={selected} onPress={pressKey} size={size} font={font} color={color} bg={bg} />
-
-      {mode === 'pick' && selected !== null && (
-        <p className="text-[10px] text-amber-300 text-center animate-pulse">
-          عدد {selected} انتخاب شد — روی یک شیء کلیک کنید
-        </p>
-      )}
-    </div>
-  );
-}
 
 // ---------- Final lock ----------
 function FinalLock() {
@@ -1380,6 +1271,7 @@ export default function Player({ projectName }: { projectName: string }) {
   const sprites = usePlayerStore((s) => s.sprites);
   const switchScene = usePlayerStore((s) => s.switchScene);
   const resetGame = usePlayerStore((s) => s.resetGame);
+  const padSrc = useNumpadSource();
   const [tab, setTab] = useState<'rooms' | 'exit'>('rooms');
 
   const [confirmReset, setConfirmReset] = useState(false);
@@ -1504,11 +1396,20 @@ export default function Player({ projectName }: { projectName: string }) {
         )}
       </div>
 
-      <div className="relative w-full">
+      {/* Inventory bar. The num pad is drawn exactly over it (same place), so it never covers the scene;
+          the bar only grows when the configured key size needs more room. */}
+      <div
+        className="relative w-full"
+        style={padSrc ? { minHeight: Math.max(64, (padSrc.numpadSize ?? 40) + 24) } : undefined}
+      >
         <SilentBoundary>
           <InventoryPanel />
         </SilentBoundary>
-        <NumsPadUI />
+        {padSrc && (
+          <SilentBoundary>
+            <NumsPadOverlay src={padSrc} />
+          </SilentBoundary>
+        )}
       </div>
     </div>
   );
