@@ -44,25 +44,49 @@ export const SpriteAnimationSchema: z.ZodType<SpriteAnimation> = z.object({
   startFrame: z.number().int().min(0).optional(),
 });
 
+// ============ Transform Condition (checked against session state) ============
+export interface TransformCondition {
+  /** Item IDs that must be present in inventory. */
+  hasItems?: string[];
+  /** Object IDs (in the same scene as the transformed object) that must be discovered. */
+  discoveredObjects?: string[];
+  /** Scene IDs that must have been completed. */
+  completedScenes?: string[];
+  /** Object IDs (anywhere, resolved via scenesById) that must be discovered. */
+  crossSceneObjects?: string[];
+  /** When true the rule is auto-applied and never shows up as "pending". */
+  autoApply?: boolean;
+}
+
+export const TransformConditionSchema: z.ZodType<TransformCondition> = z.object({
+  hasItems: z.array(z.string()).optional(),
+  discoveredObjects: z.array(z.string()).optional(),
+  completedScenes: z.array(z.string()).optional(),
+  crossSceneObjects: z.array(z.string()).optional(),
+  autoApply: z.boolean().optional(),
+});
+
 // ============ Transform Rule (when item is used on object) ============
 export interface TransformRule {
-  requiresItem: string;        // item ID that must be used
+  requiresItem?: string;       // item ID that must be used (omitted = free/no-item rule)
   newImageUrl?: string;        // new image after transform
   newName?: string;            // new name after transform
   newMessage?: string;         // message shown after transform
   grantsItem?: string;         // item granted after transform
   consumesItem?: boolean;      // whether the used item is consumed (default: true)
   triggersDiscovery?: boolean; // whether this counts as discovering the object
+  conditions?: TransformCondition; // extra gating/automation for the rule
 }
 
 export const TransformRuleSchema: z.ZodType<TransformRule> = z.object({
-  requiresItem: z.string(),
+  requiresItem: z.string().optional(),
   newImageUrl: z.string().optional(),
   newName: z.string().optional(),
   newMessage: z.string().optional(),
   grantsItem: z.string().optional(),
   consumesItem: z.boolean().optional(),
   triggersDiscovery: z.boolean().optional(),
+  conditions: TransformConditionSchema.optional(),
 });
 
 // ============ View (Interactive Scene within an Object) ============

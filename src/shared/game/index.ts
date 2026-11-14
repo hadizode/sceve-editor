@@ -4,3 +4,4 @@ export * from './discovery';
 export * from './transforms';
 export * from './lock';
 export * from './clue-chain';
+export * from './rules-fired';
