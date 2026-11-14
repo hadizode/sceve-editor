@@ -106,3 +106,60 @@ describe('pendingRules', () => {
     expect(pendingRules(o, rich, 'key').map(p => p.i)).toEqual([2]);
   });
 });
+
+// ============ Task 3: transformedObjects uses firedOf (exact indexes) ============
+import { checkTransformCondition, conditionFailMessage, prereqVisible } from './game-logic';
+
+describe('transformedObjects requirements (firedOf-based)', () => {
+  it('fails a minRule:0 requirement when only rule index 1 has fired', () => {
+    // Out-of-order save: rulesFired [1] with transformsApplied 1. Under the old
+    // "applied < (minRule ?? 0)" gate this would have passed (1 >= 0); now the
+    // exact-index check must reject it.
+    const s: SessionState = {
+      ...createSessionState(),
+      rulesFired: { box: [1] },
+      transformsApplied: { box: 1 },
+    };
+    const cond = { transformedObjects: [{ objectId: 'box', minRule: 0 }] };
+    expect(checkTransformCondition(cond, s)).toBe(false);
+    expect(conditionFailMessage(cond, s)).not.toBeNull();
+
+    // once index 0 has actually fired, the same requirement passes
+    const s2 = markFired(s, 'box', [0]);
+    expect(checkTransformCondition(cond, s2)).toBe(true);
+    expect(conditionFailMessage(cond, s2)).toBeNull();
+  });
+
+  it('backward-compat: legacy transformsApplied = 2 satisfies minRule 0..2 but not 3', () => {
+    const legacy: SessionState = {
+      currentSceneId: 's1',
+      discoveredObjects: {},
+      inventory: [],
+      completedScenes: [],
+      transformsApplied: { box: 2 },
+    };
+    expect(checkTransformCondition({ transformedObjects: [{ objectId: 'box', minRule: 2 }] }, legacy)).toBe(true);
+    expect(checkTransformCondition({ transformedObjects: [{ objectId: 'box', minRule: 3 }] }, legacy)).toBe(false);
+  });
+
+  it('prereqVisible checks the exact fired index and looks up the shown rule at the highest fired index', () => {
+    const o = obj('lamp', [
+      { newMessage: 'on', newName: 'Lamp On' },
+      { newMessage: 'bright', newName: 'Lamp Bright' },
+    ]);
+    const objects = [o];
+    const nothing = createSessionState();
+    expect(prereqVisible({ objectId: 'lamp', minRule: 0 }, nothing, objects)).toBe(false);
+
+    // only rule 1 fired → minRule 0 fails, minRule 1 passes
+    const onlyOne = markFired(nothing, 'lamp', [1]);
+    expect(prereqVisible({ objectId: 'lamp', minRule: 0 }, onlyOne, objects)).toBe(false);
+    expect(prereqVisible({ objectId: 'lamp', minRule: 1 }, onlyOne, objects)).toBe(true);
+
+    // both fired → shown rule is the HIGHEST fired index (1)
+    const both = markFired(onlyOne, 'lamp', [0]);
+    expect(prereqVisible({ objectId: 'lamp', minRule: 0 }, both, objects)).toBe(true);
+    const highest = Math.max(...firedOf(both, 'lamp'));
+    expect(o.transforms![highest].newName).toBe('Lamp Bright');
+  });
+});
