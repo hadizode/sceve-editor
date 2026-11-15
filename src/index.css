@@ -100,6 +100,14 @@ input[type="number"] { -moz-appearance: textfield; }
   animation: victory 0.5s ease-in-out;
 }
 
+/* Safe-area helpers for Telegram WebApp */
+.safe-top {
+  padding-top: calc(env(safe-area-inset-top, 0px) + var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px));
+}
+.safe-bottom {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--tg-safe-area-inset-bottom, 0px) + var(--tg-content-safe-area-inset-bottom, 0px));
+}
+
 /* Konva container */
 .konva-container {
   touch-action: none;
