@@ -14,7 +14,7 @@ import {
   isUsable,
   pendingRules,
 } from '../shared/game-logic';
-import { findObject } from '../shared/view-tree';
+import { findObject, allObjectsDeep } from '../shared/view-tree';
 import { NumPadKeys } from '../shared/NumPadKeys';
 
 /** Resolve a sprite/image ref to the concrete image URL ('' when the sprite has no image). */
@@ -967,10 +967,10 @@ function InventoryPanel() {
   const sprites = usePlayerStore((s) => s.sprites);
 
   const itemMeta = useMemo(() => {
-    const m: Record<string, { name: string; url: string; color?: string }> = {};
+    const m: Record<string, { name: string; url: string; color?: string; numpad?: { objectId: string; viewId?: string } }> = {};
     if (!projectId) return m;
 
-    const walk = (objs: SceneObject[]) => {
+    const walk = (objs: SceneObject[], viewId?: string) => {
       for (const o of objs) {
         const sp = getSprite(o.spriteRef, sprites);
         const u = spriteSrc(o.spriteRef, sprites, assets);
@@ -981,7 +981,10 @@ function InventoryPanel() {
 
         const key = o.pickupItemId || o.id;
         if (o.pickupable && !m[key]) {
-          m[key] = { name: o.name, url: u, color: sp?.color };
+          m[key] = {
+            name: o.name, url: u, color: sp?.color,
+            numpad: o.numpad ? { objectId: o.id, viewId } : undefined,
+          };
         }
 
         o.transforms?.forEach((t) => {
@@ -995,7 +998,7 @@ function InventoryPanel() {
           }
         });
 
-        if (o.view) walk(o.view.objects);
+        if (o.view) walk(o.view.objects, o.id);
       }
     };
 
@@ -1029,7 +1032,23 @@ function InventoryPanel() {
         return (
           <button
             key={id}
-            onClick={() => selectItem(selectedItem === id ? null : id)}
+            onClick={() => {
+              const next = selectedItem === id ? null : id;
+              const owner = itemMeta[id]?.numpad;
+              if (owner && next) {
+                // set selectedItem AND open the pad in one update (openNumpad() would clear selectedItem)
+                usePlayerStore.setState({
+                  selectedItem: next,
+                  numpadOpen: true,
+                  numpadObjectId: owner.objectId,
+                  numpadViewId: owner.viewId ?? null,
+                });
+              } else if (owner && !next) {
+                usePlayerStore.getState().closeNumpad(); // deselecting the pen closes the pad
+              } else {
+                selectItem(next);
+              }
+            }}
             className={`relative shrink-0 w-12 h-12 rounded-xl border flex items-center justify-center overflow-hidden transition-all ${
               selectedItem === id
                 ? 'border-amber-400 ring-2 ring-amber-400/50 scale-110'
@@ -1092,26 +1111,15 @@ function NumsPadUI() {
 
   if (!numpadOpen || !numpadObjectId || !session) return null;
 
-  const currentSceneId = session.state.currentSceneId;
-  const scene = scenes[currentSceneId];
-  if (!scene) return null;
-
-  const findObj = (objs: SceneObject[]): SceneObject | undefined => {
-    for (const o of objs) {
-      if (o.id === numpadObjectId) return o;
-      if (o.view) {
-        const inner = findObj(o.view.objects);
-        if (inner) return inner;
-      }
-    }
-    return undefined;
-  };
-
-  const sourceObj = findObj(scene.objects);
+  const sourceObj = Object.values(scenes)
+    .flatMap((sc) => allObjectsDeep(sc.objects))
+    .find((o) => o.id === numpadObjectId);
   if (!sourceObj?.numpad) return null;
 
   // With trigger 'pickup' the sprite leaves the scene on pickup, so type mode is forced to pick.
-  const mode = sourceObj.numpadTrigger === 'pickup' ? 'pick' : (sourceObj.numpadMode ?? 'pick');
+  const mode = sourceObj.numpadTrigger === 'pickup' || sourceObj.pickupable
+    ? 'pick'
+    : (sourceObj.numpadMode ?? 'pick');
   const min = sourceObj.numpadMin ?? 1;
   const max = sourceObj.numpadMax ?? 9;
   const font = sourceObj.numpadFont ?? 'Vazirmatn';
@@ -1119,7 +1127,7 @@ function NumsPadUI() {
   const bg = sourceObj.numpadBg ?? '#3a3a3a';
   const size = sourceObj.numpadSize ?? 40;
 
-  const selected = selectedItem ?? null;
+  const selected = selectedItem && /^\d+$/.test(selectedItem) ? selectedItem : null;
   const state = session.state;
   const fired = firedOf(state, numpadObjectId);
 
