@@ -1129,7 +1129,6 @@ function NumsPadUI() {
   const mode = sourceObj.numpadTrigger === 'pickup' || sourceObj.pickupable
     ? 'pick'
     : (sourceObj.numpadMode ?? 'pick');
-  const code = mode === 'type' ? sourceObj.numpadCode : undefined;
   const cells = sourceObj.numpadCells ?? 3;
   const min = sourceObj.numpadMin ?? 1;
   const max = sourceObj.numpadMax ?? 9;
@@ -1139,11 +1138,9 @@ function NumsPadUI() {
   const size = sourceObj.numpadSize ?? 40;
 
   const selected = selectedItem && /^\d+$/.test(selectedItem) ? selectedItem : null;
-  const state = session.state;
-  const typed = state.numpadTyped?.[numpadObjectId] ?? [];
+  const typed = session.state.numpadTyped?.[numpadObjectId] ?? [];
 
   const pressKey = (n: string) => {
-    if (code) return;
     if (mode === 'type') typeDigit(numpadObjectId, n, cells);
     else selectItem(selected === n ? null : n);
   };
@@ -1165,17 +1162,7 @@ function NumsPadUI() {
         </button>
       </div>
 
-      {code && (
-        <div className="flex items-center gap-1.5" dir="ltr">
-          {code.split('').map((_, i) => (
-            <div key={i} className="w-7 h-8 rounded border border-gray-500 flex items-center justify-center text-sm font-bold bg-black/30">
-              {typed[i] ?? ''}
-            </div>
-          ))}
-          <button type="button" onClick={() => backspaceDigit(numpadObjectId)} className="px-2 h-8 rounded bg-red-900/40 text-xs">⌫</button>
-        </div>
-      )}
-      {!code && mode === 'type' && (
+      {mode === 'type' && (
         <div className="flex items-center gap-1.5" dir="ltr">
           {Array.from({ length: cells }, (_, i) => (
             <div key={i} className="w-7 h-8 rounded border border-gray-500 flex items-center justify-center text-sm font-bold bg-black/30">
@@ -1396,7 +1383,12 @@ export default function Player({ projectName }: { projectName: string }) {
   const sprites = usePlayerStore((s) => s.sprites);
   const switchScene = usePlayerStore((s) => s.switchScene);
   const resetGame = usePlayerStore((s) => s.resetGame);
+  const startNewGame = usePlayerStore((s) => s.startNewGame);
   const [tab, setTab] = useState<'rooms' | 'exit'>('rooms');
+
+  // Play-only mode (vite --mode play): auto-start and never show the lobby.
+  // `import.meta.env` is not globally typed in this project, so read it via a cast.
+  const isPlay = (import.meta as { env?: { MODE?: string } }).env?.MODE === 'play';
 
   const [confirmReset, setConfirmReset] = useState(false);
 
@@ -1409,6 +1401,16 @@ export default function Player({ projectName }: { projectName: string }) {
   useEffect(() => {
     loadFromStudio();
   }, [loadFromStudio]);
+
+  // Play-only mode: start the game immediately so the lobby is never visible.
+  // Also covers the post-win "بازی جدید" button, which calls resetGame() and
+  // leaves the session unstarted — this effect restarts it automatically.
+  useEffect(() => {
+    if (!isPlay) return;
+    if (session && !session.started) {
+      startNewGame();
+    }
+  }, [isPlay, session, startNewGame]);
 
   const sceneList = useMemo(
     () =>
@@ -1432,7 +1434,7 @@ export default function Player({ projectName }: { projectName: string }) {
     return (
       <>
         <Toast />
-        <Lobby projectName={projectName} />
+        {!isPlay && <Lobby projectName={projectName} />}
       </>
     );
   }
