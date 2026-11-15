@@ -135,7 +135,7 @@ interface PositionReq {
 }
 ```
 
-Rules apply in order; `currentTransform` (tracked in runtime `transformsApplied`) records which state the object is in. Multiple rules can chain (state 0 → 1 → 2 …).
+All matching rules fire together in one pass; which rules fired is tracked in runtime `rulesFired` (objectId → indexes), and `transformsApplied` records the highest fired index — the look currently showing (-1 = none). Rules can still chain through their conditions.
 
 ## Effects
 
@@ -271,7 +271,9 @@ interface SessionState {
   discoveredObjects: Record<string, string[]>;
   inventory: string[];            // collected item ids
   completedScenes: string[];
-  /** objectId -> index of last applied transform rule (-1 = none) */
+  /** objectId -> indexes of the transform rules that have fired (all matching rules fire together) */
+  rulesFired?: Record<string, number[]>;
+  /** objectId -> highest fired transform rule index = the look currently shown (-1 = none) */
   transformsApplied: Record<string, number>;
   /** sceneId/viewId -> background sprite ref overridden by an effect */
   backgrounds?: Record<string, string>;

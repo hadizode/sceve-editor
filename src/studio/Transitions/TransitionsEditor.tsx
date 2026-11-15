@@ -22,7 +22,7 @@ export function TransitionsEditor({ obj, set }: { obj: SceneObject; set: SetFn }
 
       <div className="flex items-center gap-2">
         <h4 className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Rules</h4>
-        <span className="text-[10px] text-gray-500">fire in order: rule 2 only after rule 1</span>
+        <span className="text-[10px] text-gray-500">all matching rules fire together; use conditions to chain</span>
         <div className="flex-1" />
         <button className={btnCls} onClick={addRule}>
           <Icon name="plus" size={12} /> Rule

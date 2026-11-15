@@ -22,7 +22,7 @@ export function TransitionsTab() {
         <p>Select a sprite to edit what it turns into.</p>
         <p className="text-[11px] text-gray-500">
           Every rule reads <b className="text-sky-300">When</b> → <b className="text-amber-300">Only if</b> → <b className="text-emerald-300">Then</b>.
-          Rules run in order, and can reach other sprites, rooms and doors.
+          All matching rules fire together; use conditions to chain them, and they can reach other sprites, rooms and doors.
         </p>
       </div>
     );

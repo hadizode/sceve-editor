@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyItemToObject } from './game-logic';
+import { applyItemToObject, checkTransformCondition, firedOf } from './game-logic';
 import type { SceneObject, SessionState } from './types';
 import { createObject } from './types';
 
@@ -59,5 +59,58 @@ describe('applyItemToObject with numpad numbers (virtual items)', () => {
     expect(apply('3').success).toBe(true);
     expect(apply('4').success).toBe(true);
     expect(state.transformsApplied?.['lock']).toBe(3);
+  });
+});
+
+describe('firedOf / checkTransformCondition (transformedObjects chains on the same object)', () => {
+  const freeRule = (message: string): SceneObject =>
+    createObject({
+      id: 'panel',
+      name: 'Panel',
+      spriteRef: 'sprite:panel',
+      transforms: [
+        { requiresItem: '', newMessage: 'first', newSpriteId: 'sprite:a' },
+        { requiresItem: '', newMessage: 'second', newSpriteId: 'sprite:b' },
+      ],
+    });
+
+  it('transformedObjects minRule requires that exact rule to have fired, not just a higher one', () => {
+    const state = {
+      ...baseState,
+      transformsApplied: {},
+      rulesFired: { panel: [1] }, // only rule 1 fired — rule 0 has NOT fired
+    };
+    const cond = { transformedObjects: [{ objectId: 'panel', minRule: 0 }] };
+    expect(checkTransformCondition(cond as any, state)).toBe(false);
+
+    // minRule 1 holds because rule 1 fired.
+    const cond1 = { transformedObjects: [{ objectId: 'panel', minRule: 1 }] };
+    expect(checkTransformCondition(cond1 as any, state)).toBe(true);
+
+    // firedOf reports exactly what fired.
+    expect(firedOf(state, 'panel')).toEqual([1]);
+  });
+});
+
+describe('applyItemToObject fires all pending rules at once', () => {
+  const multi = () =>
+    createObject({
+      id: 'x',
+      name: 'X',
+      spriteRef: 'sprite:x',
+      transforms: [
+        { requiresItem: '', newMessage: 'first', newSpriteId: 'sprite:a' },
+        { requiresItem: '', newMessage: 'second', newSpriteId: 'sprite:b' },
+        { requiresItem: '', newMessage: 'third', newSpriteId: 'sprite:c' },
+      ],
+    });
+
+  it('one click on 3 free rules fires all three: rulesFired=[0,1,2], all messages', () => {
+    const res = applyItemToObject(baseState, 'sc', 'x', null, [multi()]);
+    expect(res.success).toBe(true);
+    expect(res.transformed).toBe(true);
+    expect(res.newState.transformsApplied?.['x']).toBe(2);
+    expect(res.newState.rulesFired?.['x']).toEqual([0, 1, 2]);
+    expect(res.message).toBe('first • second • third');
   });
 });

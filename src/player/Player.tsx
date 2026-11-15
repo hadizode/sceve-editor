@@ -7,7 +7,13 @@ import { getSprite, resolveSprite, transformRef } from '../shared/types';
 import { boxMatrix, cssMatrix, hitClipPath, motionAngle, pivotScene, placementMatrix } from '../shared/geometry';
 import { spriteFilterCss } from '../shared/types';
 import { normalizeOpacityAnim, opacityTransitionCss, swapFade, type OpacityAnim } from '../shared/opacity-anim';
-import { allRoomsComplete, checkTransformCondition, isUsable } from '../shared/game-logic';
+import {
+  allRoomsComplete,
+  checkTransformCondition,
+  firedOf,
+  isUsable,
+  pendingRules,
+} from '../shared/game-logic';
 import { findObject } from '../shared/view-tree';
 import { NumPadKeys } from '../shared/NumPadKeys';
 
@@ -18,7 +24,7 @@ const spriteSrc = (
   assets: Record<string, Asset>,
 ) => (ref ? resolveSprite(ref, sprites, assets) : '');
 
-const faDigits = (s: string) => s.replace(/\d/g, (d) => '۰۱۲۴۵۶۷۸۹'[+d]);
+const faDigits = (s: string) => s.replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[+d]);
 
 const EMPTY: string[] = [];
 
@@ -439,7 +445,8 @@ function ObjSprite({
     !!obj.numpad ||
     !!o.twoState?.toggleOnClick;
 
-  const nextRule = obj.transforms?.[((state.transformsApplied ?? {})[obj.id] ?? -1) + 1];
+  const pending = pendingRules(obj, state, null, scenesById);
+  const anyRuleLeft = (obj.transforms ?? []).some((_, i) => !firedOf(state, obj.id).includes(i));
   const onlyTransform =
     !obj.message && obj.digit === undefined && !obj.grantsItem && !obj.requiresItem?.length;
 
@@ -471,7 +478,7 @@ function ObjSprite({
     // Close-up view: open freely when not gated, or when the selected item is one of the
     // items required to open. A gated view with no valid selection shows the select-item
     // toast instead of falling through to "use item on object".
-    if (obj.view && !nextRule) {
+    if (obj.view && !anyRuleLeft) {
       const required = Array.from(
         new Set([...(obj.requiresItem ?? []), ...(obj.view?.requiresItem ?? [])])
       );
@@ -496,7 +503,7 @@ function ObjSprite({
         !obj.grantsItem &&
         !obj.view &&
         obj.pickupable !== true &&
-        !nextRule &&
+        !anyRuleLeft &&
         !obj.motion
       ) {
         return;
@@ -512,22 +519,23 @@ function ObjSprite({
     // digit, item grant, pickup, view or transform rule waiting), stop here after rotating.
     if (obj.motion) {
       rotateObject(obj.id, viewId);
-      const onlyMotion = !obj.message && obj.digit === undefined && !obj.grantsItem && !obj.pickupable && !obj.view && !nextRule;
+      const onlyMotion = !obj.message && obj.digit === undefined && !obj.grantsItem && !obj.pickupable && !obj.view && !anyRuleLeft;
       if (onlyMotion) return;
     }
 
     // rule without an item: executes with a simple click — but only when its conditions hold;
     // unmet conditions fall through to useItemOnObject(null, …) which shows the "still missing" hint.
-    if (nextRule && !nextRule.requiresItem && checkTransformCondition(nextRule.conditions, state, scenesById)) {
+    if (pending.length > 0) {
       useItemOnObject(null, obj.id, viewId);
       return;
     }
 
     // Clicking again on the last applied toggle rule reverts to the previous look (−1 = original).
-    if (!nextRule) {
-      const applied = (state.transformsApplied ?? {})[obj.id] ?? -1;
-      const last = obj.transforms?.[applied];
-      if (applied >= 0 && last?.toggle && !last.conditions?.autoApply) {
+    if (!anyRuleLeft) {
+      const fired = firedOf(state, obj.id);
+      const lastIdx = fired.length ? Math.max(...fired) : -1;
+      const last = obj.transforms?.[lastIdx];
+      if (lastIdx >= 0 && last?.toggle && !last.conditions?.autoApply) {
         useItemOnObject(null, obj.id, viewId);
         return;
       }
@@ -544,8 +552,11 @@ function ObjSprite({
     }
 
     // transform-only object with no message: show a hint instead of staying silent.
-    // Never show it merely because a numpad was opened on this sprite.
-    if (nextRule && onlyTransform && !(obj.numpad && numpadOpen)) {
+    // Never show it merely because a numpad was opened on this sprite. Read the live pad state
+    // from the store (not the render closure) so a pad opened moments earlier in this same
+    // click does not still produce the "select an item" toast.
+    const padIsOpen = usePlayerStore.getState().numpadOpen;
+    if (anyRuleLeft && onlyTransform && !(obj.numpad && padIsOpen)) {
       say('برای استفاده از این مورد، آیتم مناسب را از کیف خود انتخاب کنید');
       return;
     }
@@ -1110,7 +1121,7 @@ function NumsPadUI() {
 
   const selected = selectedItem ?? null;
   const state = session.state;
-  const applied = (state.transformsApplied ?? {})[numpadObjectId] ?? -1;
+  const fired = firedOf(state, numpadObjectId);
 
   // Type mode: one slot per transform rule whose `requiresItem` is numeric.
   const numericRules = (sourceObj.transforms ?? [])
@@ -1145,7 +1156,7 @@ function NumsPadUI() {
       {mode === 'type' && numericRules.length > 0 && (
         <div className="flex gap-1.5">
           {numericRules.map(({ t, j }) => {
-            const filled = j <= applied;
+            const filled = fired.includes(j);
             return (
               <div
                 key={j}

@@ -93,11 +93,11 @@ export function markFired(state: SessionState, objectId: string, indexes: number
   if (!indexes.length) return state;
   const prev = firedOf(state, objectId);
   const merged = Array.from(new Set([...prev, ...indexes])).sort((a, b) => a - b);
-  const newMax = merged.length ? Math.max(...merged, state.transformsApplied?.[objectId] ?? -1) : -1;
+  const last = indexes[indexes.length - 1]; // آخرین رولی که همین الان اجرا شد = ظاهر فعلی
   return {
     ...state,
     rulesFired: { ...(state.rulesFired ?? {}), [objectId]: merged },
-    transformsApplied: { ...(state.transformsApplied ?? {}), [objectId]: newMax },
+    transformsApplied: { ...(state.transformsApplied ?? {}), [objectId]: last },
   };
 }
 
@@ -117,9 +117,16 @@ export function pendingRules(
   for (const [index, rule] of (obj.transforms ?? []).entries()) {
     if (fired.includes(index)) continue;
     const free = !rule.requiresItem;
+    if (free && itemId !== null) continue;
     if (!free && rule.requiresItem !== itemId) continue;
     if (!checkTransformCondition(rule.conditions, state, scenesById)) continue;
     hits.push({ index, rule });
+  }
+
+  // For numeric items keep only the first pending match so a repeated digit (e.g. 1-1-2)
+  // does not fire every rule that requires that digit at once.
+  if (itemId && /^\d+$/.test(itemId)) {
+    return hits.filter((h) => h.rule.requiresItem === itemId).slice(0, 1);
   }
   return hits;
 }
@@ -225,36 +232,47 @@ export function evaluateAutoTransforms(
   for (let pass = 0; pass < candidates.length + 2; pass++) {
     let changed = false;
     for (const { sceneId, obj } of candidates) {
-      const nextIdx = (s.transformsApplied?.[obj.id] ?? -1) + 1;
-      const rule = obj.transforms![nextIdx];
-      if (!rule || !rule.conditions?.autoApply || rule.toggle) continue;
-      // Only fire when the rule needs no item (free) — item-gated rules still need the player.
-      if (rule.requiresItem) continue;
-      // Evaluate prerequisites from the LIVE state: recorded transforms, or visibly-applied ones
-      // (an auto-firing intermediate must itself actually be showing its transformed sprite first).
-      const cond = rule.conditions;
-      let ok = true;
-      for (const it of cond.itemsInInventory ?? []) if (!s.inventory.includes(it)) { ok = false; break; }
-      if (ok) {
-        for (const req of cond.transformedObjects ?? []) {
-          if (!prereqVisible(req, s, scenesById)) { ok = false; break; }
+      // Every not-yet-fired autoApply rule whose conditions hold RIGHT NOW. All hits are chosen
+      // against the SAME `s`, so multiple satisfiable rules of one object fire together in a
+      // single pass instead of gating each other one index at a time.
+      const hits: { index: number; rule: TransformRule }[] = [];
+      for (const [index, rule] of (obj.transforms ?? []).entries()) {
+        if (firedOf(s, obj.id).includes(index)) continue;
+        if (!rule.conditions?.autoApply || rule.toggle || rule.requiresItem) continue;
+        const cond = rule.conditions;
+        let ok = true;
+        for (const it of cond.itemsInInventory ?? []) if (!s.inventory.includes(it)) { ok = false; break; }
+        if (ok) {
+          for (const req of cond.transformedObjects ?? []) {
+            if (!prereqVisible(req, s, scenesById)) { ok = false; break; }
+          }
         }
+        // Coordinate-aware gating uses the LIVE step counter `s` (motion clicks counted so far).
+        if (ok && !checkPositions(cond.positions, s, scenesById)) ok = false;
+        if (!ok) continue;
+        hits.push({ index, rule });
       }
-      // Coordinate-aware gating uses the LIVE step counter `s` (motion clicks counted so far).
-      if (ok && !checkPositions(cond.positions, s, scenesById)) ok = false;
-      if (!ok) continue;
-      // Fire the rule exactly like applyEffect would: visuals via transformsApplied + grants/discovery/effects.
-      let ns = { ...s, transformsApplied: { ...(s.transformsApplied ?? {}), [obj.id]: nextIdx } };
-      if (rule.grantsItem && !ns.inventory.includes(rule.grantsItem)) ns = { ...ns, inventory: [...ns.inventory, rule.grantsItem] };
-      if (rule.triggersDiscovery) {
-        const d = ns.discoveredObjects[sceneId] || [];
-        if (!d.includes(obj.id)) ns = { ...ns, discoveredObjects: { ...ns.discoveredObjects, [sceneId]: [...d, obj.id] } };
-      }
-      if (rule.newMessage && !messages.includes(rule.newMessage)) messages.push(rule.newMessage);
-      if (rule.effects?.length) {
-        const res = applyEffects(ns, rule.effects, sceneId, scenesById);
-        ns = res.state;
-        for (const m of res.messages) if (!messages.includes(m)) messages.push(m);
+      if (!hits.length) continue;
+
+      // Record every fired index at once (rulesFired + the transformsApplied max look), then
+      // run the grants, discovery and effects of each hit.
+      let ns = markFired(s, obj.id, hits.map((h) => h.index));
+      for (const { rule } of hits) {
+        if (rule.grantsItem && !ns.inventory.includes(rule.grantsItem)) {
+          ns = { ...ns, inventory: [...ns.inventory, rule.grantsItem] };
+        }
+        if (rule.triggersDiscovery) {
+          const d = ns.discoveredObjects[sceneId] || [];
+          if (!d.includes(obj.id)) {
+            ns = { ...ns, discoveredObjects: { ...ns.discoveredObjects, [sceneId]: [...d, obj.id] } };
+          }
+        }
+        if (rule.newMessage && !messages.includes(rule.newMessage)) messages.push(rule.newMessage);
+        if (rule.effects?.length) {
+          const res = applyEffects(ns, rule.effects, sceneId, scenesById);
+          ns = res.state;
+          for (const m of res.messages) if (!messages.includes(m)) messages.push(m);
+        }
       }
       s = ns;
       changed = true;
@@ -339,40 +357,36 @@ function applyEffect(state: SessionState, eff: TransformEffect, triggerSceneId: 
   const rule = obj.transforms[idx];
   if (!rule) return state;
   const mode = eff.mode ?? 'apply';
-  const current = state.transformsApplied?.[obj.id] ?? -1;
 
-  // 'revert' skips the condition check and the `visited` guard: step back to before this rule
-  // (or to the original look when nothing of it is applied).
-  if (mode === 'revert') {
-    const target = Math.min(current, idx - 1);
-    if (target === current) return state;
+  /** Drop every fired index `>= idx` of `objectId`, rewind `transformsApplied` to the new max
+   *  (or -1). Same state ref when nothing was removed. */
+  const unfireFrom = (s: SessionState, id: string, idx: number): SessionState => {
+    const prev = firedOf(s, id);
+    const keep = prev.filter((i) => i < idx);
+    if (keep.length === prev.length) return s;
     return {
-      ...state,
-      transformsApplied: { ...(state.transformsApplied ?? {}), [obj.id]: target },
+      ...s,
+      rulesFired: { ...(s.rulesFired ?? {}), [id]: keep },
+      transformsApplied: {
+        ...(s.transformsApplied ?? {}),
+        [id]: keep.length ? Math.max(...keep) : -1,
+      },
     };
-  }
+  };
+
+  // 'revert' skips the condition check and the `visited` guard: step back to before this rule.
+  if (mode === 'revert') return unfireFrom(state, obj.id, idx);
 
   // 'toggle': revert when the rule is already applied, otherwise fall through to 'apply'.
-  if (mode === 'toggle' && current >= idx) {
-    return {
-      ...state,
-      transformsApplied: { ...(state.transformsApplied ?? {}), [obj.id]: idx - 1 },
-    };
-  }
+  if (mode === 'toggle' && firedOf(state, obj.id).includes(idx)) return unfireFrom(state, obj.id, idx);
 
   // Conditions still gate automatic transforms: "transform box X" only fires when X's own
-  // prerequisites (e.g. all three fuses + the connector already transformed) actually hold.
+  // prerequisites actually hold.
   if (!checkTransformCondition(rule.conditions, state, ctx.scenesById)) return state;
-  // Idempotent: each (scene, object) gets its automatic chain applied once, following links forward.
-  if (ctx.visited.has(`${scopeId}|${obj.id}`)) return state;
-  ctx.visited.add(`${scopeId}|${obj.id}`);
-
-  const targetIdx = Math.max(current, idx);
-  const changed =
-    targetIdx !== current ||
-    (rule.grantsItem && !state.inventory.includes(rule.grantsItem)) ||
-    (rule.triggersDiscovery && !(state.discoveredObjects[scopeId] ?? []).includes(obj.id));
-  if (!changed) return state;
+  // Idempotent: each (scope, object) gets its automatic chain applied once, following links forward.
+  const vKey = `${scopeId}|${obj.id}|${idx}`;
+  if (ctx.visited.has(vKey)) return state;
+  ctx.visited.add(vKey);
 
   let next = state;
   if (rule.grantsItem && !next.inventory.includes(rule.grantsItem)) {
@@ -384,7 +398,8 @@ function applyEffect(state: SessionState, eff: TransformEffect, triggerSceneId: 
       next = { ...next, discoveredObjects: { ...next.discoveredObjects, [scopeId]: [...d, obj.id] } };
     }
   }
-  next = { ...next, transformsApplied: { ...(next.transformsApplied ?? {}), [obj.id]: targetIdx } };
+  next = markFired(next, obj.id, [idx]);
+  if (next === state) return state;
   pushMsg(ctx, rule.newMessage);
   // The auto-transformed object may itself carry effects → the engine follows them recursively.
   if (rule.effects?.length) next = applyEffects(next, rule.effects, scopeId, ctx.scenesById).state;
