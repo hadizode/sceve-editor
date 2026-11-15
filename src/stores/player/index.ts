@@ -42,6 +42,48 @@ export const usePlayerStore = create<PlayerState>()((...a) => ({
   closeNumpad: () => {
     a[0]((s) => ({ numpadOpen: false, numpadObjectId: null, selectedItem: null }));
   },
+  typeDigit: (padId: string, digit: string, cells: number) => {
+    a[0]((s) => {
+      const cur = [...(s.session?.state.numpadTyped?.[padId] ?? [])];
+      if (cur.length >= cells) return s;
+      cur.push(digit);
+      return {
+        ...s,
+        session: s.session
+          ? {
+              ...s.session,
+              state: {
+                ...s.session.state,
+                numpadTyped: {
+                  ...s.session.state.numpadTyped,
+                  [padId]: cur,
+                },
+              },
+            }
+          : s.session,
+      };
+    });
+  },
+  backspaceDigit: (padId: string) => {
+    a[0]((s) => {
+      const cur = (s.session?.state.numpadTyped?.[padId] ?? []).slice(0, -1);
+      return {
+        ...s,
+        session: s.session
+          ? {
+              ...s.session,
+              state: {
+                ...s.session.state,
+                numpadTyped: {
+                  ...s.session.state.numpadTyped,
+                  [padId]: cur,
+                },
+              },
+            }
+          : s.session,
+      };
+    });
+  },
 }));
 
 export type { PlayerState };

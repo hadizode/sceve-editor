@@ -80,6 +80,7 @@ interface SceneObject {
   numpadColor?: string;          // hex key text color
   numpadBg?: string;             // hex key background color
   numpadSize?: number;           // key size in px (24-96)
+  numpadCode?: string;           // type mode: the code to type; with door, a correct code opens the door and enters the room
 }
 
 type HitShape = { kind: 'box' } | { kind: 'polygon'; points: Pt[] }; // points normalized 0..1

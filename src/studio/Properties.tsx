@@ -170,8 +170,10 @@ export function PropertiesPanel() {
       {!isDoor && <MotionSection obj={obj} ctx={ctx} />}
 
       {isDoor ? (
-        // A door only has door settings.
-        <DoorSection obj={obj} set={set} />
+        <>
+          <NumsPadSection obj={obj} ctx={ctx} />
+          <DoorSection obj={obj} set={set} />
+        </>
       ) : (
         <>
           <InteractionSection obj={obj} ctx={ctx} />
@@ -559,6 +561,21 @@ function NumsPadSection({ obj, ctx }: { obj: SceneObject; ctx: Ctx }) {
               numeric transform rule in order.
             </p>
           </Field>
+
+          {mode === 'type' && !forcePick && (
+            <Field label="Code (digits to type)">
+              <input
+                className={inputCls}
+                inputMode="numeric"
+                placeholder="158"
+                value={obj.numpadCode ?? ''}
+                onChange={(e) => set({ numpadCode: e.target.value.replace(/\D/g, '').slice(0, 12) || undefined })}
+              />
+              <p className="text-[10px] text-gray-500">
+                Taps fill the slots in order. A correct code opens this sprite's door and moves the player to the target room. Every digit must be inside the key range above.
+              </p>
+            </Field>
+          )}
 
           <div className="grid grid-cols-2 gap-1.5">
             <Field label="Number range from">

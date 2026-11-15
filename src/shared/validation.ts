@@ -31,6 +31,7 @@ export function obtainableItems(scenes: Scene[]): Set<string> {
           for (let n = lo; n <= hi; n++) s.add(String(n));
         }
       }
+      if (o.numpad && o.numpadCode) s.add(o.numpadCode);
     }
   }
   return s;
@@ -172,6 +173,14 @@ export function validateProject(
             at(`"${o.name}" transform ${i + 1} position condition #${ci + 1} points at object "${c.objectId || '?'}" that does not exist`, 'error', top);
           else if (!target.motion)
             at(`"${o.name}" transform ${i + 1} waits for "${target.name}" to reach a position/click step, but it has no motion — it never moves`, 'warning', top);
+        });
+        // Numpad display prerequisites must reference a real numpad sprite with enough cells.
+        t.conditions?.displays?.forEach((d, di) => {
+          const pad = all.find((x) => x.id === d.padId);
+          if (!pad?.numpad)
+            at(`"${o.name}" transform ${i + 1} display condition #${di + 1} needs a numpad sprite`, 'error', top);
+          else if (d.index >= (pad.numpadCells ?? 3))
+            at(`"${o.name}" transform ${i + 1} display condition #${di + 1} cell ${d.index + 1} does not exist (pad has ${pad.numpadCells ?? 3})`, 'error', top);
         });
         // Toggle only works on the last click rule of an object; auto-apply rules never toggle.
         if (t.toggle && (i !== (o.transforms?.length ?? 0) - 1 || t.conditions?.autoApply)) {

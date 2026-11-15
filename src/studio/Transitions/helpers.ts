@@ -13,12 +13,17 @@ export const short = (s?: string, n = 26) =>
 export const shortName = short;
 
 export const hasLists = (c?: TransformCondition) =>
-  !!c && (!!c.transformedObjects?.length || !!c.itemsInInventory?.length || !!c.positions?.length);
+  !!c &&
+  (!!c.transformedObjects?.length ||
+    !!c.itemsInInventory?.length ||
+    !!c.positions?.length ||
+    !!c.displays?.length);
 
 export const condCount = (c?: TransformCondition) =>
   (c?.transformedObjects?.length ?? 0) +
   (c?.itemsInInventory?.length ?? 0) +
-  (c?.positions?.length ?? 0);
+  (c?.positions?.length ?? 0) +
+  (c?.displays?.length ?? 0);
 
 /** Merge a patch into the condition; collapse to undefined only when nothing at all is left. */
 export function mergeCond(
@@ -26,7 +31,7 @@ export function mergeCond(
   patch: Partial<TransformCondition>
 ): TransformCondition | undefined {
   const next: TransformCondition = { ...c, ...patch };
-  (['transformedObjects', 'itemsInInventory', 'positions'] as const).forEach((k) => {
+  (['transformedObjects', 'itemsInInventory', 'positions', 'displays'] as const).forEach((k) => {
     if (!next[k]?.length) delete next[k];
   });
   if (!next.autoApply) delete next.autoApply;

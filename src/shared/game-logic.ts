@@ -46,6 +46,43 @@ function findViewHolder(objects: SceneObject[], objectId: string): SceneObject |
  * "A is on click N (mod M)" — e.g. a clock hand whose 3rd click (90°) completes a circuit.
  * Empty list = always true; every requirement must hold (logical AND).
  */
+/** Numpad digit display prerequisites: each entry requires that cell `index` of pad `padId` shows `digit`. */
+export function checkDisplays(d: TransformCondition['displays'] | undefined, s: SessionState): boolean {
+  return (d ?? []).every((x) => s.numpadTyped?.[x.padId]?.[x.index] === x.digit);
+}
+
+/**
+ * When a numpad digit changes, any `autoApply` rule whose `conditions.displays` prerequisite
+ * no longer holds must be un-fired so its transform reverts and the new matching rule can fire.
+ * Called at the start of evaluateAutoTransforms on every state change.
+ */
+export function unfireStaleDisplayRules(state: SessionState, scenesById: Record<string, Scene>): SessionState {
+  let s = state;
+  for (const sc of Object.values(scenesById)) {
+    for (const o of allObjectsOf(sc)) {
+      const stale = (o.transforms ?? [])
+        .map((r, i) => ({ r, i }))
+        .filter(
+          ({ r, i }) =>
+            r.conditions?.displays?.length && firedOf(s, o.id).includes(i) && !checkDisplays(r.conditions.displays, s),
+        )
+        .map(({ i }) => i);
+      if (!stale.length) continue;
+      const keep = firedOf(s, o.id).filter((i) => !stale.includes(i));
+      s = {
+        ...s,
+        rulesFired: { ...(s.rulesFired ?? {}), [o.id]: keep },
+        transformsApplied: { ...(s.transformsApplied ?? {}), [o.id]: keep.length ? Math.max(...keep) : -1 },
+      };
+    }
+  }
+  return s;
+}
+
+/** Coordinate-aware gating: "a point of object A (after its rotation motion) reached X/Y" or
+ * "A is on click N (mod M)" — e.g. a clock hand whose 3rd click (90°) completes a circuit.
+ * Empty list = always true; every requirement must hold (logical AND).
+ */
 export function checkPositions(reqs: PositionReq[] | undefined, state: SessionState, scenesById?: Record<string, Scene>): boolean {
   if (!reqs?.length) return true;
   if (!scenesById) return false;
@@ -162,6 +199,7 @@ export function checkTransformCondition(
       if (!prereqVisible(req, state, scenesById, depth + 1)) return false;
     }
   }
+  if (!checkDisplays(cond.displays, state)) return false;
   return true;
 }
 
@@ -198,6 +236,7 @@ export function checkConditionForDisplay(
     if (!prereqVisible(req, state, scenesById, depth)) return false;
   }
   if (!checkPositions(cond.positions, state, scenesById)) return false;
+  if (!checkDisplays(cond.displays, state)) return false;
   return true;
 }
 
@@ -229,7 +268,8 @@ export function evaluateAutoTransforms(
   else for (const sc of Object.values(scenesById)) addScene(sc);
   if (!candidates.length) return { state, messages: [] };
 
-  let s = state;
+  // Un-fire any autoApply rule whose displays prerequisite no longer holds (digit changed).
+  let s = unfireStaleDisplayRules(state, scenesById);
   const messages: string[] = [];
   // Loop until stable (max passes guard against pathological cycles).
   for (let pass = 0; pass < candidates.length + 2; pass++) {
@@ -240,7 +280,9 @@ export function evaluateAutoTransforms(
       // single pass instead of gating each other one index at a time.
       const hits: { index: number; rule: TransformRule }[] = [];
       for (const [index, rule] of (obj.transforms ?? []).entries()) {
-        if (firedOf(s, obj.id).includes(index)) continue;
+        if (firedOf(s, obj.id).includes(index)) {
+          if (!rule.repeatable || (s.transformsApplied?.[obj.id] ?? -1) === index) continue;
+        }
         if (!rule.conditions?.autoApply || rule.toggle || rule.requiresItem) continue;
         const cond = rule.conditions;
         let ok = true;
@@ -252,6 +294,7 @@ export function evaluateAutoTransforms(
         }
         // Coordinate-aware gating uses the LIVE step counter `s` (motion clicks counted so far).
         if (ok && !checkPositions(cond.positions, s, scenesById)) ok = false;
+        if (ok && !checkDisplays(cond.displays, s)) ok = false;
         if (!ok) continue;
         hits.push({ index, rule });
       }
@@ -295,6 +338,7 @@ export function conditionFailMessage(cond: TransformCondition | undefined, state
     if (!firedOf(state, req.objectId).includes(req.minRule ?? 0)) return '⏳ هنوز همه شرایط فراهم نشده — اول بقیه موارد را فعال کنید';
   }
   if (!checkPositions(cond.positions, state, scenesById)) return '⏳ هنوز همه شرایط فراهم نشده — موقعیت درست نیست';
+  if (!checkDisplays(cond.displays, state)) return '⏳ هنوز همه شرایط فراهم نشده — رقم نمایشگر درست نیست';
   return '';
 }
 

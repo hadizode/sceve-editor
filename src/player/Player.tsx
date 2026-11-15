@@ -458,6 +458,13 @@ function ObjSprite({
       return;
     }
 
+    const isCodeLock = obj.numpad && obj.numpadMode === 'type' && !!obj.numpadCode && obj.numpadTrigger !== 'pickup';
+    const solved = state.discoveredObjects[viewId || sceneId]?.includes(obj.id) || (state.openDoors ?? []).includes(obj.id);
+    if (isCodeLock && !solved && !selectedItem) {
+      openNumpad(obj.id, viewId);
+      return;
+    }
+
     // Numpad object: opening the pad is additive — it never blocks the sprite's own click
     // behaviour (message, digit, grantsItem, view, pickup, door). With trigger 'click' the pad
     // opens when the sprite is clicked; with trigger 'pickup' it opens right after pickup
@@ -1099,6 +1106,8 @@ function NumsPadUI() {
   const numpadObjectId = usePlayerStore((s) => s.numpadObjectId);
   const numpadViewId = usePlayerStore((s) => s.numpadViewId);
   const selectedItem = usePlayerStore((s) => s.selectedItem);
+  const typeDigit = usePlayerStore((s) => s.typeDigit);
+  const backspaceDigit = usePlayerStore((s) => s.backspaceDigit);
   const closeNumpad = usePlayerStore((s) => s.closeNumpad);
   const selectItem = usePlayerStore((s) => s.selectItem);
   // The zustand `PlayerState` interface (in `src/stores/player/state.ts`, which must not be touched)
@@ -1120,6 +1129,8 @@ function NumsPadUI() {
   const mode = sourceObj.numpadTrigger === 'pickup' || sourceObj.pickupable
     ? 'pick'
     : (sourceObj.numpadMode ?? 'pick');
+  const code = mode === 'type' ? sourceObj.numpadCode : undefined;
+  const cells = sourceObj.numpadCells ?? 3;
   const min = sourceObj.numpadMin ?? 1;
   const max = sourceObj.numpadMax ?? 9;
   const font = sourceObj.numpadFont ?? 'Vazirmatn';
@@ -1129,19 +1140,12 @@ function NumsPadUI() {
 
   const selected = selectedItem && /^\d+$/.test(selectedItem) ? selectedItem : null;
   const state = session.state;
-  const fired = firedOf(state, numpadObjectId);
-
-  // Type mode: one slot per transform rule whose `requiresItem` is numeric.
-  const numericRules = (sourceObj.transforms ?? [])
-    .map((t, j) => ({ t, j }))
-    .filter(({ t }) => /^\d+$/.test(t.requiresItem ?? ''));
+  const typed = state.numpadTyped?.[numpadObjectId] ?? [];
 
   const pressKey = (n: string) => {
-    if (mode === 'type') {
-      useItemOnObject(n, numpadObjectId, numpadViewId ?? undefined);
-    } else {
-      selectItem(selected === n ? null : n);
-    }
+    if (code) return;
+    if (mode === 'type') typeDigit(numpadObjectId, n, cells);
+    else selectItem(selected === n ? null : n);
   };
 
   return (
@@ -1161,19 +1165,24 @@ function NumsPadUI() {
         </button>
       </div>
 
-      {mode === 'type' && numericRules.length > 0 && (
-        <div className="flex gap-1.5">
-          {numericRules.map(({ t, j }) => {
-            const filled = fired.includes(j);
-            return (
-              <div
-                key={j}
-                className="w-6 h-6 rounded border flex items-center justify-center text-[10px] text-gray-400 bg-black/20"
-              >
-                {filled ? t.requiresItem : ''}
-              </div>
-            );
-          })}
+      {code && (
+        <div className="flex items-center gap-1.5" dir="ltr">
+          {code.split('').map((_, i) => (
+            <div key={i} className="w-7 h-8 rounded border border-gray-500 flex items-center justify-center text-sm font-bold bg-black/30">
+              {typed[i] ?? ''}
+            </div>
+          ))}
+          <button type="button" onClick={() => backspaceDigit(numpadObjectId)} className="px-2 h-8 rounded bg-red-900/40 text-xs">⌫</button>
+        </div>
+      )}
+      {!code && mode === 'type' && (
+        <div className="flex items-center gap-1.5" dir="ltr">
+          {Array.from({ length: cells }, (_, i) => (
+            <div key={i} className="w-7 h-8 rounded border border-gray-500 flex items-center justify-center text-sm font-bold bg-black/30">
+              {typed[i] ?? ''}
+            </div>
+          ))}
+          <button type="button" onClick={() => backspaceDigit(numpadObjectId)} className="px-2 h-8 rounded bg-red-900/40 text-xs">⌫</button>
         </div>
       )}
 

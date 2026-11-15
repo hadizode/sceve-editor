@@ -870,6 +870,7 @@ interface PlayerState {
   numpadOpen: boolean;
   numpadObjectId: string | null;
   numpadViewId: string | null;
+  numpadTyped: string;
   toast: string | null;
 
   loadFromStudio: () => void;
@@ -877,8 +878,12 @@ interface PlayerState {
   resetGame: () => void;
   setPlayerReady: (telegramId?: string) => void;
   selectItem: (id: string | null) => void;
+  typeNumpadDigit: (digit: string) => void;
+  backspaceNumpad: () => void;
   openNumpad: (objectId: string, viewId?: string) => void;
   closeNumpad: () => void;
+  typeDigit: (padId: string, digit: string, cells: number) => void;
+  backspaceDigit: (padId: string) => void;
   setToast: (t: string | null) => void;
   switchScene: (id: string) => void;
   clickObject: (objectId: string, viewId?: string) => void;
@@ -961,7 +966,13 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     set({
       session: { ...g.session, state: s },
       ...(sceneChanged
-        ? { numpadOpen: false, numpadObjectId: null, numpadViewId: null, selectedItem: null }
+        ? {
+            numpadOpen: false,
+            numpadObjectId: null,
+            numpadViewId: null,
+            selectedItem: null,
+            numpadTyped: '',
+          }
         : {}),
     });
     persistPlayer(get());
@@ -984,6 +995,7 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     numpadOpen: false,
     numpadObjectId: null,
     numpadViewId: null,
+    numpadTyped: '',
     toast: null,
 
     /** Load the current project from the studio store (live, unsaved edits included). */
@@ -1093,9 +1105,113 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     },
 
     selectItem: (id) => set({ selectedItem: id }),
+    backspaceNumpad: () => set((s) => {
+      const typed = s.numpadTyped.slice(0, -1);
+      // Persist to session state so `displays` conditions can read live digits.
+      const g = get();
+      if (g.session && g.numpadObjectId) {
+        const cur = g.session.state.numpadTyped?.[g.numpadObjectId] ?? [];
+        cur.pop();
+        const nextState = {
+          ...g.session.state,
+          numpadTyped: { ...g.session.state.numpadTyped, [g.numpadObjectId]: cur },
+        };
+        commit(nextState);
+      }
+      return { numpadTyped: typed };
+    }),
+    /** Type mode with a code: each tap fills the next empty slot; when full, check the code. */
+    typeNumpadDigit: (digit: string) => {
+      const g = get();
+      const scene = sceneOfCurrent();
+      if (!g.session || !scene || !g.numpadObjectId) return;
+      const obj = viewObjs(scene, g.numpadViewId ?? undefined).find((o) => o.id === g.numpadObjectId);
+      const code = obj?.numpadCode;
+      if (!obj || !code || g.numpadTyped.length >= code.length) return; // full = waiting for the check
+      const typed = g.numpadTyped + digit;
+      set({ numpadTyped: typed });
+
+      // Persist each digit to session state so `displays` conditions can read live digits.
+      const cur = g.session.state.numpadTyped?.[g.numpadObjectId] ?? [];
+      const nextState = {
+        ...g.session.state,
+        numpadTyped: { ...g.session.state.numpadTyped, [g.numpadObjectId]: [...cur, digit] },
+      };
+      commit(nextState);
+
+      if (typed.length < code.length) return;
+
+      // let the last digit show for a moment, then check
+      window.setTimeout(() => {
+        const g2 = get();
+        if (!g2.session || g2.numpadObjectId !== obj.id) return;
+        if (typed !== code) {
+          set({ numpadTyped: '' });
+          say('❌ رمز اشتباه است');
+          return;
+        }
+        const sc = sceneOfCurrent();
+        if (!sc) return;
+        const viewId = g2.numpadViewId ?? undefined;
+        const objs = viewObjs(sc, viewId);
+        const scope = viewId || sc.id;
+        let s: SessionState = g2.session.state;
+
+        // 1) Rules of the keypad that wait for this code (requiresItem = "158"):
+        //    their effects can unlock the handle, swap a background, transform things, ...
+        const res = applyItemToObject(s, scope, obj.id, code, objs, { scenesById: g2.scenes });
+        if (res.success) {
+          s = res.newState;
+          say(res.message, 5000);
+        } else if (!obj.door) {
+          say(obj.message || '🔓 رمز درست است');
+        }
+
+        // 2) Remember the lock is solved (the pad won't reopen).
+        const d = s.discoveredObjects[scope] ?? [];
+        if (!d.includes(obj.id)) s = { ...s, discoveredObjects: { ...s.discoveredObjects, [scope]: [...d, obj.id] } };
+
+        // 3) Optional: the keypad itself is a door.
+        if (obj.door) {
+          s = { ...s, openDoors: [...new Set([...(s.openDoors ?? []), obj.id])] };
+          const rooms = Object.values(g2.scenes).filter((r) => r.projectId === g2.session!.projectId);
+          const door = tryEnterDoor(s, obj, rooms);
+          if (door?.entered) s = door.newState;
+          if (door?.message) say(door.message, 4000);
+        }
+
+        commit(s);
+        get().closeNumpad();
+      }, 350);
+    },
+    /** Append a digit to numpad `padId` up to `cells` slots (type mode). */
+    typeDigit: (padId: string, digit: string, cells: number) => {
+      const g = get();
+      if (!g.session) return;
+      const cur = [...(g.session.state.numpadTyped?.[padId] ?? [])];
+      if (cur.length >= cells) return;
+      cur.push(digit);
+      commit({ ...g.session.state, numpadTyped: { ...(g.session.state.numpadTyped ?? {}), [padId]: cur } });
+    },
+    /** Remove the last filled cell of numpad `padId`. */
+    backspaceDigit: (padId: string) => {
+      const g = get();
+      if (!g.session) return;
+      const cur = (g.session.state.numpadTyped?.[padId] ?? []).slice(0, -1);
+      commit({ ...g.session.state, numpadTyped: { ...(g.session.state.numpadTyped ?? {}), [padId]: cur } });
+    },
     openNumpad: (objectId: string, viewId?: string) =>
-      set({ numpadOpen: true, numpadObjectId: objectId, numpadViewId: viewId ?? null, selectedItem: null }),
-    closeNumpad: () => set({ numpadOpen: false, numpadObjectId: null, numpadViewId: null, selectedItem: null }),
+      set((s) => {
+        const persisted = s.session?.state.numpadTyped?.[objectId] ?? [];
+        return {
+          numpadOpen: true,
+          numpadObjectId: objectId,
+          numpadViewId: viewId ?? null,
+          selectedItem: null,
+          numpadTyped: s.numpadObjectId === objectId ? s.numpadTyped : persisted.join(''),
+        };
+      }),
+    closeNumpad: () => set({ numpadOpen: false, numpadObjectId: null, numpadViewId: null, selectedItem: null, numpadTyped: '' }),
     setToast: say,
 
     switchScene: (id) => {

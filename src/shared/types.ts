@@ -143,6 +143,8 @@ export interface TransformCondition {
    * lights up immediately), with no extra click and no effect explicitly targeting this object.
    */
   autoApply?: boolean;
+  /** Numpad digit display prerequisites: each entry requires that cell `index` of pad `padId` shows `digit`. */
+  displays?: { padId: string; index: number; digit: string }[];
 }
 
 export interface TransformRule {
@@ -288,6 +290,8 @@ export interface SessionState {
   motionSteps?: Record<string, number>;
   /** Object ids that own a close-up view which has been opened at least once. */
   unlockedViews?: string[];
+  /** padId -> digits typed into each numpad cell (type mode), e.g. { "pad-1": ["1", "5", "8"] }. */
+  numpadTyped?: Record<string, string[]>;
 }
 
 export interface Session {
@@ -313,6 +317,7 @@ export function createSessionState(firstSceneId: string): SessionState {
     usable: {},
     motionSteps: {},
     unlockedViews: [],
+    numpadTyped: {},
   };
 }
 
@@ -407,6 +412,10 @@ export interface SceneObject {
   numpadBg?: string;
   /** Numpad key size in px (24-96). */
   numpadSize?: number;
+  /** Type mode: digits the player must type (e.g. "158"). Correct code → this sprite's door opens and the player walks through. */
+  numpadCode?: string;
+  /** Number of display cells in type mode (default 3, clamped 1-10). */
+  numpadCells?: number;
 }
 
 export interface Scene {
@@ -702,12 +711,25 @@ function normalizeConditions(raw: any): TransformCondition | undefined {
     : [];
   const items = strList(raw.itemsInInventory);
   const positions = normalizePositions(raw.positions);
-  if (!objs.length && !items.length && !positions?.length) return undefined;
+  const displays = Array.isArray(raw.displays)
+    ? raw.displays
+        .filter(
+          (d: any) =>
+            d && str(d.padId) && Number.isInteger(d.index) && d.index >= 0 && /^\d+$/.test(str(d.digit)),
+        )
+        .map((d: any) => ({
+          padId: str(d.padId),
+          index: d.index as number,
+          digit: str(d.digit),
+        }))
+    : [];
+  if (!objs.length && !items.length && !positions?.length && !displays.length) return undefined;
   return {
     transformedObjects: objs.length ? objs : undefined,
     itemsInInventory: items.length ? items : undefined,
     positions,
     autoApply: raw.autoApply === true ? true : undefined,
+    displays: displays.length ? displays : undefined,
   };
 }
 
@@ -896,6 +918,8 @@ export function normalizeObject(raw: any, reg: SpriteRegistry, depth = 0): Scene
     numpadColor: isHex(o.numpadColor) ? o.numpadColor : undefined,
     numpadBg: isHex(o.numpadBg) ? o.numpadBg : undefined,
     numpadSize: clamp(Math.round(num(o.numpadSize, 40)), 24, 96),
+    numpadCode: /^\d{1,12}$/.test(str(o.numpadCode)) ? str(o.numpadCode) : undefined,
+    numpadCells: clamp(Math.round(num(o.numpadCells, 3)), 1, 10),
     ...(twoState ? { twoState } : {}),
   };
 }

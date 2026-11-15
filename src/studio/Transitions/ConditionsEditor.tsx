@@ -20,6 +20,8 @@ export function ConditionsEditor({
   const setC = (patch: Partial<TransformCondition>) => onChange(mergeCond(c, patch));
   const tos = c?.transformedObjects ?? [];
   const pos = c?.positions ?? [];
+  const disp = c?.displays ?? [];
+  const pads = objs.filter((t) => t.obj.numpad);
   const used = new Set(tos.map((e) => `${e.sceneId ?? ''}|${e.objectId}`));
   const candidates = objs.filter((t) => (!excludeObjId || t.obj.id !== excludeObjId) && t.obj.transforms?.length);
   return (
@@ -93,6 +95,62 @@ export function ConditionsEditor({
           <Icon name="plus" size={12} /> Sprite must reach a position
         </button>
         <Hint>Uses the sprite’s live position after its Motion rotations. 🔄 = has Motion.</Hint>
+      </Sub>
+
+      <Sub title="Numpad display shows" count={disp.length} defaultOpen={disp.length > 0}>
+        {disp.map((d, i) => (
+          <div key={i} className="flex gap-1 items-center">
+            <select
+              className={`${inputCls} flex-1`}
+              value={d.padId}
+              onChange={(e) =>
+                setC({
+                  displays: disp.map((x, j) => (j === i ? { ...x, padId: e.target.value } : x)),
+                })
+              }
+            >
+              <option value="">— numpad —</option>
+              {pads.map((t) => (
+                <option key={t.key} value={t.obj.id}>
+                  {short(t.sceneTitle)} › {short(t.objTitle)}
+                </option>
+              ))}
+            </select>
+            <span className="text-[10px] text-gray-400 shrink-0">cell</span>
+            <div className="w-11 shrink-0">
+              <NumInput
+                value={d.index + 1}
+                min={1}
+                onChange={(n) =>
+                  setC({
+                    displays: disp.map((x, j) =>
+                      j === i ? { ...x, index: Math.max(0, Math.floor(n) - 1) } : x
+                    ),
+                  })
+                }
+              />
+            </div>
+            <span className="text-[10px] text-gray-400 shrink-0">=</span>
+            <div className="w-11 shrink-0">
+              <NumInput
+                value={Number(d.digit)}
+                min={0}
+                onChange={(n) =>
+                  setC({
+                    displays: disp.map((x, j) =>
+                      j === i ? { ...x, digit: String(Math.max(0, Math.floor(n))) } : x
+                    ),
+                  })
+                }
+              />
+            </div>
+            <IconButton icon="x" compact danger title="Remove" onClick={() => setC({ displays: disp.filter((_, j) => j !== i) })} />
+          </div>
+        ))}
+        <button className={`${btnCls} w-full`} onClick={() => setC({ displays: [...disp, { padId: '', index: 0, digit: '0' }] })}>
+          <Icon name="plus" size={12} /> Display must show…
+        </button>
+        <Hint>Each row requires that cell `index` of numpad `padId` currently shows `digit`.</Hint>
       </Sub>
     </div>
   );

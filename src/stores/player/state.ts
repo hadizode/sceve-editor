@@ -22,6 +22,10 @@ export interface PlayerState {
   selectItem: (itemId: string | null) => void;
   openNumpad: (objectId: string) => void;
   closeNumpad: () => void;
+  /** Append a digit to numpad `padId` up to `cells` slots (type mode). */
+  typeDigit: (padId: string, digit: string, cells: number) => void;
+  /** Remove the last filled cell of numpad `padId`. */
+  backspaceDigit: (padId: string) => void;
   setToast: (msg: string | null) => void;
   startGame: () => void;
   setPlayerReady: () => void;
