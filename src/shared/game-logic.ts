@@ -115,7 +115,10 @@ export function pendingRules(
   const fired = firedOf(state, obj.id);
   const hits: { index: number; rule: TransformRule }[] = [];
   for (const [index, rule] of (obj.transforms ?? []).entries()) {
-    if (fired.includes(index)) continue;
+    if (fired.includes(index)) {
+      // non-repeatable: once only. Repeatable: skip only if it is the look already showing.
+      if (!rule.repeatable || (state.transformsApplied?.[obj.id] ?? -1) === index) continue;
+    }
     const free = !rule.requiresItem;
     if (free && itemId !== null) continue;
     if (!free && rule.requiresItem !== itemId) continue;

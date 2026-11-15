@@ -1218,7 +1218,8 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
       if (res.message) say(res.message, res.success ? 5000 : 3000);
       if (res.success) {
         commit(res.newState);
-        set({ selectedItem: null });
+        // numpad numbers are virtual items: keep the number selected so the player can reuse it
+        set({ selectedItem: itemId && /^\d+$/.test(itemId) ? itemId : null });
       }
     },
 

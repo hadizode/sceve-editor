@@ -146,6 +146,8 @@ export interface TransformCondition {
 }
 
 export interface TransformRule {
+  /** Can fire again after it already fired (e.g. numpad: each number swaps the look). */
+  repeatable?: boolean;
   requiresItem: string;
   /** New sprite for the object after this rule fires — can be any image. */
   newSpriteId?: string;
@@ -737,6 +739,7 @@ function normalizeTransform(r: any, reg: SpriteRegistry): TransformRule {
   // Tolerant normalization: older data may store a bare sprite id (`spr-…`) instead of a full
   // `sprite:` ref — the registry promotes it and adopts the sprite so it resolves to the right image.
   return {
+    repeatable: r?.repeatable === true ? true : undefined,
     requiresItem: str(r?.requiresItem),
     newSpriteId: normalizeSpriteValue(r?.newSpriteId ?? r?.newImageUrl, reg),
     newName: str(r?.newName) || undefined,

@@ -163,12 +163,9 @@ export function ThenBlock({ obj, rule, index, trigger, upd }: { obj: SceneObject
         </Field>
         {trigger === 'item' && (
           <label className="flex items-center gap-2 text-[11px] text-gray-300">
-            <input
-              type="checkbox"
-              checked={rule.consumesItem !== false}
-              onChange={(e) => upd({ consumesItem: e.target.checked })}
-            />
-            Used item is consumed
+            <input type="checkbox" checked={!!rule.repeatable}
+              onChange={(e) => upd({ repeatable: e.target.checked ? true : undefined })} />
+            Repeatable (can fire again; the latest fired rule is the look shown)
           </label>
         )}
         <label className="flex items-center gap-2 text-[11px] text-gray-300">
