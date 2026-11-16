@@ -35,7 +35,7 @@ function Toast() {
 
   return (
     <div
-      className="fixed top-14 left-1/2 -translate-x-1/2 z-[100] pointer-events-none"
+      className="fixed top-14 safe-top left-1/2 -translate-x-1/2 z-[100] pointer-events-none"
       dir="rtl"
     >
       <div className="bg-surface-lighter/95 border border-indigo-500/40 text-white text-sm px-4 py-2.5 rounded-xl shadow-2xl max-w-[80vw]">
@@ -666,8 +666,11 @@ function SceneStage({
     const el = wrapRef.current;
     if (!el) return;
 
-    const compute = () =>
-      setFit(Math.min(el.clientWidth / dimW, el.clientHeight / dimH, 2));
+    const compute = () => {
+      const contain = Math.min(el.clientWidth / dimW, el.clientHeight / dimH);
+      // Rooms fill the screen (cover); close-up views stay contained.
+      setFit(view ? Math.min(contain, 2) : Math.max(el.clientWidth / dimW, el.clientHeight / dimH));
+    };
 
     compute();
 
@@ -1445,8 +1448,9 @@ export default function Player({ projectName }: { projectName: string }) {
     <div className="h-full flex flex-col" dir="rtl">
       <Toast />
 
-      {/* Room tabs */}
-      <div className="flex items-center gap-1 px-2 py-1.5 bg-surface border-b border-gray-700 overflow-x-auto flex-shrink-0">
+      {!isPlay && (
+        // Room tabs (hidden in play-only mode — the room fills the whole screen)
+        <div className="flex items-center gap-1 px-2 py-1.5 bg-surface border-b border-gray-700 overflow-x-auto flex-shrink-0">
         {sceneList.map((sc, i) => (
           <button
             key={sc.id}
@@ -1497,9 +1501,10 @@ export default function Player({ projectName }: { projectName: string }) {
           {confirmReset ? '⚠️ مطمئنید؟ دوباره بزنید' : '🔄 ریست'}
         </button>
       </div>
-
+        )}
+      
       {/* Stage */}
-      <div className="flex-1 min-h-0">
+      <div className={isPlay ? 'absolute inset-0' : 'flex-1 min-h-0'}>
         {tab === 'exit' ? (
           <FinalLock />
         ) : currentScene ? (
@@ -1522,7 +1527,7 @@ export default function Player({ projectName }: { projectName: string }) {
         )}
       </div>
 
-      <div className="relative w-full">
+      <div className={isPlay ? 'absolute bottom-0 left-0 right-0 z-20' : 'relative w-full'}>
         <SilentBoundary>
           <InventoryPanel />
         </SilentBoundary>

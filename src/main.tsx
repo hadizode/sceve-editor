@@ -2,6 +2,8 @@ import React, { Component, type ReactNode } from "react";
 import ReactDOM from "react-dom/client";
 import "./index.css";
 import App from "./App.tsx";
+import PlayApp from "./PlayApp.tsx";
+const Root = (import.meta as any).env?.VITE_PLAY_ONLY ? PlayApp : App;
 
 // If anything throws during render/mount, show the error instead of a silent blank page.
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -40,6 +42,6 @@ if (!rootEl) {
 
 ReactDOM.createRoot(rootEl).render(
   <ErrorBoundary>
-    <App />
+    <Root />
   </ErrorBoundary>
 );

@@ -1,61 +1,46 @@
-import React, { useEffect } from 'react';
-import ReactDOM from 'react-dom/client';
-import { initTelegram } from './telegram';
-import './index.css';
+import React, { useEffect, useState } from 'react';
 import Player from './player/Player';
 import { useStudioStore } from './stores/store';
 import { Toasts } from './shared/notify';
 
-/** Persisted player session key (shared with `src/stores/store.ts`). */
-const PLAYER_KEY = 'escape-player-v2';
-
 export default function PlayApp() {
-  const selectProject = useStudioStore((s) => s.selectProject);
-  const currentProjectId = useStudioStore((s) => s.currentProjectId);
   const hydrated = useStudioStore((s) => s.hydrated);
-  const projectName = useStudioStore(
-    (s) => s.projects.find((p) => p.id === s.currentProjectId)?.name ?? 'پروژه فعلی'
-  );
+  const [pid, setPid] = useState<string | null>(null);
+  const [err, setErr] = useState('');
 
-  // Init the Telegram Mini App bridge (safe to call outside Telegram; no-op there).
   useEffect(() => {
-    initTelegram();
+    const tg = (window as any).Telegram?.WebApp;
+    tg?.ready();
+    tg?.expand();
   }, []);
 
-  // Select the first (seed) project when no project is open yet.
   useEffect(() => {
-    if (currentProjectId) return;
-    const project = useStudioStore.getState().projects[0];
-    if (project) selectProject(project.id);
-  }, [selectProject, currentProjectId]);
+    if (!hydrated) return;
+    (async () => {
+      try {
+        const text = await (await fetch('/project.json')).text();
+        const id: string = JSON.parse(text).project.id;
+        const st = useStudioStore.getState();
+        // آماده‌سازی تازه: اگر نسخه قبلی از IndexedDB لود شده، حذفش کن تا id حفظ شود
+        if (st.projects.some((p) => p.id === id)) st.deleteProject(id);
+        const r = useStudioStore.getState().importBundle(text);
+        if (!r.ok) throw new Error(r.error);
+        useStudioStore.getState().selectProject(id);
+        setPid(id);
+      } catch (e) {
+        setErr((e as Error).message);
+      }
+    })();
+  }, [hydrated]);
 
-  if (!hydrated) {
-    return (
-      <div className="h-screen flex items-center justify-center text-gray-400 bg-gray-900" dir="rtl">
-        در حال بارگذاری…
-      </div>
-    );
-  }
-
-  if (!currentProjectId) return null;
-
-  // Play-only mode: every launch must start a fresh game with no saved progress.
-  // Drop any persisted session before <Player> mounts so it can never resume.
-  try {
-    localStorage.removeItem(PLAYER_KEY);
-  } catch {}
+  const name = useStudioStore((s) => s.projects.find((p) => p.id === pid)?.name ?? '');
 
   return (
-    <div className="h-screen flex flex-col bg-gray-900 text-white overflow-hidden" dir="rtl">
-      <div className="flex-1 min-h-0 relative overflow-hidden">
-        <Player key={currentProjectId} projectName={projectName} />
-      </div>
+    <div className="h-screen bg-gray-900 text-white" dir="rtl">
+      {err ? <p className="p-6 text-red-400">{err}</p>
+        : pid ? <Player key={pid} projectName={name} />
+        : <p className="p-6 text-gray-400">در حال بارگذاری…</p>}
       <Toasts />
     </div>
   );
-}
-
-const rootEl = document.getElementById('root');
-if (rootEl) {
-  ReactDOM.createRoot(rootEl).render(<PlayApp />);
 }
