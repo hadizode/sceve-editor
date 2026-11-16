@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 // ============ Player (Game) — plays the CURRENT studio project live ============
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import useImage from 'use-image';
@@ -16,6 +17,8 @@ import {
 } from '../shared/game-logic';
 import { findObject, allObjectsDeep } from '../shared/view-tree';
 import { NumPadKeys } from '../shared/NumPadKeys';
+import { clamp, clampPan, centroid, dist } from './gestures';
+import { useBackButton, hasTelegramBack } from '../telegram';
 
 /** Resolve a sprite/image ref to the concrete image URL ('' when the sprite has no image). */
 const spriteSrc = (
@@ -650,7 +653,21 @@ function SceneStage({
   const [fit, setFit] = useState(1);
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const dragRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+
+  // Active pointers keyed by pointerId (touch + mouse).
+  const pointers = useRef<Map<number, { x: number; y: number }>>(new Map());
+  // In-flight gesture: single-finger pan or two-finger pinch.
+  const gesture = useRef<{
+    mode: 'pan' | 'pinch';
+    start: { x: number; y: number };   // screen position where the gesture began
+    pan: { x: number; y: number };     // clamped pan when the gesture began
+    startScale: number;                // scale when the gesture began
+    c0: { x: number; y: number };      // gesture-start centroid (pinch) / start (pan)
+    startDist?: number;                // pinch: pointer distance at gesture start
+    started: boolean;                  // pan: moved past the pan threshold (capture + suppress click)
+  } | null>(null);
+  // Suppress the click that follows a drag that passed the pan threshold.
+  const suppressClick = useRef(false);
 
   // The current view owner is the last element of the stack.
   const current = openViews[openViews.length - 1];
@@ -658,9 +675,46 @@ function SceneStage({
   // the view dimensions instead of always fitting the room dimensions.
   const view: View | undefined = current ? findObject(scene.objects, current)?.view : undefined;
 
+  // Close one level of the close-up view stack: show the popped view's closeMessage
+  // (same as tapping ✕ in ViewOverlay), then return to the previous view or the room.
+  const say = usePlayerStore((s) => s.setToast);
+  const goBack = useCallback(() => {
+    setOpenViews((vs) => {
+      const popped = vs[vs.length - 1];
+      if (popped) {
+        const poppedView = findObject(scene.objects, popped)?.view;
+        if (poppedView?.closeMessage) say(poppedView.closeMessage);
+      }
+      return vs.slice(0, -1);
+    });
+  }, [scene, say]);
+
+  // Telegram header Back button: active whenever a close-up view is open.
+  useBackButton(openViews.length > 0, goBack);
+
   const dimW = view?.width ?? scene.width;
   const dimH = view?.height ?? scene.height;
   const zoom = fit * scale;
+
+  // Content size at a given zoom, matching the rendered content div (incl. view minima).
+  const contentSize = useCallback(
+    (z: number) => ({
+      w: Math.max(dimW * z, view ? 260 : 0),
+      h: Math.max(dimH * z, view ? 200 : 0),
+    }),
+    [dimW, dimH, view],
+  );
+
+  // Clamp pan so the content always covers the viewport; when the content is
+  // smaller than the viewport on an axis, center it on that axis instead.
+  const clampPanNow = useCallback(
+    (p: { x: number; y: number }, z: number) => {
+      const el = wrapRef.current;
+      if (!el) return p;
+      return clampPan(p, contentSize(z), { w: el.clientWidth, h: el.clientHeight });
+    },
+    [contentSize],
+  );
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -669,7 +723,10 @@ function SceneStage({
     const compute = () => {
       const contain = Math.min(el.clientWidth / dimW, el.clientHeight / dimH);
       // Rooms fill the screen (cover); close-up views stay contained.
-      setFit(view ? Math.min(contain, 2) : Math.max(el.clientWidth / dimW, el.clientHeight / dimH));
+      const nextFit = view ? Math.min(contain, 2) : Math.max(el.clientWidth / dimW, el.clientHeight / dimH);
+      setFit(nextFit);
+      // Keep the content covering the viewport after the viewport/content size changed.
+      setPan((p) => clampPanNow(p, nextFit * scale));
     };
 
     compute();
@@ -677,7 +734,7 @@ function SceneStage({
     const ro = new ResizeObserver(compute);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [dimW, dimH]);
+  }, [dimW, dimH, view, scale, clampPanNow]);
 
   // Reset zoom/pan whenever the current view owner changes.
   useEffect(() => {
@@ -693,9 +750,133 @@ function SceneStage({
   }, [scene.id]);
 
   const onWheel = useCallback((e: React.WheelEvent) => {
-    setScale((s) => Math.min(4, Math.max(0.5, s * (e.deltaY < 0 ? 1.1 : 0.9))));
-  }, []);
+    e.preventDefault();
+    const next = Math.min(4, Math.max(0.5, scale * (e.deltaY < 0 ? 1.1 : 0.9)));
+    setScale(next);
+    setPan((p) => clampPanNow(p, next));
+  }, [scale, clampPanNow]);
 
+
+  // ---------- pointer gestures: one-finger pan, two-finger pinch ----------
+
+  const onPointerDown = (e: React.PointerEvent<HTMLElement>) => {
+    suppressClick.current = false; // a new interaction starts; never carry stale suppression
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const ps = Array.from(pointers.current.values());
+    if (ps.length === 2) {
+      const c = centroid(ps);
+      const d = dist(ps[0], ps[1]);
+      gesture.current = {
+        mode: 'pinch',
+        start: c,
+        pan: { ...pan },
+        startScale: scale,
+        c0: c,
+        startDist: d,
+        started: false,
+      };
+    } else if (ps.length === 1) {
+      gesture.current = {
+        mode: 'pan',
+        start: { x: e.clientX, y: e.clientY },
+        pan: { ...pan },
+        startScale: scale,
+        c0: { x: e.clientX, y: e.clientY },
+        started: false,
+      };
+    } else {
+      gesture.current = null; // 3+ pointers: not supported
+    }
+  };
+
+  const onPointerMove = (e: React.PointerEvent<HTMLElement>) => {
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const ps = Array.from(pointers.current.values());
+    const el = wrapRef.current;
+    if (!el) return;
+    const vw = el.clientWidth;
+    const vh = el.clientHeight;
+
+    if (ps.length === 2) {
+      const g = gesture.current;
+      const c = centroid(ps);
+      if (!g || g.mode !== 'pinch') {
+        const d = dist(ps[0], ps[1]);
+        gesture.current = {
+          mode: 'pinch',
+          start: c,
+          pan: { ...pan },
+          startScale: scale,
+          c0: c,
+          startDist: d,
+          started: false,
+        };
+        return;
+      }
+      // Zoom anchored at the gesture centroid; centroid movement also pans.
+      const k = dist(ps[0], ps[1]) / (g.startDist ?? 1);
+      let next = g.startScale * k;
+      next = clamp(next, 1, 4);
+      const k2 = next / g.startScale;
+      const np = {
+        x: k2 * g.pan.x + (c.x - vw / 2) - k2 * (g.c0.x - vw / 2),
+        y: k2 * g.pan.y + (c.y - vh / 2) - k2 * (g.c0.y - vh / 2),
+      };
+      setScale(next);
+      setPan(clampPan(np, contentSize(next), { w: vw, h: vh }));
+      return;
+    }
+
+    if (ps.length === 1) {
+      const g = gesture.current;
+      const p = ps[0];
+      if (!g || g.mode !== 'pan') {
+        gesture.current = {
+          mode: 'pan',
+          start: p,
+          pan: { ...pan },
+          startScale: scale,
+          c0: p,
+          started: false,
+        };
+        return;
+      }
+      if (!g.started) {
+        // Pan only after the pointer moved more than 8 px; tap reaches sprites below that.
+        if (dist(p, g.start) > 8) {
+          g.started = true;
+          (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        }
+      } else {
+        const np = { x: g.pan.x + p.x - g.start.x, y: g.pan.y + p.y - g.start.y };
+        setPan(clampPan(np, contentSize(scale), { w: vw, h: vh }));
+      }
+      return;
+    }
+
+    gesture.current = null;
+  };
+
+  const onPointerUp = (e: React.PointerEvent<HTMLElement>) => {
+    const g = gesture.current;
+    pointers.current.delete(e.pointerId);
+    gesture.current = null;
+    suppressClick.current = g?.mode === 'pan' && g.started;
+  };
+
+  const onPointerCancel = (e: React.PointerEvent<HTMLElement>) => {
+    pointers.current.delete(e.pointerId);
+    gesture.current = null;
+    suppressClick.current = false;
+  };
+
+  // Capture-phase click: suppress the click that follows a threshold-crossing drag once.
+  const onClickCapture = (e: React.MouseEvent<HTMLElement>) => {
+    if (suppressClick.current) {
+      suppressClick.current = false;
+      e.stopPropagation();
+    }
+  };
 
   return (
     // wrapRef is the game VIEWPORT — the only element allowed to crop sprites.
@@ -703,25 +884,20 @@ function SceneStage({
       ref={wrapRef}
       className="relative w-full h-full overflow-hidden bg-black/40 touch-none"
       onWheel={onWheel}
-      onPointerDown={(e) => {
-        if ((e.target as HTMLElement).closest('[data-scene-content]')) return;
-        dragRef.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y };
-        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-      }}
-      onPointerMove={(e) => {
-        const d = dragRef.current;
-        if (!d) return;
-        setPan({ x: d.px + (e.clientX - d.x), y: d.py + (e.clientY - d.y) });
-      }}
-      onPointerUp={() => (dragRef.current = null)}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
+      onClickCapture={onClickCapture}
     >
       <div
         data-scene-content
-        className="absolute left-1/2 top-1/2 shadow-2xl"
+        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 shadow-2xl"
         style={{
           width: Math.max(dimW * zoom, view ? 260 : 0),
           height: Math.max(dimH * zoom, view ? 200 : 0),
-          transform: `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px))`,
+          transform: `translate3d(${pan.x}px, ${pan.y}px, 0)`,
+          willChange: 'transform',
         }}
       >
         {view ? (
@@ -761,13 +937,21 @@ function SceneStage({
       <div className="absolute bottom-2 left-2 flex gap-1 z-10" dir="ltr">
         <button
           className="w-8 h-8 rounded-lg bg-surface-light/90 border border-gray-700 text-sm"
-          onClick={() => setScale((s) => Math.min(4, s * 1.2))}
+          onClick={() => {
+            const next = Math.min(4, scale * 1.2);
+            setScale(next);
+            setPan((p) => clampPanNow(p, next));
+          }}
         >
           +
         </button>
         <button
           className="w-8 h-8 rounded-lg bg-surface-light/90 border border-gray-700 text-sm"
-          onClick={() => setScale((s) => Math.max(0.5, s / 1.2))}
+          onClick={() => {
+            const next = Math.max(0.5, scale / 1.2);
+            setScale(next);
+            setPan((p) => clampPanNow(p, next));
+          }}
         >
           −
         </button>
@@ -905,6 +1089,9 @@ function ViewOverlay({
   // the inventory — opening it once keeps it openable even if items are consumed later.
   const locked = required.length > 0 && !unlocked && required.some((i) => !state.inventory.includes(i));
   const say = usePlayerStore((s) => s.setToast);
+  // In Telegram the header Back button replaces ✕, so hide the close button and
+  // keep the title chip below the top safe area.
+  const tgBack = hasTelegramBack();
 
   if (locked) {
     return (
@@ -925,8 +1112,8 @@ function ViewOverlay({
   }
 
   return (
-    <div className="w-full h-full relative bg-surface border border-gray-700 rounded-xl">
-      <div className="absolute inset-0 overflow-hidden rounded-xl">
+    <div className="w-full h-full relative bg-surface">
+      <div className="absolute inset-0 overflow-hidden">
         <div
           className="absolute top-0 left-0"
           style={{
@@ -947,27 +1134,40 @@ function ViewOverlay({
         </div>
       </div>
 
-      <div
-        className="absolute top-2 right-2 left-2 flex items-center justify-between z-10"
-        dir="rtl"
-      >
-        <span className="bg-black/60 text-xs px-2 py-1 rounded-lg">{view.title}</span>
-        <button
-          className="bg-black/60 hover:bg-red-600/80 text-xs px-2.5 py-1 rounded-lg"
-          onClick={() => {
-            if (view.closeMessage) say(view.closeMessage);
-            onClose();
-          }}
+      {tgBack ? (
+        // Telegram shows its own header Back button: hide ✕ and keep the title chip
+        // below the top safe area so the header does not cover it.
+        <div className="absolute left-2 right-2 z-10" dir="rtl">
+          <div className="safe-top flex justify-end">
+            <span className="bg-black/60 text-xs px-2 py-1 rounded-lg">{view.title}</span>
+          </div>
+        </div>
+      ) : (
+        <div
+          className="absolute top-2 right-2 left-2 flex items-center justify-between z-10"
+          dir="rtl"
         >
-          ✕ بستن
-        </button>
-      </div>
+          <span className="bg-black/60 text-xs px-2 py-1 rounded-lg">{view.title}</span>
+          <button
+            className="bg-black/60 hover:bg-red-600/80 text-xs px-2.5 py-1 rounded-lg"
+            onClick={() => {
+              if (view.closeMessage) say(view.closeMessage);
+              onClose();
+            }}
+          >
+            ✕ بستن
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
 // ---------- Inventory ----------
-function InventoryPanel() {
+function InventoryPanel({
+  lockOpen,
+  onToggleLock,
+}: { lockOpen?: boolean; onToggleLock?: () => void } = {}) {
   const inventory = usePlayerStore((s) => s.session?.state.inventory ?? EMPTY);
   const selectedItem = usePlayerStore((s) => s.selectedItem);
   const selectItem = usePlayerStore((s) => s.selectItem);
@@ -1027,9 +1227,21 @@ function InventoryPanel() {
 
   return (
     <div
-      className="bg-surface border-t border-gray-700 px-3 py-2 flex items-center gap-2 min-h-[64px] overflow-x-auto"
+      className="bg-surface border-t border-gray-700 px-3 py-2 flex items-center gap-2 min-h-[64px] overflow-x-auto safe-bottom"
       dir="rtl"
     >
+      {onToggleLock && (
+        <button
+          type="button"
+          onClick={onToggleLock}
+          aria-label="قفل خروج"
+          className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-xl border border-white/10 ${
+            lockOpen ? 'bg-amber-500 text-black' : 'bg-black/40 hover:bg-black/60 text-white'
+          }`}
+        >
+          🔐
+        </button>
+      )}
       <span className="text-xs text-gray-400 shrink-0 ml-1">🎒 کیف:</span>
 
       {inventory.length === 0 && (
@@ -1097,6 +1309,48 @@ function InventoryPanel() {
     </div>
   );
 }
+
+// ---------- Bottom inventory drawer (play mode only) ----------
+function Drawer({ children, open }: { children: React.ReactNode; open: boolean }) {
+  return (
+    <div
+      className={`absolute bottom-0 inset-x-0 z-30 transition-transform duration-200 ease-out ${
+        open ? 'translate-y-0' : 'translate-y-full'
+      }`}
+    >
+      {children}
+    </div>
+  );
+}
+
+// Handle that always peeks at the bottom center and toggles the drawer.
+function DrawerHandle({
+  open,
+  selectedItem,
+  pulse,
+  onToggle,
+}: {
+  open: boolean;
+  selectedItem: string | null;
+  pulse: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label={open ? 'بستن نوار انبار' : 'باز کردن نوار انبار'}
+      className={`absolute bottom-0 left-1/2 -translate-x-1/2 z-40 w-12 h-12 shrink-0 rounded-full bg-black/50 hover:bg-black/60 flex items-center justify-center text-white text-[12px] ${
+        pulse ? 'animate-pulse' : ''
+      }`}
+    >
+      {open ? '▼' : '▲'}
+      {!open && selectedItem && (
+        <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-amber-500 border border-white/30" />
+      )}
+    </button>
+  );
+}
 //+++++++++++ NumPad UI +++++++++++
 
 /**
@@ -1150,7 +1404,7 @@ function NumsPadUI() {
 
   return (
     <div
-      className="absolute bottom-0 left-0 right-0 z-20 w-full bg-surface border-t border-gray-700 px-3 py-2 flex flex-col gap-1 max-h-[192px] overflow-y-auto"
+      className="absolute bottom-0 left-0 right-0 z-50 w-full bg-surface border-t border-gray-700 px-3 py-2 flex flex-col gap-1 max-h-[192px] overflow-y-auto"
       dir="rtl"
     >
       <div className="flex w-full items-center justify-between">
@@ -1387,13 +1641,38 @@ export default function Player({ projectName }: { projectName: string }) {
   const switchScene = usePlayerStore((s) => s.switchScene);
   const resetGame = usePlayerStore((s) => s.resetGame);
   const startNewGame = usePlayerStore((s) => s.startNewGame);
+  const selectedItem = usePlayerStore((s) => s.selectedItem);
+  const inventory = usePlayerStore((s) => s.session?.state.inventory ?? EMPTY);
   const [tab, setTab] = useState<'rooms' | 'exit'>('rooms');
 
   // Play-only mode (vite --mode play): auto-start and never show the lobby.
-  // `import.meta.env` is not globally typed in this project, so read it via a cast.
-  const isPlay = (import.meta as { env?: { MODE?: string } }).env?.MODE === 'play';
+  const isPlay = import.meta.env.MODE === 'play';
 
   const [confirmReset, setConfirmReset] = useState(false);
+
+  // Bottom drawer (play mode only)
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [lockOpen, setLockOpen] = useState(false);
+  const [pulseHandle, setPulseHandle] = useState(false);
+  const inventoryLenRef = useRef<number>(0);
+
+  // Pulse the handle briefly whenever the inventory grows.
+  useEffect(() => {
+    const len = inventory.length;
+    if (len > inventoryLenRef.current) {
+      setPulseHandle(true);
+      const t = window.setTimeout(() => setPulseHandle(false), 1500);
+      return () => window.clearTimeout(t);
+    }
+    inventoryLenRef.current = len;
+  }, [inventory]);
+
+  const toggleDrawer = () => setDrawerOpen((o) => !o);
+  const toggleLock = () => setLockOpen((o) => !o);
+  const closeLock = () => setLockOpen(false);
+
+  // Telegram native Back closes the exit-lock overlay; outside Telegram a ✕ button is shown instead.
+  useBackButton(lockOpen, closeLock);
 
   useEffect(() => {
     if (!confirmReset) return;
@@ -1445,7 +1724,7 @@ export default function Player({ projectName }: { projectName: string }) {
   const roomDone = (sc: Scene) => session.state.completedScenes.includes(sc.id);
 
   return (
-    <div className="h-full flex flex-col" dir="rtl">
+    <div className={isPlay ? 'fixed inset-0' : 'h-full flex flex-col'} dir="rtl">
       <Toast />
 
       {!isPlay && (
@@ -1527,12 +1806,46 @@ export default function Player({ projectName }: { projectName: string }) {
         )}
       </div>
 
-      <div className={isPlay ? 'absolute bottom-0 left-0 right-0 z-20' : 'relative w-full'}>
-        <SilentBoundary>
-          <InventoryPanel />
-        </SilentBoundary>
-        <NumsPadUI />
-      </div>
+      {isPlay ? (
+        <>
+          <div className="absolute bottom-0 left-0 right-0">
+            <Drawer open={drawerOpen}>
+              <SilentBoundary>
+                <InventoryPanel lockOpen={lockOpen} onToggleLock={toggleLock} />
+              </SilentBoundary>
+            </Drawer>
+            <DrawerHandle
+              open={drawerOpen}
+              selectedItem={selectedItem}
+              pulse={pulseHandle}
+              onToggle={toggleDrawer}
+            />
+            <NumsPadUI />
+          </div>
+          {lockOpen && (
+            <div className="absolute inset-0 z-40 bg-black/85" dir="rtl">
+              <FinalLock />
+              {!hasTelegramBack() && (
+                <button
+                  type="button"
+                  onClick={closeLock}
+                  aria-label="بستن"
+                  className="absolute top-4 left-1/2 -translate-x-1/2 z-50 w-12 h-12 shrink-0 rounded-full bg-white/20 hover:bg-white/30 border border-white/30 text-white text-xl flex items-center justify-center"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="relative w-full">
+          <SilentBoundary>
+            <InventoryPanel />
+          </SilentBoundary>
+          <NumsPadUI />
+        </div>
+      )}
     </div>
   );
 }

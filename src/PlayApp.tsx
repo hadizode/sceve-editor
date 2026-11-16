@@ -59,7 +59,7 @@ export default function PlayApp() {
   }
 
   return (
-    <div className="h-screen bg-gray-900 text-white" dir="rtl">
+    <div className="fixed inset-0 bg-gray-900 text-white" dir="rtl">
       {err ? (
         <p className="p-6 text-red-400">{err}</p>
       ) : pid ? (

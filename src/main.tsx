@@ -42,6 +42,8 @@ if (!rootEl) {
 
 ReactDOM.createRoot(rootEl).render(
   <ErrorBoundary>
-    <Root />
+    <div className="safe-top safe-bottom" style={{ minHeight: "100dvh" }}>
+      <Root />
+    </div>
   </ErrorBoundary>
 );
