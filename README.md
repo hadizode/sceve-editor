@@ -297,3 +297,21 @@ All numpad fields are persisted and survive export/import and the hydrate migrat
 - **Game Content:** Persian/Farsi (messages, object names, clues, messages)
 - **Direction:** RTL (right-to-left) for game content
 - **Font:** Vazirmatn (self-hosted via Google Fonts)
+
+## Play-only Build (Telegram Bot)
+
+The player can be built as a standalone, image-split site that the Telegram bot serves from its `app/` directory. Images are kept out of `project.json` so the initial load stays small.
+
+1. **Export** the project from Studio (`escape-studio`, v3) → `exported.json`.
+2. **Split** the bundle into a small project file + one assets file:
+   ```sh
+   node scripts/split-project.mjs exported.json
+   ```
+   This writes `public/play/project.json` (no `data:` strings, `assets: []`, plus a `meta` pointer) and a single `public/play/assets.<hash>.json`, and deletes any older `assets.*.json` files.
+3. **Build** the play-only app:
+   ```sh
+   npm run build:play
+   ```
+4. **Deploy** — copy the **CONTENTS** of `dist-play` into the bot repo's `app/` directory (not the `dist-play` folder itself).
+
+At runtime the player fetches `/play/project.json`, streams `/play/assets.<hash>.json` (progress reported while downloading), merges the images back into the bundle, and imports it exactly as before.

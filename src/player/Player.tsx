@@ -1340,7 +1340,7 @@ function DrawerHandle({
       type="button"
       onClick={onToggle}
       aria-label={open ? 'بستن نوار انبار' : 'باز کردن نوار انبار'}
-      className={`absolute bottom-0 left-1/2 -translate-x-1/2 z-40 w-12 h-12 shrink-0 rounded-full bg-black/50 hover:bg-black/60 flex items-center justify-center text-white text-[12px] ${
+      className={`absolute bottom-4 right-4 z-40 w-11 h-11 shrink-0 rounded-full bg-black/50 hover:bg-black/60 flex items-center justify-center text-white text-xs ${
         pulse ? 'animate-pulse' : ''
       }`}
     >
@@ -1645,8 +1645,8 @@ export default function Player({ projectName }: { projectName: string }) {
   const inventory = usePlayerStore((s) => s.session?.state.inventory ?? EMPTY);
   const [tab, setTab] = useState<'rooms' | 'exit'>('rooms');
 
-  // Play-only mode (vite --mode play): auto-start and never show the lobby.
-  const isPlay = import.meta.env.MODE === 'play';
+  // Play-only mode (vite --mode play, or VITE_PLAY_ONLY=1 for build:play): auto-start and never show the lobby.
+  const isPlay = import.meta.env.MODE === 'play' || import.meta.env.VITE_PLAY_ONLY === '1';
 
   const [confirmReset, setConfirmReset] = useState(false);
 
