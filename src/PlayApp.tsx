@@ -155,6 +155,18 @@ function DebugStamp() {
   const [version, setVersion] = useState('-');
   const [fullscreen, setFullscreen] = useState('-');
   const [platform, setPlatform] = useState('-');
+  const [err, setErr] = useState<string | null>(() =>
+    typeof (window as any).__playerErr === 'string' ? (window as any).__playerErr : null,
+  );
+
+  useEffect(() => {
+    if (err !== null) return;
+    const id = setInterval(() => {
+      const e = (window as any).__playerErr;
+      if (typeof e === 'string') setErr(e);
+    }, 500);
+    return () => clearInterval(id);
+  }, [err]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
@@ -184,7 +196,7 @@ function DebugStamp() {
       dir="ltr"
       className="fixed left-1 bottom-1 z-[999] text-[9px] opacity-70 pointer-events-none bg-black/60 text-white px-1 rounded"
     >
-      {`L ${time} · saved:${hadSaved ? 'yes' : 'no'} · cleared:${cleared ? 'yes' : 'no'} · v${version} fs:${fullscreen} ${platform}`}
+      {`L ${time} · saved:${hadSaved ? 'yes' : 'no'} · cleared:${cleared ? 'yes' : 'no'} · v${version} fs:${fullscreen} ${platform}${err ? ` · ERR: ${err}` : ''}`}
     </div>
   );
 }

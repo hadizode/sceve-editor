@@ -1604,12 +1604,14 @@ interface SilentBoundaryProps {
 interface SilentBoundaryState {
   hasError: boolean;
   tries: number;
+  lastMessage: string | null;
 }
 
 class SilentBoundary extends React.Component<SilentBoundaryProps, SilentBoundaryState> {
   state: SilentBoundaryState = {
     hasError: false,
     tries: 0,
+    lastMessage: null,
   };
 
   private internalKey = 0;
@@ -1620,7 +1622,10 @@ class SilentBoundary extends React.Component<SilentBoundaryProps, SilentBoundary
   }
 
   componentDidCatch(error: Error) {
+    const message = error?.message || String(error);
     console.error('Player render error (auto-recovered):', error);
+    (window as any).__playerErr = message;
+    this.setState((prev) => (prev.lastMessage === message ? null : { lastMessage: message }));
     const now = Date.now();
     this.recentErrors = this.recentErrors.filter((t) => now - t <= 2000);
     this.recentErrors.push(now);
@@ -1640,20 +1645,29 @@ class SilentBoundary extends React.Component<SilentBoundaryProps, SilentBoundary
   private handleRetry = () => {
     this.recentErrors = [];
     this.internalKey++;
-    this.setState({ hasError: false, tries: 0 });
+    this.setState({ hasError: false, tries: 0, lastMessage: null });
+    delete (window as any).__playerErr;
   };
 
   render() {
     if (this.state.hasError && this.recentErrors.length > 3) {
       return (
-        <div className="p-4 flex items-center justify-center text-center">
-          <button
-            type="button"
-            onClick={this.handleRetry}
-            className="px-4 py-2 rounded-xl bg-surface-lighter hover:bg-surface-hover text-white text-sm"
-          >
-            تلاش دوباره
-          </button>
+        <div className="h-full flex items-center justify-center p-6" dir="rtl">
+          <div className="w-full max-w-sm space-y-3">
+            <Placeholder
+              header={<span className="block text-center text-red-400">خطا در نمایش بازی</span>}
+              description={
+                <span className="block text-center text-xs break-words" dir="ltr">
+                  {this.state.lastMessage ?? 'unknown error'}
+                </span>
+              }
+            >
+              <Icon name="alert" size={36} className="text-red-400" />
+            </Placeholder>
+            <Button stretched mode="filled" onClick={this.handleRetry}>
+              تلاش دوباره
+            </Button>
+          </div>
         </div>
       );
     }
