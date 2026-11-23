@@ -1,5 +1,7 @@
 /// <reference types="vite/client" />
 // ============ Player (Game) — plays the CURRENT studio project live ============
+import '@telegram-apps/telegram-ui/dist/styles.css';
+import { AppRoot, Snackbar } from '@telegram-apps/telegram-ui';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import useImage from 'use-image';
 import { itemName, usePlayerStore } from '../stores/store';
@@ -17,8 +19,11 @@ import {
 } from '../shared/game-logic';
 import { findObject, allObjectsDeep } from '../shared/view-tree';
 import { NumPadKeys } from '../shared/NumPadKeys';
+import { Icon } from '../studio/icons';
 import { clamp, clampPan, centroid, dist } from './gestures';
 import { useBackButton, hasTelegramBack } from '../telegram';
+import { useCompact } from './useCompact';
+import { InventoryOverlay } from './InventoryOverlay';
 
 /** Resolve a sprite/image ref to the concrete image URL ('' when the sprite has no image). */
 const spriteSrc = (
@@ -31,20 +36,21 @@ const faDigits = (s: string) => s.replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[+
 
 const EMPTY: string[] = [];
 
-// ---------- Toast ----------
-function Toast() {
+// ---------- Game snackbar ----------
+function GameSnackbar() {
   const toast = usePlayerStore((s) => s.toast);
+  const setToast = usePlayerStore((s) => s.setToast);
+  const compact = useCompact();
   if (!toast) return null;
 
   return (
-    <div
-      className="fixed top-14 safe-top left-1/2 -translate-x-1/2 z-[100] pointer-events-none"
-      dir="rtl"
+    <Snackbar
+      className={`game-snackbar${compact ? ' game-snackbar--compact' : ''}`}
+      before={<Icon name="alert" size={18} />}
+      onClose={() => setToast(null)}
     >
-      <div className="bg-surface-lighter/95 border border-indigo-500/40 text-white text-sm px-4 py-2.5 rounded-xl shadow-2xl max-w-[80vw]">
-        {toast}
-      </div>
-    </div>
+      <span className="game-snackbar__message">{toast}</span>
+    </Snackbar>
   );
 }
 
@@ -1099,7 +1105,7 @@ function ViewOverlay({
         className="w-full h-full bg-surface border border-gray-700 rounded-xl flex flex-col items-center justify-center gap-3 p-6"
         dir="rtl"
       >
-        <div className="text-4xl">🔒</div>
+        <Icon name="lock" size={32} className="text-gray-400" />
         <p className="text-sm text-gray-300">برای باز کردن این مورد به آیتم نیاز دارید.</p>
         <button
           className="px-4 py-2 rounded-xl bg-gray-700 hover:bg-gray-600 text-sm"
@@ -1235,17 +1241,18 @@ function InventoryPanel({
           type="button"
           onClick={onToggleLock}
           aria-label="قفل خروج"
-          className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-xl border border-white/10 ${
-            lockOpen ? 'bg-amber-500 text-black' : 'bg-black/40 hover:bg-black/60 text-white'
+          className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center border border-white/10 ${
+            lockOpen ? 'bg-white/15 text-white' : 'bg-black/40 hover:bg-black/60 text-white'
           }`}
         >
-          🔐
+          <Icon name={lockOpen ? 'unlock' : 'lock'} size={18} />
         </button>
       )}
-      <span className="text-xs text-gray-400 shrink-0 ml-1">🎒 کیف:</span>
 
       {inventory.length === 0 && (
-        <span className="text-xs text-gray-600">خالی — بگردید و آیتم پیدا کنید!</span>
+        <div className="flex-1 flex items-center justify-center" aria-label="کیف خالی">
+          <Icon name="bag" size={22} className="text-gray-500" />
+        </div>
       )}
 
       {Object.keys(counts).map((id) => {
@@ -1273,7 +1280,7 @@ function InventoryPanel({
             }}
             className={`relative shrink-0 w-12 h-12 rounded-xl border flex items-center justify-center overflow-hidden transition-all ${
               selectedItem === id
-                ? 'border-amber-400 ring-2 ring-amber-400/50 scale-110'
+                ? 'border-white/70 ring-2 ring-white/20 scale-110'
                 : 'border-gray-600 hover:border-gray-400'
             }`}
             title={meta?.name ?? itemName([], id)}
@@ -1293,7 +1300,7 @@ function InventoryPanel({
             )}
 
             {counts[id] > 1 && (
-              <span className="absolute -bottom-1 -left-1 bg-amber-500 text-black text-[10px] rounded-full px-1">
+                <span className="absolute -bottom-1 -left-1 bg-gray-600 text-white text-[10px] rounded-full px-1">
                 ×{counts[id]}
               </span>
             )}
@@ -1301,11 +1308,6 @@ function InventoryPanel({
         );
       })}
 
-      {selectedItem && (
-        <span className="text-[11px] text-amber-300 mr-2 shrink-0 animate-pulse">
-          آیتم انتخاب شد — روی یک شیء کلیک کنید تا استفاده شود
-        </span>
-      )}
     </div>
   );
 }
@@ -1479,7 +1481,7 @@ function FinalLock() {
   return (
     <div className="h-full flex items-center justify-center p-6" dir="rtl">
       <div className="w-full max-w-sm bg-surface border border-gray-700 rounded-2xl p-6 space-y-4">
-        <h2 className="font-bold">🔐 قفل خروج</h2>
+        <h2 className="font-bold">قفل خروج</h2>
         <p className="text-xs text-gray-400">
           {ready
             ? 'همه اتاق‌ها کامل شده‌اند! رمز نهایی را وارد کنید.'
@@ -1633,6 +1635,25 @@ class SilentBoundary extends React.Component<SilentBoundaryProps, SilentBoundary
 
 // ---------- Main Player ----------
 export default function Player({ projectName }: { projectName: string }) {
+  // Keep the additional Telegram theme field local to the Player UI.
+  const webApp = window.Telegram?.WebApp as
+    | (NonNullable<NonNullable<Window['Telegram']>['WebApp']> & {
+        colorScheme?: 'light' | 'dark';
+      })
+    | undefined;
+
+  return (
+    <AppRoot
+      platform="ios"
+      appearance={webApp?.colorScheme ?? 'dark'}
+      className="player-root h-full w-full min-h-0 relative text-center"
+    >
+      <PlayerContent projectName={projectName} />
+    </AppRoot>
+  );
+}
+
+function PlayerContent({ projectName }: { projectName: string }) {
   const loadFromStudio = usePlayerStore((s) => s.loadFromStudio);
   const session = usePlayerStore((s) => s.session);
   const scenes = usePlayerStore((s) => s.scenes);
@@ -1641,8 +1662,6 @@ export default function Player({ projectName }: { projectName: string }) {
   const switchScene = usePlayerStore((s) => s.switchScene);
   const resetGame = usePlayerStore((s) => s.resetGame);
   const startNewGame = usePlayerStore((s) => s.startNewGame);
-  const selectedItem = usePlayerStore((s) => s.selectedItem);
-  const inventory = usePlayerStore((s) => s.session?.state.inventory ?? EMPTY);
   const [tab, setTab] = useState<'rooms' | 'exit'>('rooms');
 
   // Play-only mode (vite --mode play, or VITE_PLAY_ONLY=1 for build:play): auto-start and never show the lobby.
@@ -1650,24 +1669,8 @@ export default function Player({ projectName }: { projectName: string }) {
 
   const [confirmReset, setConfirmReset] = useState(false);
 
-  // Bottom drawer (play mode only)
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const [lockOpen, setLockOpen] = useState(false);
-  const [pulseHandle, setPulseHandle] = useState(false);
-  const inventoryLenRef = useRef<number>(0);
 
-  // Pulse the handle briefly whenever the inventory grows.
-  useEffect(() => {
-    const len = inventory.length;
-    if (len > inventoryLenRef.current) {
-      setPulseHandle(true);
-      const t = window.setTimeout(() => setPulseHandle(false), 1500);
-      return () => window.clearTimeout(t);
-    }
-    inventoryLenRef.current = len;
-  }, [inventory]);
-
-  const toggleDrawer = () => setDrawerOpen((o) => !o);
   const toggleLock = () => setLockOpen((o) => !o);
   const closeLock = () => setLockOpen(false);
 
@@ -1715,7 +1718,7 @@ export default function Player({ projectName }: { projectName: string }) {
   if (!session.started) {
     return (
       <>
-        <Toast />
+        <GameSnackbar />
         {!isPlay && <Lobby projectName={projectName} />}
       </>
     );
@@ -1725,7 +1728,7 @@ export default function Player({ projectName }: { projectName: string }) {
 
   return (
     <div className={isPlay ? 'fixed inset-0' : 'h-full flex flex-col'} dir="rtl">
-      <Toast />
+      <GameSnackbar />
 
       {!isPlay && (
         // Room tabs (hidden in play-only mode — the room fills the whole screen)
@@ -1783,7 +1786,7 @@ export default function Player({ projectName }: { projectName: string }) {
         )}
       
       {/* Stage */}
-      <div className={isPlay ? 'absolute inset-0' : 'flex-1 min-h-0'}>
+      <div className={`${isPlay ? 'absolute inset-0' : 'flex-1 min-h-0'} relative`}>
         {tab === 'exit' ? (
           <FinalLock />
         ) : currentScene ? (
@@ -1808,18 +1811,10 @@ export default function Player({ projectName }: { projectName: string }) {
 
       {isPlay ? (
         <>
-          <div className="absolute bottom-0 left-0 right-0">
-            <Drawer open={drawerOpen}>
-              <SilentBoundary>
-                <InventoryPanel lockOpen={lockOpen} onToggleLock={toggleLock} />
-              </SilentBoundary>
-            </Drawer>
-            <DrawerHandle
-              open={drawerOpen}
-              selectedItem={selectedItem}
-              pulse={pulseHandle}
-              onToggle={toggleDrawer}
-            />
+          <div className="absolute inset-0 pointer-events-none">
+            <SilentBoundary>
+              <InventoryOverlay lockOpen={lockOpen} onToggleLock={toggleLock} />
+            </SilentBoundary>
             <NumsPadUI />
           </div>
           {lockOpen && (
@@ -1839,9 +1834,9 @@ export default function Player({ projectName }: { projectName: string }) {
           )}
         </>
       ) : (
-        <div className="relative w-full">
+        <div className="absolute inset-0 pointer-events-none">
           <SilentBoundary>
-            <InventoryPanel />
+            <InventoryOverlay />
           </SilentBoundary>
           <NumsPadUI />
         </div>

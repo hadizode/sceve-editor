@@ -113,8 +113,40 @@ input[type="number"] { -moz-appearance: textfield; }
   touch-action: none;
 }
 
+
+/* Player specific overrides */
+.player-root {
+  text-align: center;
+  --tgui--font-family: 'Vazirmatn', system-ui, sans-serif;
+}
+
+.game-snackbar {
+  position: fixed !important;
+  inset-inline-start: 50% !important;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--tg-safe-area-inset-bottom, 0px) + 4.5rem) !important;
+  z-index: 100 !important;
+  width: max-content;
+  max-width: min(80vw, 32rem);
+  transform: translateX(-50%);
+  text-align: center;
+}
+
+.game-snackbar--compact {
+  width: 40vw;
+  max-width: 40vw;
+}
+
+.game-snackbar .game-snackbar__message {
+  display: -webkit-box;
+  overflow: hidden;
+  text-align: center;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
 /* Number pad */
-.num-key {
+.player-root .num-key {
   width: 64px;
   height: 64px;
   border-radius: 12px;
@@ -129,10 +161,10 @@ input[type="number"] { -moz-appearance: textfield; }
   cursor: pointer;
   transition: all 0.15s;
 }
-.num-key:hover {
+.player-root .num-key:hover {
   background: #363650;
 }
-.num-key:active {
+.player-root .num-key:active {
   background: #6366f1;
   transform: scale(0.95);
 }

@@ -34,6 +34,11 @@ const P = {
   grid: <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />,
   magnet: <path d="M6 3v8a6 6 0 0 0 12 0V3h-4v8a2 2 0 0 1-4 0V3z" />,
   tag: <><path d="M3 12V4h8l10 10-8 8z" /><circle cx="7.5" cy="8.5" r="1" /></>,
+  bag: <><path d="M5 8h14l-1 13H6L5 8z" /><path d="M9 8V6a3 3 0 0 1 6 0v2" /></>,
+  backspace: <><path d="M21 5H8l-5 7 5 7h13z" /><path d="m12 9 5 6m0-6-5 6" /></>,
+  chevronUp: <path d="m6 15 6-6 6 6" />,
+  check: <path d="m5 12 4 4L19 6" />,
+  alert: <><path d="M10.3 3.9 2.5 18a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4m0 4h.01" /></>,
   // hit shapes
   shapeBox: <rect x="4" y="4" width="16" height="16" />,
   shape3: <path d="M12 4l9 16H3z" />,

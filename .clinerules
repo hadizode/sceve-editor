@@ -1,0 +1,15 @@
+<context>
+Project: Escape Room Studio (React 18, TypeScript strict, Vite 6, Tailwind 4, zustand). Read +agent.md first.
+Scope: ONLY the game Player UI. Allowed files: src/player/**, src/shared/NumPadKeys.tsx, src/App.tsx (game tab only), src/index.css (player-scoped rules only), src/studio/icons.tsx (adding icons only), src/stores/store.ts (usePlayerStore only, when a task says so).
+The real player store is src/stores/store.ts. NEVER modify Studio behavior, src/stores/studio/*, src/stores/player/*, src/shared/types.ts, or src/shared/game-logic.ts (unless a task says so).
+Library: @telegram-apps/telegram-ui. Platform is ALWAYS "ios". Colors come from Telegram theme params / colorScheme, fallback dark. ALL Persian text MUST be text-align:center. Game strings stay Persian; code and identifiers stay English.
+NEVER use emoji in UI chrome; use Icon from src/studio/icons.tsx.
+Everything is an overlay: it MUST NOT change the scene viewport size (SceneStage refits via ResizeObserver).
+"Compact" = landscape phone, via useCompact() (max-height: 480px).
+Before using any library component, read its typings in node_modules to confirm the export and props exist. NEVER guess names.
+Do not add dependencies other than those the task names.
+</context>
+
+<workflow>
+Work on ONE task only. Use Plan mode first, then Act. When done run: npm run typecheck && npm test && npm run build. Report changed files and command results. Stop. Do not start the next task.
+</workflow>
