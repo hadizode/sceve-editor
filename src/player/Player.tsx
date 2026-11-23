@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 // ============ Player (Game) — plays the CURRENT studio project live ============
 import '@telegram-apps/telegram-ui/dist/styles.css';
-import { AppRoot, Snackbar } from '@telegram-apps/telegram-ui';
+import { AppRoot, Snackbar, Placeholder, Button, Cell } from '@telegram-apps/telegram-ui';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import useImage from 'use-image';
 import { itemName, usePlayerStore, useStudioStore } from '../stores/store';
@@ -65,45 +65,46 @@ function Lobby({ projectName }: { projectName: string }) {
 
   return (
     <div className="h-full flex items-center justify-center p-6" dir="rtl">
-      <div className="w-full max-w-md bg-surface border border-gray-700 rounded-2xl p-6 space-y-5 shadow-2xl">
-        <div>
-          <h2 className="text-xl font-bold">🎮 لابی بازی</h2>
-          <p className="text-sm text-gray-400 mt-1">پروژه: {projectName}</p>
-        </div>
+      <div className="w-full max-w-md space-y-4">
+        <Placeholder
+          header={<span className="block text-center">لابی بازی</span>}
+          description={<span className="block text-center">پروژه: {projectName}</span>}
+        />
 
-        <ul className="space-y-2">
+        <Section>
           {session.players.map((p) => (
-            <li
+            <Cell
               key={p.telegramId}
-              className="flex items-center gap-3 bg-surface-light rounded-xl px-3 py-2"
+              before={
+                <span
+                  className={`w-2.5 h-2.5 rounded-full ${
+                    p.online ? 'bg-emerald-400' : 'bg-gray-600'
+                  }`}
+                />
+              }
+              after={
+                <span className={`text-xs ${p.ready ? 'text-emerald-400' : 'text-gray-500'}`}>
+                  {p.ready ? 'آماده' : 'در انتظار…'}
+                </span>
+              }
             >
-              <span
-                className={`w-2.5 h-2.5 rounded-full ${
-                  p.online ? 'bg-emerald-400' : 'bg-gray-600'
-                }`}
-              />
-              <span className="flex-1 text-sm">{p.name}</span>
-              <span className={`text-xs ${p.ready ? 'text-emerald-400' : 'text-gray-500'}`}>
-                {p.ready ? 'آماده ✓' : 'در انتظار…'}
-              </span>
-            </li>
+              {p.name}
+            </Cell>
           ))}
-        </ul>
+        </Section>
 
-        <button
+        <Button
+          stretched
+          mode="filled"
           onClick={() => setReady()}
           disabled={session.players[0]?.ready}
-          className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold"
         >
-          {session.players[0]?.ready ? 'منتظر هم‌تیمی…' : '✅ آماده‌ام'}
-        </button>
+          {session.players[0]?.ready ? 'منتظر هم‌تیمی…' : 'آماده‌ام'}
+        </Button>
 
-        <button
-          onClick={() => startNewGame()}
-          className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-sm font-bold"
-        >
-          🚀 شروع بدون منتور (حالت تک‌نفره)
-        </button>
+        <Button stretched mode="bezeled" onClick={() => startNewGame()}>
+          شروع بدون منتور (حالت تک‌نفره)
+        </Button>
       </div>
     </div>
   );
@@ -1108,12 +1109,9 @@ function ViewOverlay({
       >
         <Icon name="lock" size={32} className="text-gray-400" />
         <p className="text-sm text-gray-300">برای باز کردن این مورد به آیتم نیاز دارید.</p>
-        <button
-          className="px-4 py-2 rounded-xl bg-gray-700 hover:bg-gray-600 text-sm"
-          onClick={onClose}
-        >
+        <Button mode="gray" size="s" onClick={onClose}>
           بازگشت
-        </button>
+        </Button>
       </div>
     );
   }
@@ -1155,15 +1153,17 @@ function ViewOverlay({
           dir="rtl"
         >
           <span className="bg-black/60 text-xs px-2 py-1 rounded-lg">{view.title}</span>
-          <button
-            className="bg-black/60 hover:bg-red-600/80 text-xs px-2.5 py-1 rounded-lg"
+          <Button
+            size="s"
+            mode="gray"
+            after={<Icon name="x" size={12} />}
             onClick={() => {
               if (view.closeMessage) say(view.closeMessage);
               onClose();
             }}
           >
-            ✕ بستن
-          </button>
+            بستن
+          </Button>
         </div>
       )}
     </div>
@@ -1490,32 +1490,38 @@ function FinalLock() {
   if (session.complete) {
     return (
       <div className="h-full flex items-center justify-center p-6" dir="rtl">
-        <div className="text-center space-y-4 bg-surface border border-emerald-500/50 rounded-2xl p-8 max-w-md shadow-2xl">
-          <div className="text-6xl">🏆</div>
-          <h2 className="text-2xl font-bold text-emerald-400">تبریک! فرار موفق!</h2>
-          <p className="text-sm text-gray-400">
-            شما رمز نهایی را درست وارد کردید و اتاق فرار را تمام کردید.
-          </p>
-          <button
-            onClick={resetGame}
-            className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-sm font-bold"
-          >
-            🔄 بازی جدید
-          </button>
-        </div>
+        <Placeholder
+          header={<span className="block text-center text-emerald-400">تبریک! فرار موفق!</span>}
+          description={
+            <span className="block text-center">
+              شما رمز نهایی را درست وارد کردید و اتاق فرار را تمام کردید.
+            </span>
+          }
+          children={<Icon name="check" size={48} className="text-emerald-400" />}
+          action={
+            <Button mode="filled" before={<Icon name="play" size={16} />} onClick={resetGame}>
+              بازی جدید
+            </Button>
+          }
+        />
       </div>
     );
   }
 
   return (
     <div className="h-full flex items-center justify-center p-6" dir="rtl">
-      <div className="w-full max-w-sm bg-surface border border-gray-700 rounded-2xl p-6 space-y-4">
-        <h2 className="font-bold">قفل خروج</h2>
-        <p className="text-xs text-gray-400">
-          {ready
-            ? 'همه اتاق‌ها کامل شده‌اند! رمز نهایی را وارد کنید.'
-            : 'ابتدا همه اتاق‌ها را کامل کنید.'}
-        </p>
+      <div className="w-full max-w-sm space-y-4">
+        <Placeholder
+          header={<span className="block text-center">قفل خروج</span>}
+          description={
+            <span className="block text-center">
+              {ready
+                ? 'همه اتاق‌ها کامل شده‌اند! رمز نهایی را وارد کنید.'
+                : 'ابتدا همه اتاق‌ها را کامل کنید.'}
+            </span>
+          }
+          children={<Icon name="lock" size={40} className="text-amber-400" />}
+        />
 
         <div className="flex gap-2 justify-center" dir="ltr">
           {list.map((sc) => {
@@ -1549,39 +1555,41 @@ function FinalLock() {
 
         <div className="grid grid-cols-3 gap-2" dir="ltr">
           {'123456789'.split('').map((d) => (
-            <button
+            <Button
               key={d}
+              size="l"
+              mode="bezeled"
               disabled={!ready}
               onClick={() => enterDigit(d)}
-              className="py-2.5 rounded-xl bg-surface-light hover:bg-surface-lighter border border-gray-700 disabled:opacity-30 font-bold text-lg"
             >
               {faDigits(d)}
-            </button>
+            </Button>
           ))}
 
-          <button
+          <IconButton
+            size="l"
+            mode="gray"
             disabled={!ready}
             onClick={clearDigit}
-            className="py-2.5 rounded-xl bg-red-900/40 hover:bg-red-800/50 border border-red-800 disabled:opacity-30 text-sm"
+            aria-label="پاک کردن"
+            title="پاک کردن"
           >
-            ⌫
-          </button>
+            <Icon name="backspace" size={18} />
+          </IconButton>
 
-          <button
-            disabled={!ready}
-            onClick={() => enterDigit('0')}
-            className="py-2.5 rounded-xl bg-surface-light hover:bg-surface-lighter border border-gray-700 disabled:opacity-30 font-bold text-lg"
-          >
+          <Button size="l" mode="bezeled" disabled={!ready} onClick={() => enterDigit('0')}>
             {faDigits('0')}
-          </button>
+          </Button>
 
-          <button
+          <Button
+            size="l"
+            mode="filled"
             disabled={!ready || !lockInput}
             onClick={submitLock}
-            className="py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-30 text-sm font-bold"
+            aria-label="ثبت رمز"
           >
-            ✔
-          </button>
+            <Icon name="check" size={18} />
+          </Button>
         </div>
       </div>
     </div>
@@ -1815,39 +1823,35 @@ function PlayerContent({ projectName }: { projectName: string }) {
 
       {!isPlay && (
         // Room tabs (hidden in play-only mode — the room fills the whole screen)
-        <div className="flex items-center gap-1 px-2 py-1.5 bg-surface border-b border-gray-700 overflow-x-auto flex-shrink-0">
+        <div className="flex items-center gap-1 px-2 py-1.5 overflow-x-auto flex-shrink-0">
         {sceneList.map((sc, i) => (
-          <button
+          <Button
             key={sc.id}
+            size="s"
+            mode={tab === 'rooms' && sc.id === session.state.currentSceneId ? 'filled' : 'plain'}
+            before={roomDone(sc) ? <Icon name="check" size={14} /> : undefined}
             onClick={() => {
               setTab('rooms');
               switchScene(sc.id);
             }}
-            className={`px-3 py-1 rounded-lg text-xs whitespace-nowrap ${
-              tab === 'rooms' && sc.id === session.state.currentSceneId
-                ? 'bg-indigo-600 text-white'
-                : roomDone(sc)
-                ? 'bg-emerald-900/50 text-emerald-300 hover:bg-emerald-800/50'
-                : 'bg-surface-light text-gray-300 hover:bg-surface-lighter'
-            }`}
           >
-            {roomDone(sc) ? '✓ ' : ''}
             {faDigits(String(i + 1))}. {sc.title}
-          </button>
+          </Button>
         ))}
 
-        <button
+        <Button
+          mode={tab === 'exit' ? 'filled' : 'plain'}
+          size="s"
+          before={<Icon name="door" size={14} />}
           onClick={() => setTab('exit')}
-          className={`mr-auto px-3 py-1 rounded-lg text-xs whitespace-nowrap ${
-            tab === 'exit'
-              ? 'bg-amber-600 text-black font-bold'
-              : 'bg-surface-light text-amber-300 hover:bg-surface-lighter'
-          }`}
         >
-           خروج
-        </button>
+          خروج
+        </Button>
 
-        <button
+        <Button
+          mode={confirmReset ? 'filled' : 'outline'}
+          size="s"
+          before={<Icon name="undo" size={14} />}
           onClick={() => {
             if (!confirmReset) {
               setConfirmReset(true);
@@ -1859,12 +1863,9 @@ function PlayerContent({ projectName }: { projectName: string }) {
           }}
           title="ریست بازی"
           aria-label="ریست بازی"
-          className={`px-3 py-1 rounded-lg text-xs whitespace-nowrap ${
-            confirmReset ? 'bg-red-600 text-white' : 'bg-red-900/40 text-red-300 hover:bg-red-800/50'
-          }`}
         >
-          {confirmReset ? '⚠️ مطمئنید؟ دوباره بزنید' : '🔄 ریست'}
-        </button>
+          {confirmReset ? 'مطمئنید؟ دوباره بزنید' : 'ریست'}
+        </Button>
       </div>
         )}
       
@@ -1904,14 +1905,14 @@ function PlayerContent({ projectName }: { projectName: string }) {
             <div className="absolute inset-0 z-40 bg-black/85" dir="rtl">
               <FinalLock />
               {!hasTelegramBack() && (
-                <button
+                <IconButton
                   type="button"
                   onClick={closeLock}
                   aria-label="بستن"
-                  className="absolute top-4 left-1/2 -translate-x-1/2 z-50 w-12 h-12 shrink-0 rounded-full bg-white/20 hover:bg-white/30 border border-white/30 text-white text-xl flex items-center justify-center"
+                  className="absolute top-4 left-1/2 -translate-x-1/2 z-50 w-12 h-12 shrink-0"
                 >
-                  ✕
-                </button>
+                  <Icon name="x" size={20} />
+                </IconButton>
               )}
             </div>
           )}
