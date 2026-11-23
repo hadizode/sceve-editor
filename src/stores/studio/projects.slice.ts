@@ -22,6 +22,7 @@ export const createProjectsSlice: StateCreator<StudioState, [], [], ProjectsSlic
         scenes: [],
         finalLockDigits: '',
         assets: [],
+        sprites: [],
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };

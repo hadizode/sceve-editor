@@ -30,14 +30,20 @@ export const createAssetsSlice: StateCreator<StudioState, [], [], AssetsSlice> =
       for (const file of imageFiles) {
         const reader = new FileReader();
         reader.onload = () => {
-          const asset: Asset = {
-            id: `asset-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            name: file.name,
-            url: reader.result as string,
-            tags: [],
-            createdAt: new Date().toISOString(),
+          const url = reader.result as string;
+          const img = new Image();
+          img.onload = () => {
+            const asset: Asset = {
+              id: `asset-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              name: file.name,
+              url,
+              width: img.naturalWidth,
+              height: img.naturalHeight,
+              createdAt: new Date().toISOString(),
+            };
+            get().addAsset(asset);
           };
-          get().addAsset(asset);
+          img.src = url;
         };
         reader.readAsDataURL(file);
       }

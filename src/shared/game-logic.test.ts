@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyItemToObject, checkTransformCondition, firedOf } from './game-logic';
+import { applyItemToObject, checkTransformCondition, firedOf, unfireLastNumeric } from './game-logic';
 import type { SceneObject, SessionState } from './types';
 import { createObject } from './types';
 
@@ -112,5 +112,35 @@ describe('applyItemToObject fires all pending rules at once', () => {
     expect(res.newState.transformsApplied?.['x']).toBe(2);
     expect(res.newState.rulesFired?.['x']).toEqual([0, 1, 2]);
     expect(res.message).toBe('first • second • third');
+  });
+});
+
+describe('unfireLastNumeric', () => {
+  const stateWith = (fired: number[], applied?: number): SessionState => ({
+    ...baseState,
+    rulesFired: { panel: fired },
+    transformsApplied: { panel: applied ?? (fired.length ? fired[fired.length - 1] : -1) },
+  });
+
+  it('removes only the last fired numeric index and lowers transformsApplied to the new max', () => {
+    const next = unfireLastNumeric(stateWith([0, 2, 5]), 'panel', [2, 5]);
+    expect(firedOf(next, 'panel')).toEqual([0, 2]);
+    expect(next.transformsApplied?.['panel']).toBe(2);
+  });
+
+  it('keeps earlier numeric rules when the last one is undone', () => {
+    const next = unfireLastNumeric(stateWith([3, 4]), 'panel', [3, 4]);
+    expect(firedOf(next, 'panel')).toEqual([3]);
+    expect(next.transformsApplied?.['panel']).toBe(3);
+  });
+
+  it('returns the same ref when nothing numeric fired', () => {
+    const s = stateWith([1]);
+    expect(unfireLastNumeric(s, 'panel', [3, 4])).toBe(s);
+  });
+
+  it('keeps non-numeric fired indexes untouched', () => {
+    const next = unfireLastNumeric(stateWith([1, 3, 4]), 'panel', [3, 4]);
+    expect(firedOf(next, 'panel')).toEqual([1, 3]);
   });
 });

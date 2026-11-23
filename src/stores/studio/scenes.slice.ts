@@ -28,6 +28,7 @@ export const createScenesSlice: StateCreator<StudioState, [], [], ScenesSlice> =
         objects: [],
         clueChain: [],
         exitNumber: 0,
+        backgroundLayers: [],
       };
       set(state => ({
         scenes: { ...state.scenes, [sceneId]: scene },

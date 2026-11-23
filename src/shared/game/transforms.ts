@@ -1,4 +1,5 @@
 import type { SceneObject, SessionState } from '../types';
+import { firedOf } from '../game-logic';
 
 /**
  * Apply an inventory item to an object (with transform support).
@@ -29,7 +30,7 @@ export function applyItemToObject(
 
   // Check if this object has transforms and this item matches one
   if (obj.transforms && obj.transforms.length > 0) {
-    const currentTransform = obj.currentTransform ?? -1;
+    const currentTransform = firedOf(state, obj.id).length - 1;
     const nextTransformIndex = currentTransform + 1;
 
     if (nextTransformIndex < obj.transforms.length) {
@@ -50,11 +51,9 @@ export function applyItemToObject(
         }
 
         // Build new object state
-        const newObjectState: Partial<SceneObject> = {
-          currentTransform: nextTransformIndex,
-        };
+        const newObjectState: Partial<SceneObject> = {};
 
-        if (rule.newImageUrl) newObjectState.imageUrl = rule.newImageUrl;
+        if (rule.newSpriteId) newObjectState.spriteRef = rule.newSpriteId;
         if (rule.newName) newObjectState.name = rule.newName;
 
         // Mark as discovered if triggersDiscovery

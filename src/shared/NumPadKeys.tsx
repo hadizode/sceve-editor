@@ -1,4 +1,6 @@
 import React from 'react';
+import { Button } from '@telegram-apps/telegram-ui';
+import { useCompact } from '../player/useCompact';
 
 /** Presentational key grid shared by the Studio preview and the Player num pad. */
 export interface NumPadKeysProps {
@@ -9,11 +11,11 @@ export interface NumPadKeysProps {
   onPress: (n: string) => void;
   /** Key size in px. */
   size: number;
-  /** CSS font-family applied inline (Tailwind `font-*` classes do not exist). */
+  /** Kept for caller compatibility; no longer applied to the rendering. */
   font: string;
-  /** Hex text color. */
+  /** Kept for caller compatibility; no longer applied to the rendering. */
   color: string;
-  /** Hex key background. */
+  /** Kept for caller compatibility; no longer applied to the rendering. */
   bg: string;
 }
 
@@ -22,49 +24,33 @@ export function NumPadKeys({
   max,
   selected,
   onPress,
-  size,
-  font,
-  color,
-  bg,
 }: NumPadKeysProps) {
   const count = Math.max(0, max - min + 1);
-  const base: React.CSSProperties = {
-    fontFamily: font,
-    width: size,
-    height: size,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: '0.5rem',
-    borderWidth: '1px',
-    borderStyle: 'solid',
-    fontSize: '16px',
-    fontWeight: 'bold',
-  };
+  const compact = useCompact();
 
   return (
-    <div className="flex gap-1 overflow-x-auto w-full min-w-[1px]">
+    <div
+      className={
+        compact
+          ? 'flex gap-1 overflow-x-auto w-full min-w-[1px]'
+          : 'flex flex-wrap gap-1 w-full min-w-[1px]'
+      }
+    >
       {[...Array(count).keys()].map((i) => {
         const n = min + i;
         const s = String(n);
         const active = selected === s;
-        const css: React.CSSProperties = {
-          ...base,
-          color: active ? '#000000' : color,
-          backgroundColor: active ? '#fbbf24' : bg,
-          borderColor: active ? '#fcd34d' : '#71717a',
-        };
         return (
-          <button
+          <Button
             key={n}
-            type="button"
-            onClick={() => onPress(s)}
-            style={css}
-            className="transition-colors hover:opacity-80 focus:outline-none"
+            size="s"
+            mode={active ? 'filled' : 'gray'}
+            className={compact ? 'shrink-0' : 'min-w-[32px]'}
             title={`عدد ${n}`}
+            onClick={() => onPress(s)}
           >
             {s}
-          </button>
+          </Button>
         );
       })}
     </div>

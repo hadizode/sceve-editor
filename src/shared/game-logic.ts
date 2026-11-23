@@ -139,6 +139,32 @@ export function markFired(state: SessionState, objectId: string, indexes: number
 }
 
 /**
+ * Undo the last fired numeric rule of `objectId`: remove the highest fired index that appears in
+ * `numericRuleIndexes` from rulesFired (via firedOf) and set transformsApplied to the new maximum
+ * fired index, or -1 when none remain. Returns the same state reference when nothing can be undone.
+ * Side effects the rule already fired (granted items, effects on other objects) stay as they are.
+ */
+export function unfireLastNumeric(
+  state: SessionState,
+  objectId: string,
+  numericRuleIndexes: number[],
+): SessionState {
+  const numeric = new Set(numericRuleIndexes);
+  const fired = firedOf(state, objectId).filter((i) => numeric.has(i));
+  if (!fired.length) return state;
+  const last = Math.max(...fired);
+  const keep = firedOf(state, objectId).filter((i) => i !== last);
+  return {
+    ...state,
+    rulesFired: { ...(state.rulesFired ?? {}), [objectId]: keep },
+    transformsApplied: {
+      ...(state.transformsApplied ?? {}),
+      [objectId]: keep.length ? Math.max(...keep) : -1,
+    },
+  };
+}
+
+/**
  * Every rule of `obj` that can fire RIGHT NOW on an item use / click:
  * not yet fired, its conditions hold, and it is either free (empty `requiresItem`) or its item
  * requirement matches the used `itemId` (null = plain click, so only free rules match).
@@ -436,6 +462,7 @@ function applyEffect(state: SessionState, eff: TransformEffect, triggerSceneId: 
   ctx.visited.add(vKey);
 
   let next = state;
+  if (firedOf(state, obj.id).includes(idx)) return state; // already applied → nothing changes
   if (rule.grantsItem && !next.inventory.includes(rule.grantsItem)) {
     next = { ...next, inventory: [...next.inventory, rule.grantsItem] };
   }

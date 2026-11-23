@@ -4,7 +4,7 @@ import '@telegram-apps/telegram-ui/dist/styles.css';
 import { AppRoot, Snackbar } from '@telegram-apps/telegram-ui';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import useImage from 'use-image';
-import { itemName, usePlayerStore } from '../stores/store';
+import { itemName, usePlayerStore, useStudioStore } from '../stores/store';
 import type { Asset, Scene, SceneObject, SessionState, Sprite, View } from '../shared/types';
 import { getSprite, resolveSprite, transformRef } from '../shared/types';
 import { boxMatrix, cssMatrix, hitClipPath, motionAngle, pivotScene, placementMatrix } from '../shared/geometry';
@@ -19,11 +19,13 @@ import {
 } from '../shared/game-logic';
 import { findObject, allObjectsDeep } from '../shared/view-tree';
 import { NumPadKeys } from '../shared/NumPadKeys';
+import { Section, IconButton } from '@telegram-apps/telegram-ui';
 import { Icon } from '../studio/icons';
 import { clamp, clampPan, centroid, dist } from './gestures';
 import { useBackButton, hasTelegramBack } from '../telegram';
 import { useCompact } from './useCompact';
 import { InventoryOverlay } from './InventoryOverlay';
+import LoadingScreen from './LoadingScreen';
 
 /** Resolve a sprite/image ref to the concrete image URL ('' when the sprite has no image). */
 const spriteSrc = (
@@ -34,7 +36,6 @@ const spriteSrc = (
 
 const faDigits = (s: string) => s.replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[+d]);
 
-const EMPTY: string[] = [];
 
 // ---------- Game snackbar ----------
 function GameSnackbar() {
@@ -1170,6 +1171,8 @@ function ViewOverlay({
 }
 
 // ---------- Inventory ----------
+const EMPTY: string[] = [];
+
 function InventoryPanel({
   lockOpen,
   onToggleLock,
@@ -1367,6 +1370,7 @@ function NumsPadUI() {
   const selectedItem = usePlayerStore((s) => s.selectedItem);
   const typeDigit = usePlayerStore((s) => s.typeDigit);
   const backspaceDigit = usePlayerStore((s) => s.backspaceDigit);
+  const undoNumpadDigit = usePlayerStore((s) => s.undoNumpadDigit);
   const closeNumpad = usePlayerStore((s) => s.closeNumpad);
   const selectItem = usePlayerStore((s) => s.selectItem);
   // The zustand `PlayerState` interface (in `src/stores/player/state.ts`, which must not be touched)
@@ -1404,27 +1408,39 @@ function NumsPadUI() {
     else selectItem(selected === n ? null : n);
   };
 
+  // Delete key: in type mode undo the last typed cell; in pick mode clear the selection, and when
+  // nothing is selected undo the last fired numeric rule of the pad object.
+  const deleteKey = () => {
+    if (mode === 'type') {
+      backspaceDigit(numpadObjectId);
+      return;
+    }
+    if (selected) selectItem(null);
+    else undoNumpadDigit(numpadObjectId);
+  };
+
   return (
-    <div
-      className="absolute bottom-0 left-0 right-0 z-50 w-full bg-surface border-t border-gray-700 px-3 py-2 flex flex-col gap-1 max-h-[192px] overflow-y-auto"
+    <Section
+      header="پد عددی"
+      className="absolute bottom-0 left-0 right-0 z-50 w-full !bg-surface border-t border-gray-700 max-h-[40dvh] overflow-y-auto"
       dir="rtl"
     >
-      <div className="flex w-full items-center justify-between">
-        <h4 className="text-xs font-bold text-gray-200 uppercase tracking-wider">پد عددی</h4>
-        <button
-          type="button"
+      <div className="flex w-full items-center justify-end">
+        <IconButton
+          size="s"
+          mode="plain"
           onClick={closeNumpad}
-          className="p-1 rounded hover:bg-gray-700/50"
+          aria-label="بستن"
           title="بستن"
         >
-          ✕
-        </button>
+          <Icon name="x" size={18} />
+        </IconButton>
       </div>
 
       {mode === 'type' && (
         <div className="flex items-center gap-1.5" dir="ltr">
           {Array.from({ length: cells }, (_, i) => (
-            <div key={i} className="w-7 h-8 rounded border border-gray-500 flex items-center justify-center text-sm font-bold bg-black/30">
+            <div key={i} className="w-7 h-8 rounded border border-gray-500 flex items-center justify-center text-sm font-bold bg-black/30 sr-only">
               {typed[i] ?? ''}
             </div>
           ))}
@@ -1432,14 +1448,27 @@ function NumsPadUI() {
         </div>
       )}
 
-      <NumPadKeys min={min} max={max} selected={selected} onPress={pressKey} size={size} font={font} color={color} bg={bg} />
+      <div className="flex items-center gap-2">
+        <div className="flex-1 min-w-[1px]">
+          <NumPadKeys min={min} max={max} selected={selected} onPress={pressKey} size={size} font={font} color={color} bg={bg} />
+        </div>
+        <IconButton
+          size="s"
+          mode="gray"
+          onClick={deleteKey}
+          aria-label="پاک کردن"
+          title="پاک کردن"
+        >
+          <Icon name="backspace" size={18} />
+        </IconButton>
+      </div>
 
       {mode === 'pick' && selected !== null && (
         <p className="text-[10px] text-amber-300 text-center animate-pulse">
           عدد {selected} انتخاب شد — روی یک شیء کلیک کنید
         </p>
       )}
-    </div>
+    </Section>
   );
 }
 
@@ -1663,6 +1692,7 @@ function PlayerContent({ projectName }: { projectName: string }) {
   const resetGame = usePlayerStore((s) => s.resetGame);
   const startNewGame = usePlayerStore((s) => s.startNewGame);
   const [tab, setTab] = useState<'rooms' | 'exit'>('rooms');
+  const [phase, setPhase] = useState<'loading' | 'closing' | 'ready'>('loading');
 
   // Play-only mode (vite --mode play, or VITE_PLAY_ONLY=1 for build:play): auto-start and never show the lobby.
   const isPlay = import.meta.env.MODE === 'play' || import.meta.env.VITE_PLAY_ONLY === '1';
@@ -1686,6 +1716,57 @@ function PlayerContent({ projectName }: { projectName: string }) {
   useEffect(() => {
     loadFromStudio();
   }, [loadFromStudio]);
+
+  // Loading phase machine: 'loading' -> 'closing' -> 'ready'. Move on only when the
+  // minimum delay elapsed AND the first scene's images preloaded (errors resolve too).
+  useEffect(() => {
+    if (phase !== 'loading') return;
+    let cancelled = false;
+
+    const firstScene = session ? scenes[session.state.currentSceneId] : undefined;
+    const urls: string[] = [];
+    if (firstScene) {
+      const bg = resolveSprite(firstScene.backgroundUrl ?? '', sprites, assets);
+      if (bg) urls.push(bg);
+      for (const obj of firstScene.objects ?? []) {
+        const u = resolveSprite(obj.spriteRef, sprites, assets);
+        if (u) urls.push(u);
+      }
+    }
+
+    const preloaded = urls.length
+      ? Promise.all(
+          urls.map(
+            (u) =>
+              new Promise<void>((res) => {
+                const im = new Image();
+                im.onload = () => res();
+                im.onerror = () => res(); // a broken image must never block loading
+                im.src = u;
+              }),
+          ),
+        )
+      : Promise.resolve();
+
+    Promise.all([preloaded, new Promise((res) => setTimeout(res, 600))]).then(() => {
+      if (!cancelled) setPhase('closing');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [phase, session, scenes, assets, sprites]);
+
+  // 'closing' -> 'ready' when the loading screen's fade-out transition ends (timeout fallback).
+  useEffect(() => {
+    if (phase !== 'closing') return;
+    const done = () => setPhase('ready');
+    window.addEventListener('loading-finished', done, { once: true });
+    const t = window.setTimeout(done, 500); // fallback if transitionend never fires
+    return () => {
+      window.removeEventListener('loading-finished', done);
+      window.clearTimeout(t);
+    };
+  }, [phase]);
 
   // Play-only mode: start the game immediately so the lobby is never visible.
   // Also covers the post-win "بازی جدید" button, which calls resetGame() and
@@ -1720,6 +1801,7 @@ function PlayerContent({ projectName }: { projectName: string }) {
       <>
         <GameSnackbar />
         {!isPlay && <Lobby projectName={projectName} />}
+        {phase !== 'ready' && <LoadingScreen closing={phase === 'closing'} />}
       </>
     );
   }
@@ -1729,6 +1811,7 @@ function PlayerContent({ projectName }: { projectName: string }) {
   return (
     <div className={isPlay ? 'fixed inset-0' : 'h-full flex flex-col'} dir="rtl">
       <GameSnackbar />
+      {phase !== 'ready' && <LoadingScreen closing={phase === 'closing'} />}
 
       {!isPlay && (
         // Room tabs (hidden in play-only mode — the room fills the whole screen)

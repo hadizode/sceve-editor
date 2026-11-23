@@ -20,6 +20,7 @@ const initialState: Pick<
         discoveredObjects: {},
         inventory: [],
         completedScenes: [],
+        transformsApplied: {},
       },
       toast: null,
       selectedItem: null,

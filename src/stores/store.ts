@@ -39,6 +39,7 @@ import {
   isUsable,
   pickupObject as pickupObj,
   tryEnterDoor,
+  unfireLastNumeric,
   validateFinalLock,
 } from '../shared/game-logic';
 import { createSessionState, type Player, type Session, type SessionState } from '../shared/types';
@@ -884,6 +885,7 @@ interface PlayerState {
   closeNumpad: () => void;
   typeDigit: (padId: string, digit: string, cells: number) => void;
   backspaceDigit: (padId: string) => void;
+  undoNumpadDigit: (objectId: string) => void;
   setToast: (t: string | null) => void;
   switchScene: (id: string) => void;
   clickObject: (objectId: string, viewId?: string) => void;
@@ -1199,6 +1201,18 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
       if (!g.session) return;
       const cur = (g.session.state.numpadTyped?.[padId] ?? []).slice(0, -1);
       commit({ ...g.session.state, numpadTyped: { ...(g.session.state.numpadTyped ?? {}), [padId]: cur } });
+    },
+    /** Undo the last fired numeric rule of numpad `objectId` (pick mode backspace). */
+    undoNumpadDigit: (objectId: string) => {
+      const g = get();
+      if (!g.session || !g.scenes) return;
+      const obj = g.scenes[g.session.state.currentSceneId]?.objects?.find((o) => o.id === objectId);
+      if (!obj) return;
+      const numeric = (obj.transforms ?? [])
+        .map((r, i) => (typeof r.requiresItem === 'string' && /^\d+$/.test(r.requiresItem) ? i : -1))
+        .filter((i) => i >= 0);
+      const next = unfireLastNumeric(g.session.state, objectId, numeric);
+      if (next !== g.session.state) commit(next);
     },
     openNumpad: (objectId: string, viewId?: string) =>
       set((s) => {
